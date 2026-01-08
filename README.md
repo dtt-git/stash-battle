@@ -1,24 +1,48 @@
-# Template for creating Stash plugins source index
+# ⚔️ Stash Battle
 
-This template allows you to create a new repository with a few clicks with preconfigured GitHub action to publish your plugins source index. 
-_This assumes you already know how to create plugins for Stash. If you don't, first read [this](https://docs.stashapp.cc/in-app-manual/plugins/#creating-plugins)._
+A head-to-head scene comparison plugin for [Stash](https://stashapp.cc/) that uses an ELO-style rating system to help you rank your scenes.
 
-## How to use it?
+## Overview
 
-1. Click **Use this template** > **Create a new repository**. 
-1. Choose a repository name and click **Create repository**.
-1. Open **Settings** and head to **Pages**.
-1. Under Build and deployment select the Source as GitHub Actions.
+Stash Battle presents you with two scenes side-by-side and asks you to pick the better one. Based on your choices, scene ratings are automatically updated using an ELO algorithm. Over time, this builds an accurate ranking of your entire library based on your personal preferences.
 
-Now add your plugins to [plugins](/plugins) directory and they will be automatically published to the source index.
+## Features
 
-Source index URL: [`https://<your-username>.github.io/<repository-name>/main/index.yml`](https://<your-username>.github.io/<repository-name>/main/index.yml)
+- **Three Comparison Modes:**
+  - **Swiss** ⚖️ – Fair matchups between similarly-rated scenes. Both scenes' ratings adjust based on the outcome.
+  - **Gauntlet** 🎯 – Place a random scene in your rankings. It climbs from the bottom, challenging each scene above it until it loses, then settles into its final position.
+  - **Champion** 🏆 – Winner stays on. The winning scene keeps battling until it's dethroned.
 
-## Share your plugins
+## Installation
 
-- [Create a new topic](https://discourse.stashapp.cc/t/-/33) for your plugin on the community forum.
-- [Add your source index to the list](https://discourse.stashapp.cc/t/-/122) on the Stash community forum.
+### Source Index: 
+
+1. Add this repo's source index: `https://dtt-git.github.io/stash-battle/main/index.yml` to Stash plugin sources 
+2. Checkbox the Stash Battle package and click Install
+
+### Manual Download: 
+1. Download the `/plugins/stash-battle/` folder to your Stash plugins directory
+
+## Usage
+
+Optional Step: Change Rating System Type to "Decimal" (Settings → Interface → Editing)
+1. Navigate to the **Scenes** page in Stash
+2. Click the floating ⚔️ button in the bottom-right corner
+3. Choose your preferred comparison mode
+4. Click on a scene (or use arrow keys) to pick the winner
+5. Watch your rankings evolve over time!
+
+## How It Works
+
+The plugin uses an ELO-inspired algorithm where:
+- Beating a higher-rated scene earns more points than beating a lower-rated one
+- Losing to a lower-rated scene costs more points than losing to a higher-rated one
+- Ratings are stored in Stash's native `rating100` field (1-100 scale which is why changing to decimal rating system type is recommended)
+
+## Requirements
+
+- At least 2 scenes in your library
 
 ## License
 
-The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
+See [LICENCE](LICENCE) for details.
