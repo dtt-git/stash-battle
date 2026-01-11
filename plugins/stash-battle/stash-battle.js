@@ -5,13 +5,13 @@
   let currentPair = { left: null, right: null };
   let currentRanks = { left: null, right: null };
   let currentMode = "swiss"; // "swiss", "gauntlet", or "champion"
-  let gauntletChampion = null; // The scene currently on a winning streak
+  let gauntletChampion = null; // The performer currently on a winning streak
   let gauntletWins = 0; // Current win streak
   let gauntletChampionRank = 0; // Current rank position (1 = top)
-  let gauntletDefeated = []; // IDs of scenes defeated in current run
+  let gauntletDefeated = []; // IDs of performers defeated in current run
   let gauntletFalling = false; // True when champion lost and is finding their floor
-  let gauntletFallingScene = null; // The scene that's falling to find its position
-  let totalScenesCount = 0; // Total scenes for position display
+  let gauntletFallingScene = null; // The performer that's falling to find its position
+  let totalScenesCount = 0; // Total performers for position display
   let disableChoice = false; // Track when inputs should be disabled to prevent multiple events 
 
   // ============================================
@@ -34,90 +34,77 @@
     return result.data;
   }
 
-  const SCENE_FRAGMENT = `
+  const PERFORMER_FRAGMENT = `
     id
-    title
-    date
+    name
+    image_path
     rating100
-    paths {
-      screenshot
-      preview
-    }
-    files {
-      duration
-      path
-    }
-    studio {
-      name
-    }
-    performers {
-      name
-    }
-    tags {
-      name
-    }
+    birthdate
+    ethnicity
+    country
   `;
 
-  async function fetchSceneCount() {
+  async function fetchPerformerCount() {
     const countQuery = `
-      query FindScenesCount {
-        findScenes(filter: { per_page: 0 }) {
+      query FindPerformers {
+        findPerformers(filter: { per_page: 0 }) {
           count
         }
       }
     `;
     const countResult = await graphqlQuery(countQuery);
-    return countResult.findScenes.count;
+    return countResult.findPerformers.count;
   }
 
-  async function fetchRandomScenes(count = 2) {
-    const totalScenes = await fetchSceneCount();
-    
-    if (totalScenes < 2) {
-      throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
-    }
+async function fetchRandomPerformers(count = 2) {
+  const totalPerformers = await fetchPerformerCount(); // Updated variable name
+  if (totalPerformers < 2) {
+    throw new Error("Not enough performers for comparison. You need at least 2 performers.");
+  }
 
-    const scenesQuery = `
-      query FindRandomScenes($filter: FindFilterType) {
-        findScenes(filter: $filter) {
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
+  const performerQuery = `
+    query FindRandomPerformers($filter: FindFilterType) {
+      findPerformers(filter: $filter) {
+        performers {
+          ${PERFORMER_FRAGMENT}
         }
       }
-    `;
+    }
+  `;
 
-    const result = await graphqlQuery(scenesQuery, {
-      filter: {
-        per_page: Math.min(100, totalScenes),
-        sort: "random"
-      }
-    });
+  const result = await graphqlQuery(performerQuery, {
+    filter: {
+      per_page: Math.min(100, totalPerformers),
+      sort: "random"
+    }
+  });
 
-    const allScenes = result.findScenes.scenes || [];
+  const allPerformers = result.findPerformers.performers || [];
+  // ... rest of your selection logic
+}
     
-    if (allScenes.length < 2) {
-      throw new Error("Not enough scenes returned from query.");
+    if (allPerformers.length < 2) {
+      throw new Error("Not enough performers returned from query.");
     }
 
-    const shuffled = allScenes.sort(() => Math.random() - 0.5);
+    const shuffled = allPerformers.sort(() => Math.random() - 0.5);
     return shuffled.slice(0, 2);
   }
 
-  // Swiss mode: fetch two scenes with similar ratings
+  // Swiss mode: fetch two performers with similar ratings
   async function fetchSwissPair() {
-    const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType) {
-        findScenes(filter: $filter) {
-          scenes {
-            ${SCENE_FRAGMENT}
+    const performersQuery = `
+      query FindPerformersByRating($filter: FindFilterType) {
+        findPerformers(filter: $filter) {
+          performers {
+            ${PERFORMER_FRAGMENT}
           }
         }
       }
     `;
 
-    // Get scenes sorted by rating
-    const result = await graphqlQuery(scenesQuery, {
+    // Get performers sorted by rating
+    const result = await graphqlQuery(performersQuery, {
       filter: {
         per_page: -1, // Get all for accurate ranking
         sort: "rating",
@@ -125,64 +112,64 @@
       }
     });
 
-    const scenes = result.findScenes.scenes || [];
+    const performers = result.findPerformers.performers || [];
     
-    if (scenes.length < 2) {
-      // Fallback to random if not enough rated scenes
-      return { scenes: await fetchRandomScenes(2), ranks: [null, null] };
+    if (performers.length < 2) {
+      // Fallback to random if not enough rated performers
+      return { performers: await fetchRandomPerformers(2), ranks: [null, null] };
     }
 
-    // Pick a random scene, then find one with similar rating
-    const randomIndex = Math.floor(Math.random() * scenes.length);
-    const scene1 = scenes[randomIndex];
-    const rating1 = scene1.rating100 || 50;
+    // Pick a random performer, then find one with similar rating
+    const randomIndex = Math.floor(Math.random() * performers.length);
+    const performer1 = performers[randomIndex];
+    const rating1 = performer1.rating100 || 50;
 
-    // Find scenes within ±15 rating points
-    const similarScenes = scenes.filter(s => {
-      if (s.id === scene1.id) return false;
+    // Find performers within ±15 rating points
+    const similarScenes = performers.filter(s => {
+      if (s.id === performer1.id) return false;
       const rating = s.rating100 || 50;
       return Math.abs(rating - rating1) <= 15;
     });
 
-    let scene2;
-    let scene2Index;
+    let performer2;
+    let performer2Index;
     if (similarScenes.length > 0) {
-      // Pick random from similar-rated scenes
-      scene2 = similarScenes[Math.floor(Math.random() * similarScenes.length)];
-      scene2Index = scenes.findIndex(s => s.id === scene2.id);
+      // Pick random from similar-rated performers
+      performer2 = similarScenes[Math.floor(Math.random() * similarScenes.length)];
+      performer2Index = performers.findIndex(s => s.id === performer2.id);
     } else {
-      // No similar scenes, pick closest
-      const otherScenes = scenes.filter(s => s.id !== scene1.id);
+      // No similar performers, pick closest
+      const otherScenes = performers.filter(s => s.id !== performer1.id);
       otherScenes.sort((a, b) => {
         const diffA = Math.abs((a.rating100 || 50) - rating1);
         const diffB = Math.abs((b.rating100 || 50) - rating1);
         return diffA - diffB;
       });
-      scene2 = otherScenes[0];
-      scene2Index = scenes.findIndex(s => s.id === scene2.id);
+      performer2 = otherScenes[0];
+      performer2Index = performers.findIndex(s => s.id === performer2.id);
     }
 
     return { 
-      scenes: [scene1, scene2], 
-      ranks: [randomIndex + 1, scene2Index + 1] 
+      performers: [performer1, performer2], 
+      ranks: [randomIndex + 1, performer2Index + 1] 
     };
   }
 
   // Gauntlet mode: champion vs next challenger
   async function fetchGauntletPair() {
-    const scenesQuery = `
+    const performersQuery = `
       query FindScenesByRating($filter: FindFilterType) {
         findScenes(filter: $filter) {
           count
-          scenes {
+          performers {
             ${SCENE_FRAGMENT}
           }
         }
       }
     `;
 
-    // Get ALL scenes sorted by rating descending (highest first)
-    const result = await graphqlQuery(scenesQuery, {
+    // Get ALL performers sorted by rating descending (highest first)
+    const result = await graphqlQuery(performersQuery, {
       filter: {
         per_page: -1, // Get all
         sort: "rating",
@@ -190,19 +177,19 @@
       }
     });
 
-    const scenes = result.findScenes.scenes || [];
-    totalScenesCount = result.findScenes.count || scenes.length;
+    const performers = result.findScenes.performers || [];
+    totalScenesCount = result.findScenes.count || performers.length;
     
-    if (scenes.length < 2) {
-      return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
+    if (performers.length < 2) {
+      return { performers: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
     }
 
     // Handle falling mode - find next opponent BELOW to test against
     if (gauntletFalling && gauntletFallingScene) {
-      const fallingIndex = scenes.findIndex(s => s.id === gauntletFallingScene.id);
+      const fallingIndex = performers.findIndex(s => s.id === gauntletFallingScene.id);
       
       // Find opponents below (higher index) that haven't been tested
-      const belowOpponents = scenes.filter((s, idx) => {
+      const belowOpponents = performers.filter((s, idx) => {
         if (s.id === gauntletFallingScene.id) return false;
         if (gauntletDefeated.includes(s.id)) return false;
         return idx > fallingIndex; // Below in ranking
@@ -210,12 +197,12 @@
       
       if (belowOpponents.length === 0) {
         // Hit the bottom - they're the lowest, place them here
-        const finalRank = scenes.length;
+        const finalRank = performers.length;
         const finalRating = 1; // Lowest rating
         updateSceneRating(gauntletFallingScene.id, finalRating);
         
         return {
-          scenes: [gauntletFallingScene],
+          performers: [gauntletFallingScene],
           ranks: [finalRank],
           isVictory: false,
           isFalling: true,
@@ -224,15 +211,15 @@
           placementRating: finalRating
         };
       } else {
-        // Get next opponent below (first one, closest to falling scene)
+        // Get next opponent below (first one, closest to falling performer)
         const nextBelow = belowOpponents[0];
-        const nextBelowIndex = scenes.findIndex(s => s.id === nextBelow.id);
+        const nextBelowIndex = performers.findIndex(s => s.id === nextBelow.id);
         
-        // Update the falling scene's rank for display
+        // Update the falling performer's rank for display
         gauntletChampionRank = fallingIndex + 1;
         
         return {
-          scenes: [gauntletFallingScene, nextBelow],
+          performers: [gauntletFallingScene, nextBelow],
           ranks: [fallingIndex + 1, nextBelowIndex + 1],
           isVictory: false,
           isFalling: true
@@ -240,29 +227,29 @@
       }
     }
 
-    // If no champion yet, start with a random challenger vs the lowest rated scene
+    // If no champion yet, start with a random challenger vs the lowest rated performer
     if (!gauntletChampion) {
       // Reset state
       gauntletDefeated = [];
       gauntletFalling = false;
       gauntletFallingScene = null;
       
-      // Pick random scene as challenger
-      const randomIndex = Math.floor(Math.random() * scenes.length);
-      const challenger = scenes[randomIndex];
+      // Pick random performer as challenger
+      const randomIndex = Math.floor(Math.random() * performers.length);
+      const challenger = performers[randomIndex];
       
-      // Start at the bottom - find lowest rated scene that isn't the challenger
-      const lowestRated = scenes
+      // Start at the bottom - find lowest rated performer that isn't the challenger
+      const lowestRated = performers
         .filter(s => s.id !== challenger.id)
         .sort((a, b) => (a.rating100 || 0) - (b.rating100 || 0))[0];
       
-      const lowestIndex = scenes.findIndex(s => s.id === lowestRated.id);
+      const lowestIndex = performers.findIndex(s => s.id === lowestRated.id);
       
       // Challenger's current rank
       gauntletChampionRank = randomIndex + 1;
       
       return { 
-        scenes: [challenger, lowestRated], 
+        performers: [challenger, lowestRated], 
         ranks: [randomIndex + 1, lowestIndex + 1],
         isVictory: false,
         isFalling: false
@@ -270,16 +257,16 @@
     }
 
     // Champion exists - find next opponent they haven't defeated yet
-    const championIndex = scenes.findIndex(s => s.id === gauntletChampion.id);
+    const championIndex = performers.findIndex(s => s.id === gauntletChampion.id);
     
     // Update champion rank (1-indexed, so +1)
     gauntletChampionRank = championIndex + 1;
     
     // Find opponents above champion that haven't been defeated
-    const remainingOpponents = scenes.filter((s, idx) => {
+    const remainingOpponents = performers.filter((s, idx) => {
       if (s.id === gauntletChampion.id) return false;
       if (gauntletDefeated.includes(s.id)) return false;
-      // Only scenes ranked higher (lower index) or same rating
+      // Only performers ranked higher (lower index) or same rating
       return idx < championIndex || (s.rating100 || 0) >= (gauntletChampion.rating100 || 0);
     });
     
@@ -287,7 +274,7 @@
     if (remainingOpponents.length === 0) {
       gauntletChampionRank = 1;
       return { 
-        scenes: [gauntletChampion], 
+        performers: [gauntletChampion], 
         ranks: [1],
         isVictory: true,
         isFalling: false
@@ -296,10 +283,10 @@
     
     // Pick the next highest-ranked remaining opponent
     const nextOpponent = remainingOpponents[remainingOpponents.length - 1]; // Closest to champion
-    const nextOpponentIndex = scenes.findIndex(s => s.id === nextOpponent.id);
+    const nextOpponentIndex = performers.findIndex(s => s.id === nextOpponent.id);
     
     return { 
-      scenes: [gauntletChampion, nextOpponent], 
+      performers: [gauntletChampion, nextOpponent], 
       ranks: [championIndex + 1, nextOpponentIndex + 1],
       isVictory: false,
       isFalling: false
@@ -308,19 +295,19 @@
 
   // Champion mode: like gauntlet but winner stays on (no falling)
   async function fetchChampionPair() {
-    const scenesQuery = `
+    const performersQuery = `
       query FindScenesByRating($filter: FindFilterType) {
         findScenes(filter: $filter) {
           count
-          scenes {
+          performers {
             ${SCENE_FRAGMENT}
           }
         }
       }
     `;
 
-    // Get ALL scenes sorted by rating descending (highest first)
-    const result = await graphqlQuery(scenesQuery, {
+    // Get ALL performers sorted by rating descending (highest first)
+    const result = await graphqlQuery(performersQuery, {
       filter: {
         per_page: -1,
         sort: "rating",
@@ -328,44 +315,44 @@
       }
     });
 
-    const scenes = result.findScenes.scenes || [];
-    totalScenesCount = result.findScenes.count || scenes.length;
+    const performers = result.findScenes.performers || [];
+    totalScenesCount = result.findScenes.count || performers.length;
     
-    if (scenes.length < 2) {
-      return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
+    if (performers.length < 2) {
+      return { performers: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
     }
 
-    // If no champion yet, start with a random challenger vs the lowest rated scene
+    // If no champion yet, start with a random challenger vs the lowest rated performer
     if (!gauntletChampion) {
       gauntletDefeated = [];
       
-      // Pick random scene as challenger
-      const randomIndex = Math.floor(Math.random() * scenes.length);
-      const challenger = scenes[randomIndex];
+      // Pick random performer as challenger
+      const randomIndex = Math.floor(Math.random() * performers.length);
+      const challenger = performers[randomIndex];
       
-      // Start at the bottom - find lowest rated scene that isn't the challenger
-      const lowestRated = scenes
+      // Start at the bottom - find lowest rated performer that isn't the challenger
+      const lowestRated = performers
         .filter(s => s.id !== challenger.id)
         .sort((a, b) => (a.rating100 || 0) - (b.rating100 || 0))[0];
       
-      const lowestIndex = scenes.findIndex(s => s.id === lowestRated.id);
+      const lowestIndex = performers.findIndex(s => s.id === lowestRated.id);
       
       gauntletChampionRank = randomIndex + 1;
       
       return { 
-        scenes: [challenger, lowestRated], 
+        performers: [challenger, lowestRated], 
         ranks: [randomIndex + 1, lowestIndex + 1],
         isVictory: false
       };
     }
 
     // Champion exists - find next opponent they haven't defeated yet
-    const championIndex = scenes.findIndex(s => s.id === gauntletChampion.id);
+    const championIndex = performers.findIndex(s => s.id === gauntletChampion.id);
     
     gauntletChampionRank = championIndex + 1;
     
     // Find opponents above champion that haven't been defeated
-    const remainingOpponents = scenes.filter((s, idx) => {
+    const remainingOpponents = performers.filter((s, idx) => {
       if (s.id === gauntletChampion.id) return false;
       if (gauntletDefeated.includes(s.id)) return false;
       return idx < championIndex || (s.rating100 || 0) >= (gauntletChampion.rating100 || 0);
@@ -375,7 +362,7 @@
     if (remainingOpponents.length === 0) {
       gauntletChampionRank = 1;
       return { 
-        scenes: [gauntletChampion], 
+        performers: [gauntletChampion], 
         ranks: [1],
         isVictory: true
       };
@@ -383,10 +370,10 @@
     
     // Pick the next highest-ranked remaining opponent
     const nextOpponent = remainingOpponents[remainingOpponents.length - 1];
-    const nextOpponentIndex = scenes.findIndex(s => s.id === nextOpponent.id);
+    const nextOpponentIndex = performers.findIndex(s => s.id === nextOpponent.id);
     
     return { 
-      scenes: [gauntletChampion, nextOpponent], 
+      performers: [gauntletChampion, nextOpponent], 
       ranks: [championIndex + 1, nextOpponentIndex + 1],
       isVictory: false
     };
@@ -409,40 +396,40 @@
       <div class="pwr-victory-screen">
         <div class="pwr-victory-crown">👑</div>
         <h2 class="pwr-victory-title">CHAMPION!</h2>
-        <div class="pwr-victory-scene">
+        <div class="pwr-victory-performer">
           ${screenshotPath 
             ? `<img class="pwr-victory-image" src="${screenshotPath}" alt="${title}" />`
             : `<div class="pwr-victory-image pwr-no-image">No Screenshot</div>`
           }
         </div>
         <h3 class="pwr-victory-name">${title}</h3>
-        <p class="pwr-victory-stats">Conquered all ${totalScenesCount} scenes with a ${gauntletWins} win streak!</p>
+        <p class="pwr-victory-stats">Conquered all ${totalScenesCount} performers with a ${gauntletWins} win streak!</p>
         <button id="pwr-new-gauntlet" class="btn btn-primary">Start New Gauntlet</button>
       </div>
     `;
   }
 
-  function showPlacementScreen(scene, rank, finalRating) {
+  function showPlacementScreen(performer, rank, finalRating) {
     const comparisonArea = document.getElementById("pwr-comparison-area");
     if (!comparisonArea) return;
     
-    const file = scene.files && scene.files[0] ? scene.files[0] : {};
-    let title = scene.title;
+    const file = performer.files && performer.files[0] ? performer.files[0] : {};
+    let title = performer.title;
     if (!title && file.path) {
       const pathParts = file.path.split(/[/\\]/);
       title = pathParts[pathParts.length - 1].replace(/\.[^/.]+$/, "");
     }
     if (!title) {
-      title = `Scene #${scene.id}`;
+      title = `Scene #${performer.id}`;
     }
     
-    const screenshotPath = scene.paths ? scene.paths.screenshot : null;
+    const screenshotPath = performer.paths ? performer.paths.screenshot : null;
     
     comparisonArea.innerHTML = `
       <div class="pwr-victory-screen">
         <div class="pwr-victory-crown">📍</div>
         <h2 class="pwr-victory-title">PLACED!</h2>
-        <div class="pwr-victory-scene">
+        <div class="pwr-victory-performer">
           ${screenshotPath 
             ? `<img class="pwr-victory-image" src="${screenshotPath}" alt="${title}" />`
             : `<div class="pwr-victory-image pwr-no-image">No Screenshot</div>`
@@ -480,29 +467,24 @@
     }
   }
   
-  // Update scene rating in Stash database
-  async function updateSceneRating(sceneId, rating100) {
-    const mutation = `
-      mutation SceneUpdate($input: SceneUpdateInput!) {
-        sceneUpdate(input: $input) {
-          id
-          rating100
-        }
+  // Update performer rating in Stash database
+async function updatePerformerRating(performerId, newRating) {
+  const mutation = `
+    mutation PerformerUpdate($input: PerformerUpdateInput!) {
+      performerUpdate(input: $input) {
+        id
+        rating100
       }
-    `;
-    
-    try {
-      await graphqlQuery(mutation, {
-        input: {
-          id: sceneId,
-          rating100: Math.max(1, Math.min(100, rating100))
-        }
-      });
-      console.log(`[Stash Battle] Updated scene ${sceneId} rating to ${rating100}`);
-    } catch (e) {
-      console.error(`[Stash Battle] Failed to update scene ${sceneId} rating:`, e);
     }
-  }
+  `;
+
+  return await graphqlQuery(mutation, {
+    input: {
+      id: performerId,
+      rating100: Math.round(newRating)
+    }
+  });
+}
 
   // ============================================
   // RATING LOGIC
@@ -517,7 +499,7 @@
     let winnerGain = 0, loserLoss = 0;
     
     if (currentMode === "gauntlet" || currentMode === "champion") {
-      // In gauntlet/champion, only the champion/falling scene changes rating
+      // In gauntlet/champion, only the champion/falling performer changes rating
       // Defenders stay the same (they're just benchmarks)
       // EXCEPT: if the defender is rank #1, they lose 1 point when defeated
       const isChampionWinner = gauntletChampion && winnerId === gauntletChampion.id;
@@ -528,7 +510,7 @@
       const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff / 40));
       const kFactor = 8;
       
-      // Only the active scene (champion or falling) gets rating changes
+      // Only the active performer (champion or falling) gets rating changes
       if (isChampionWinner || isFallingWinner) {
         winnerGain = Math.max(1, Math.round(kFactor * (1 - expectedWinner)));
       }
@@ -555,7 +537,7 @@
     const winnerChange = newWinnerRating - winnerRating;
     const loserChange = newLoserRating - loserRating;
     
-    // Update scenes in Stash (only if changed)
+    // Update performers in Stash (only if changed)
     if (winnerChange !== 0) updateSceneRating(winnerId, newWinnerRating);
     if (loserChange !== 0) updateSceneRating(loserId, newLoserRating);
     
@@ -564,7 +546,7 @@
   
   // Called when gauntlet champion loses - place them one below the winner
   function finalizeGauntletLoss(championId, winnerRating) {
-    // Set champion rating to just below the scene that beat them
+    // Set champion rating to just below the performer that beat them
     const newRating = Math.max(1, winnerRating - 1);
     updateSceneRating(championId, newRating);
     return newRating;
@@ -585,36 +567,36 @@
     return `${m}:${s.toString().padStart(2, "0")}`;
   }
 
-  function createSceneCard(scene, side, rank = null, streak = null) {
-    const file = scene.files && scene.files[0] ? scene.files[0] : {};
+  function createSceneCard(performer, side, rank = null, streak = null) {
+    const file = performer.files && performer.files[0] ? performer.files[0] : {};
     const duration = file.duration;
-    const performers = scene.performers && scene.performers.length > 0 
-      ? scene.performers.map((p) => p.name).join(", ") 
+    const performers = performer.performers && performer.performers.length > 0 
+      ? performer.performers.map((p) => p.name).join(", ") 
       : "No performers";
-    const studio = scene.studio ? scene.studio.name : "No studio";
-    const tags = scene.tags ? scene.tags.slice(0, 5).map((t) => t.name) : [];
+    const studio = performer.studio ? performer.studio.name : "No studio";
+    const tags = performer.tags ? performer.tags.slice(0, 5).map((t) => t.name) : [];
     
     // Title fallback: title -> filename from path -> Scene ID
-    let title = scene.title;
+    let title = performer.title;
     if (!title && file.path) {
       const pathParts = file.path.split(/[/\\]/);
       title = pathParts[pathParts.length - 1].replace(/\.[^/.]+$/, "");
     }
     if (!title) {
-      title = `Scene #${scene.id}`;
+      title = `Scene #${performer.id}`;
     }
     
-    const screenshotPath = scene.paths ? scene.paths.screenshot : null;
-    const previewPath = scene.paths ? scene.paths.preview : null;
-    const stashRating = scene.rating100 ? `${scene.rating100}/100` : "Unrated";
+    const screenshotPath = performer.paths ? performer.paths.screenshot : null;
+    const previewPath = performer.paths ? performer.paths.preview : null;
+    const stashRating = performer.rating100 ? `${performer.rating100}/100` : "Unrated";
     
     // Handle numeric ranks and string ranks
     let rankDisplay = '';
     if (rank !== null && rank !== undefined) {
       if (typeof rank === 'number') {
-        rankDisplay = `<span class="pwr-scene-rank">#${rank}</span>`;
+        rankDisplay = `<span class="pwr-performer-rank">#${rank}</span>`;
       } else {
-        rankDisplay = `<span class="pwr-scene-rank">${rank}</span>`;
+        rankDisplay = `<span class="pwr-performer-rank">${rank}</span>`;
       }
     }
     
@@ -625,29 +607,29 @@
     }
 
     return `
-      <div class="pwr-scene-card" data-scene-id="${scene.id}" data-side="${side}" data-rating="${scene.rating100 || 50}">
-        <div class="pwr-scene-image-container" data-scene-url="/scenes/${scene.id}">
+      <div class="pwr-performer-card" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 50}">
+        <div class="pwr-performer-image-container" data-performer-url="/performers/${performer.id}">
           ${screenshotPath 
-            ? `<img class="pwr-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />`
-            : `<div class="pwr-scene-image pwr-no-image">No Screenshot</div>`
+            ? `<img class="pwr-performer-image" src="${screenshotPath}" alt="${title}" loading="lazy" />`
+            : `<div class="pwr-performer-image pwr-no-image">No Screenshot</div>`
           }
           ${previewPath ? `<video class="pwr-hover-preview" src="${previewPath}" loop playsinline></video>` : ''}
-          <div class="pwr-scene-duration">${formatDuration(duration)}</div>
+          <div class="pwr-performer-duration">${formatDuration(duration)}</div>
           ${streakDisplay}
-          <div class="pwr-click-hint">Click to open scene</div>
+          <div class="pwr-click-hint">Click to open performer</div>
         </div>
         
-        <div class="pwr-scene-body" data-winner="${scene.id}">
-          <div class="pwr-scene-info">
-            <div class="pwr-scene-title-row">
-              <h3 class="pwr-scene-title">${title}</h3>
+        <div class="pwr-performer-body" data-winner="${performer.id}">
+          <div class="pwr-performer-info">
+            <div class="pwr-performer-title-row">
+              <h3 class="pwr-performer-title">${title}</h3>
               ${rankDisplay}
             </div>
             
-            <div class="pwr-scene-meta">
+            <div class="pwr-performer-meta">
               <div class="pwr-meta-item"><strong>Studio:</strong> ${studio}</div>
               <div class="pwr-meta-item"><strong>Performers:</strong> ${performers}</div>
-              <div class="pwr-meta-item"><strong>Date:</strong> ${scene.date || '<span class="pwr-none">None</span>'}</div>
+              <div class="pwr-meta-item"><strong>Date:</strong> ${performer.date || '<span class="pwr-none">None</span>'}</div>
               <div class="pwr-meta-item"><strong>Rating:</strong> ${stashRating}</div>
               <div class="pwr-meta-item pwr-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="pwr-tag">${tag}</span>`).join("") : '<span class="pwr-none">None</span>'}</div>
             </div>
@@ -666,7 +648,7 @@
       <div id="stash-battle-container" class="pwr-container">
         <div class="pwr-header">
           <h1 class="pwr-title">⚔️ Stash Battle</h1>
-          <p class="pwr-subtitle">Compare scenes head-to-head to build your rankings</p>
+          <p class="pwr-subtitle">Compare performers head-to-head to build your rankings</p>
           
           <div class="pwr-mode-toggle">
             <button class="pwr-mode-btn ${currentMode === 'swiss' ? 'active' : ''}" data-mode="swiss">
@@ -677,7 +659,7 @@
             <button class="pwr-mode-btn ${currentMode === 'gauntlet' ? 'active' : ''}" data-mode="gauntlet">
               <span class="pwr-mode-icon">🎯</span>
               <span class="pwr-mode-title">Gauntlet</span>
-              <span class="pwr-mode-desc">Place a scene</span>
+              <span class="pwr-mode-desc">Place a performer</span>
             </button>
             <button class="pwr-mode-btn ${currentMode === 'champion' ? 'active' : ''}" data-mode="champion">
               <span class="pwr-mode-icon">🏆</span>
@@ -689,7 +671,7 @@
 
         <div class="pwr-content">
           <div id="pwr-comparison-area" class="pwr-comparison-area">
-            <div class="pwr-loading">Loading scenes...</div>
+            <div class="pwr-loading">Loading performers...</div>
           </div>
           <div class="pwr-actions">
             <button id="pwr-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
@@ -715,11 +697,11 @@
 
     // Only show loading on first load (when empty or already showing loading)
     if (!comparisonArea.querySelector('.pwr-vs-container')) {
-      comparisonArea.innerHTML = '<div class="pwr-loading">Loading scenes...</div>';
+      comparisonArea.innerHTML = '<div class="pwr-loading">Loading performers...</div>';
     }
 
     try {
-      let scenes;
+      let performers;
       let ranks = [null, null];
       
       if (currentMode === "gauntlet") {
@@ -727,7 +709,7 @@
         
         // Check for victory (champion reached #1)
         if (gauntletResult.isVictory) {
-          comparisonArea.innerHTML = createVictoryScreen(gauntletResult.scenes[0]);
+          comparisonArea.innerHTML = createVictoryScreen(gauntletResult.performers[0]);
           
           // Hide the status banner and skip button
           const statusEl = document.getElementById("pwr-gauntlet-status");
@@ -754,20 +736,20 @@
           return;
         }
         
-        // Check for placement (falling scene hit bottom)
+        // Check for placement (falling performer hit bottom)
         if (gauntletResult.isPlacement) {
-          showPlacementScreen(gauntletResult.scenes[0], gauntletResult.placementRank, gauntletResult.placementRating);
+          showPlacementScreen(gauntletResult.performers[0], gauntletResult.placementRank, gauntletResult.placementRating);
           return;
         }
         
-        scenes = gauntletResult.scenes;
+        performers = gauntletResult.performers;
         ranks = gauntletResult.ranks;
       } else if (currentMode === "champion") {
         const championResult = await fetchChampionPair();
         
         // Check for victory (champion beat everyone)
         if (championResult.isVictory) {
-          comparisonArea.innerHTML = createVictoryScreen(championResult.scenes[0]);
+          comparisonArea.innerHTML = createVictoryScreen(championResult.performers[0]);
           
           // Hide the skip button
           const actionsEl = document.querySelector(".pwr-actions");
@@ -789,22 +771,22 @@
           return;
         }
         
-        scenes = championResult.scenes;
+        performers = championResult.performers;
         ranks = championResult.ranks;
       } else {
         const swissResult = await fetchSwissPair();
-        scenes = swissResult.scenes;
+        performers = swissResult.performers;
         ranks = swissResult.ranks;
       }
       
-      if (scenes.length < 2) {
+      if (performers.length < 2) {
         comparisonArea.innerHTML =
-          '<div class="pwr-error">Not enough scenes available for comparison.</div>';
+          '<div class="pwr-error">Not enough performers available for comparison.</div>';
         return;
       }
 
-      currentPair.left = scenes[0];
-      currentPair.right = scenes[1];
+      currentPair.left = performers[0];
+      currentPair.right = performers[1];
       currentRanks.left = ranks[0];
       currentRanks.right = ranks[1];
 
@@ -812,41 +794,41 @@
       let leftStreak = null;
       let rightStreak = null;
       if (currentMode === "gauntlet" || currentMode === "champion") {
-        if (gauntletChampion && scenes[0].id === gauntletChampion.id) {
+        if (gauntletChampion && performers[0].id === gauntletChampion.id) {
           leftStreak = gauntletWins;
-        } else if (gauntletChampion && scenes[1].id === gauntletChampion.id) {
+        } else if (gauntletChampion && performers[1].id === gauntletChampion.id) {
           rightStreak = gauntletWins;
         }
       }
 
       comparisonArea.innerHTML = `
         <div class="pwr-vs-container">
-          ${createSceneCard(scenes[0], "left", ranks[0], leftStreak)}
+          ${createSceneCard(performers[0], "left", ranks[0], leftStreak)}
           <div class="pwr-vs-divider">
             <span class="pwr-vs-text">VS</span>
           </div>
-          ${createSceneCard(scenes[1], "right", ranks[1], rightStreak)}
+          ${createSceneCard(performers[1], "right", ranks[1], rightStreak)}
         </div>
       `;
 
-      // Attach event listeners to scene body (for choosing)
-      comparisonArea.querySelectorAll(".pwr-scene-body").forEach((body) => {
+      // Attach event listeners to performer body (for choosing)
+      comparisonArea.querySelectorAll(".pwr-performer-body").forEach((body) => {
         body.addEventListener("click", handleChooseScene);
       });
 
       // Attach click-to-open (for thumbnail only)
-      comparisonArea.querySelectorAll(".pwr-scene-image-container").forEach((container) => {
-        const sceneUrl = container.dataset.sceneUrl;
+      comparisonArea.querySelectorAll(".pwr-performer-image-container").forEach((container) => {
+        const performerUrl = container.dataset.performerUrl;
         
         container.addEventListener("click", () => {
-          if (sceneUrl) {
-            window.open(sceneUrl, "_blank");
+          if (performerUrl) {
+            window.open(performerUrl, "_blank");
           }
         });
       });
 
       // Attach hover preview to entire card
-      comparisonArea.querySelectorAll(".pwr-scene-card").forEach((card) => {
+      comparisonArea.querySelectorAll(".pwr-performer-card").forEach((card) => {
         const video = card.querySelector(".pwr-hover-preview");
         if (!video) return;
         
@@ -872,10 +854,10 @@
         skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
       }
     } catch (error) {
-      console.error("[Stash Battle] Error loading scenes:", error);
+      console.error("[Stash Battle] Error loading performers:", error);
       comparisonArea.innerHTML = `
         <div class="pwr-error">
-          Error loading scenes: ${error.message}<br>
+          Error loading performers: ${error.message}<br>
           <button class="btn btn-primary" onclick="location.reload()">Retry</button>
         </div>
       `;
@@ -887,11 +869,11 @@
     disableChoice = true;
     const body = event.currentTarget;
     const winnerId = body.dataset.winner;
-    const winnerCard = body.closest(".pwr-scene-card");
+    const winnerCard = body.closest(".pwr-performer-card");
     const loserId = winnerId === currentPair.left.id ? currentPair.right.id : currentPair.left.id;
     
     const winnerRating = parseInt(winnerCard.dataset.rating) || 50;
-    const loserCard = document.querySelector(`.pwr-scene-card[data-scene-id="${loserId}"]`);
+    const loserCard = document.querySelector(`.pwr-performer-card[data-performer-id="${loserId}"]`);
     const loserRating = parseInt(loserCard?.dataset.rating) || 50;
     
     // Get the loser's rank for #1 dethrone logic
@@ -905,8 +887,8 @@
       // Check if we're in falling mode (finding floor after a loss)
       if (gauntletFalling && gauntletFallingScene) {
         if (winnerId === gauntletFallingScene.id) {
-          // Falling scene won - found their floor!
-          // Set their rating to just above the scene they beat
+          // Falling performer won - found their floor!
+          // Set their rating to just above the performer they beat
           const finalRating = Math.min(100, loserRating + 1);
           updateSceneRating(gauntletFallingScene.id, finalRating);
           
@@ -924,7 +906,7 @@
           }, 800);
           return;
         } else {
-          // Falling scene lost again - keep falling
+          // Falling performer lost again - keep falling
           gauntletDefeated.push(winnerId);
           
           // Visual feedback
@@ -950,7 +932,7 @@
         // Champion LOST - start falling to find their floor
         gauntletFalling = true;
         gauntletFallingScene = loserScene; // The old champion is now falling
-        gauntletDefeated = [winnerId]; // They lost to this scene
+        gauntletDefeated = [winnerId]; // They lost to this performer
         
         // Winner becomes the new climbing champion
         gauntletChampion = winnerScene;
@@ -1081,14 +1063,14 @@
 
   function shouldShowButton() {
     const path = window.location.pathname;
-    // Only show on /scenes exactly, not /scenes/12345
-    return path === '/scenes' || path === '/scenes/';
+    // Only show on /performers exactly, not /performers/12345
+    return path === '/performers' || path === '/performers/';
   }
 
   function addFloatingButton() {
     const existingBtn = document.getElementById("pwr-floating-btn");
     
-    // Remove button if we're not on the scenes page
+    // Remove button if we're not on the performers page
     if (!shouldShowButton()) {
       if (existingBtn) existingBtn.remove();
       return;
@@ -1207,11 +1189,11 @@
       }
 
       if (e.key === "ArrowLeft" && currentPair.left) {
-        const leftBody = modal.querySelector('.pwr-scene-card[data-side="left"] .pwr-scene-body');
+        const leftBody = modal.querySelector('.pwr-performer-card[data-side="left"] .pwr-performer-body');
         if (leftBody) leftBody.click();
       }
       if (e.key === "ArrowRight" && currentPair.right) {
-        const rightBody = modal.querySelector('.pwr-scene-card[data-side="right"] .pwr-scene-body');
+        const rightBody = modal.querySelector('.pwr-performer-card[data-side="right"] .pwr-performer-body');
         if (rightBody) rightBody.click();
       }
       if (e.key === " " || e.code === "Space") {
