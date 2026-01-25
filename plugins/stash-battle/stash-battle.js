@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  const STORAGE_KEY = "stash-battle-state";
+
   // Current comparison pair and mode
   let currentPair = { left: null, right: null };
   let currentRanks = { left: null, right: null };
@@ -12,7 +14,62 @@
   let gauntletFalling = false; // True when champion lost and is finding their floor
   let gauntletFallingScene = null; // The scene that's falling to find its position
   let totalScenesCount = 0; // Total scenes for position display
-  let disableChoice = false; // Track when inputs should be disabled to prevent multiple events 
+  let disableChoice = false; // Track when inputs should be disabled to prevent multiple events
+
+  // ============================================
+  // STATE PERSISTENCE
+  // ============================================
+
+  function saveState() {
+    const state = {
+      currentPair,
+      currentRanks,
+      currentMode,
+      gauntletChampion,
+      gauntletWins,
+      gauntletChampionRank,
+      gauntletDefeated,
+      gauntletFalling,
+      gauntletFallingScene,
+      totalScenesCount
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.error("[Stash Battle] Failed to save state:", e);
+    }
+  }
+
+  function loadState() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const state = JSON.parse(saved);
+        currentPair = state.currentPair || { left: null, right: null };
+        currentRanks = state.currentRanks || { left: null, right: null };
+        currentMode = state.currentMode || "swiss";
+        gauntletChampion = state.gauntletChampion || null;
+        gauntletWins = state.gauntletWins || 0;
+        gauntletChampionRank = state.gauntletChampionRank || 0;
+        gauntletDefeated = state.gauntletDefeated || [];
+        gauntletFalling = state.gauntletFalling || false;
+        gauntletFallingScene = state.gauntletFallingScene || null;
+        totalScenesCount = state.totalScenesCount || 0;
+        return true;
+      }
+    } catch (e) {
+      console.error("[Stash Battle] Failed to load state:", e);
+    }
+    return false;
+  }
+
+  function clearState() {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (e) {
+      console.error("[Stash Battle] Failed to clear state:", e);
+    }
+  } 
 
   // ============================================
   // GRAPHQL QUERIES
@@ -469,6 +526,7 @@
     gauntletChampion = null;
     gauntletWins = 0;
     gauntletDefeated = [];
+    saveState();
     
     // Attach button handler
     const newBtn = comparisonArea.querySelector("#pwr-new-gauntlet");
@@ -745,6 +803,7 @@
               gauntletDefeated = [];
               gauntletFalling = false;
               gauntletFallingScene = null;
+              saveState();
               // Show the actions again
               if (actionsEl) actionsEl.style.display = "";
               loadNewPair();
@@ -781,6 +840,7 @@
               gauntletWins = 0;
               gauntletChampionRank = 0;
               gauntletDefeated = [];
+              saveState();
               if (actionsEl) actionsEl.style.display = "";
               loadNewPair();
             });
@@ -834,13 +894,13 @@
         body.addEventListener("click", handleChooseScene);
       });
 
-      // Attach click-to-open (for thumbnail only)
+      // Attach click-to-open (for thumbnail only) - redirect instead of new tab
       comparisonArea.querySelectorAll(".pwr-scene-image-container").forEach((container) => {
         const sceneUrl = container.dataset.sceneUrl;
         
         container.addEventListener("click", () => {
           if (sceneUrl) {
-            window.open(sceneUrl, "_blank");
+            window.location.href = sceneUrl;
           }
         });
       });
@@ -871,6 +931,9 @@
         skipBtn.style.opacity = disableSkip ? "0.5" : "1";
         skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
       }
+
+      // Save state after loading new pair
+      saveState();
     } catch (error) {
       console.error("[Stash Battle] Error loading scenes:", error);
       comparisonArea.innerHTML = `
@@ -879,6 +942,79 @@
           <button class="btn btn-primary" onclick="location.reload()">Retry</button>
         </div>
       `;
+    }
+  }
+
+  function restoreCurrentPair() {
+    disableChoice = false;
+    const comparisonArea = document.getElementById("pwr-comparison-area");
+    if (!comparisonArea) return;
+
+    const scenes = [currentPair.left, currentPair.right];
+    const ranks = [currentRanks.left, currentRanks.right];
+
+    // Determine streak for each card (gauntlet and champion modes)
+    let leftStreak = null;
+    let rightStreak = null;
+    if (currentMode === "gauntlet" || currentMode === "champion") {
+      if (gauntletChampion && scenes[0] && scenes[0].id === gauntletChampion.id) {
+        leftStreak = gauntletWins;
+      } else if (gauntletChampion && scenes[1] && scenes[1].id === gauntletChampion.id) {
+        rightStreak = gauntletWins;
+      }
+    }
+
+    comparisonArea.innerHTML = `
+      <div class="pwr-vs-container">
+        ${createSceneCard(scenes[0], "left", ranks[0], leftStreak)}
+        <div class="pwr-vs-divider">
+          <span class="pwr-vs-text">VS</span>
+        </div>
+        ${createSceneCard(scenes[1], "right", ranks[1], rightStreak)}
+      </div>
+    `;
+
+    // Attach event listeners to scene body (for choosing)
+    comparisonArea.querySelectorAll(".pwr-scene-body").forEach((body) => {
+      body.addEventListener("click", handleChooseScene);
+    });
+
+    // Attach click-to-open (for thumbnail only) - redirect instead of new tab
+    comparisonArea.querySelectorAll(".pwr-scene-image-container").forEach((container) => {
+      const sceneUrl = container.dataset.sceneUrl;
+      
+      container.addEventListener("click", () => {
+        if (sceneUrl) {
+          window.location.href = sceneUrl;
+        }
+      });
+    });
+
+    // Attach hover preview to entire card
+    comparisonArea.querySelectorAll(".pwr-scene-card").forEach((card) => {
+      const video = card.querySelector(".pwr-hover-preview");
+      if (!video) return;
+      
+      card.addEventListener("mouseenter", () => {
+        video.currentTime = 0;
+        video.muted = false;
+        video.volume = 0.5;
+        video.play().catch(() => {});
+      });
+      
+      card.addEventListener("mouseleave", () => {
+        video.pause();
+        video.currentTime = 0;
+      });
+    });
+    
+    // Update skip button state
+    const skipBtn = document.querySelector("#pwr-skip-btn");
+    if (skipBtn) {
+      const disableSkip = (currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion;
+      skipBtn.disabled = disableSkip;
+      skipBtn.style.opacity = disableSkip ? "0.5" : "1";
+      skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
     }
   }
 
@@ -921,11 +1057,13 @@
           // Show placement screen after brief delay
           setTimeout(() => {
             showPlacementScreen(gauntletFallingScene, finalRank, finalRating);
+            saveState();
           }, 800);
           return;
         } else {
           // Falling scene lost again - keep falling
           gauntletDefeated.push(winnerId);
+          saveState();
           
           // Visual feedback
           winnerCard.classList.add("pwr-winner");
@@ -964,6 +1102,8 @@
         gauntletWins = 1;
       }
       
+      saveState();
+      
       // Visual feedback with animations
       winnerCard.classList.add("pwr-winner");
       if (loserCard) loserCard.classList.add("pwr-loser");
@@ -1000,6 +1140,8 @@
         gauntletWins = 1;
       }
       
+      saveState();
+      
       // Visual feedback with animations
       winnerCard.classList.add("pwr-winner");
       if (loserCard) loserCard.classList.add("pwr-loser");
@@ -1018,6 +1160,8 @@
 
     // For Swiss: Calculate and show rating changes
     const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(winnerId, loserId, winnerRating, loserRating);
+
+    saveState();
 
     // Visual feedback
     winnerCard.classList.add("pwr-winner");
@@ -1081,8 +1225,8 @@
 
   function shouldShowButton() {
     const path = window.location.pathname;
-    // Only show on /scenes exactly, not /scenes/12345
-    return path === '/scenes' || path === '/scenes/';
+    // Show on /scenes list and individual scene pages (/scenes/12345)
+    return path === '/scenes' || path === '/scenes/' || path.startsWith('/scenes/');
   }
 
   function addFloatingButton() {
@@ -1121,6 +1265,9 @@
     const existingModal = document.getElementById("pwr-modal");
     if (existingModal) existingModal.remove();
 
+    // Try to load saved state
+    const hasState = loadState();
+
     const modal = document.createElement("div");
     modal.id = "pwr-modal";
     modal.innerHTML = `
@@ -1158,6 +1305,7 @@
           
           // Load new pair in new mode
           loadNewPair();
+          saveState();
         }
       });
     });
@@ -1179,13 +1327,18 @@
           gauntletDefeated = [];
           gauntletFalling = false;
           gauntletFallingScene = null;
+          saveState();
         }
         loadNewPair();
       });
     }
 
-    // Load initial comparison
-    loadNewPair();
+    // Load initial comparison or restore saved pair
+    if (hasState && currentPair.left && currentPair.right) {
+      restoreCurrentPair();
+    } else {
+      loadNewPair();
+    }
 
     // Close handlers
     modal.querySelector(".pwr-modal-backdrop").addEventListener("click", closeRankingModal);
@@ -1231,6 +1384,7 @@
             gauntletDefeated = [];
             gauntletFalling = false;
             gauntletFallingScene = null;
+            saveState();
           }
           loadNewPair();
         }
