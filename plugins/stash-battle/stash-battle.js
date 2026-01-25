@@ -15,6 +15,7 @@
   let gauntletFallingScene = null; // The scene that's falling to find its position
   let totalScenesCount = 0; // Total scenes for position display
   let disableChoice = false; // Track when inputs should be disabled to prevent multiple events
+  let savedFilterParams = ""; // Store URL filter params to detect changes
 
   // ============================================
   // STATE PERSISTENCE
@@ -31,7 +32,8 @@
       gauntletDefeated,
       gauntletFalling,
       gauntletFallingScene,
-      totalScenesCount
+      totalScenesCount,
+      savedFilterParams: window.location.search
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -55,6 +57,7 @@
         gauntletFalling = state.gauntletFalling || false;
         gauntletFallingScene = state.gauntletFallingScene || null;
         totalScenesCount = state.totalScenesCount || 0;
+        savedFilterParams = state.savedFilterParams || "";
         return true;
       }
     } catch (e) {
@@ -115,15 +118,98 @@
     }
   `;
 
+  // ============================================
+  // URL FILTER PARSING
+  // ============================================
+
+  // Get current URL search params
+  function getSearchParams() {
+    return new URLSearchParams(window.location.search);
+  }
+
+  // Build FindFilterType from search params
+  function getFindFilter(searchParams, overrides = {}) {
+    const filter = {
+      per_page: overrides.per_page ?? -1,
+      sort: overrides.sort ?? (searchParams.get("sortby") || "rating"),
+      direction: overrides.direction ?? (searchParams.get("sortdir")?.toUpperCase() || "DESC"),
+      ...overrides
+    };
+    
+    // Include search query if present
+    const query = searchParams.get("q");
+    if (query) {
+      filter.q = query;
+    }
+    
+    return filter;
+  }
+
+  // Build SceneFilterType from URL 'c' params
+  // Passes through the filter structure with minimal transformation
+  function getSceneFilter(searchParams) {
+    const sceneFilter = {};
+    
+    // Boolean fields expect true/false, not criterion objects
+    // Add more here if you encounter "cannot use map as Boolean" errors
+    const booleanFields = ["interactive", "organized", "performer_favorite", "interactive_speed"];
+    
+    if (searchParams.has("c")) {
+      searchParams.getAll("c").forEach((cStr) => {
+        try {
+          // Parse filter condition - URL uses () instead of {}
+          cStr = cStr.replaceAll("(", "{").replaceAll(")", "}");
+          const cObj = JSON.parse(cStr);
+          
+          // Extract type field - this becomes the filter key
+          const filterType = cObj.type;
+          if (!filterType) return;
+          
+          // Handle boolean fields specially
+          if (booleanFields.includes(filterType)) {
+            const val = cObj.value;
+            sceneFilter[filterType] = val === "true" || val === true;
+            return;
+          }
+          
+          // Initialize the filter for this type
+          sceneFilter[filterType] = {};
+          
+          // Copy all properties except 'type' to the filter
+          Object.keys(cObj).forEach((key) => {
+            if (key === "type") return;
+            
+            const val = cObj[key];
+            if (typeof val === "object" && val !== null) {
+              // Flatten nested objects (e.g., value: {value: 4} becomes value: 4)
+              Object.keys(val).forEach((innerKey) => {
+                sceneFilter[filterType][innerKey] = val[innerKey];
+              });
+            } else {
+              sceneFilter[filterType][key] = val;
+            }
+          });
+        } catch (e) {
+          console.error("[Stash Battle] Failed to parse filter condition:", cStr, e);
+        }
+      });
+    }
+    
+    return Object.keys(sceneFilter).length > 0 ? sceneFilter : null;
+  }
+
   async function fetchSceneCount() {
+    const searchParams = getSearchParams();
+    const sceneFilter = getSceneFilter(searchParams);
+    
     const countQuery = `
-      query FindScenesCount {
-        findScenes(filter: { per_page: 0 }) {
+      query FindScenesCount($scene_filter: SceneFilterType) {
+        findScenes(filter: { per_page: 0 }, scene_filter: $scene_filter) {
           count
         }
       }
     `;
-    const countResult = await graphqlQuery(countQuery);
+    const countResult = await graphqlQuery(countQuery, { scene_filter: sceneFilter });
     return countResult.findScenes.count;
   }
 
@@ -134,9 +220,12 @@
       throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
     }
 
+    const searchParams = getSearchParams();
+    const sceneFilter = getSceneFilter(searchParams);
+
     const scenesQuery = `
-      query FindRandomScenes($filter: FindFilterType) {
-        findScenes(filter: $filter) {
+      query FindRandomScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
           scenes {
             ${SCENE_FRAGMENT}
           }
@@ -145,10 +234,11 @@
     `;
 
     const result = await graphqlQuery(scenesQuery, {
-      filter: {
+      filter: getFindFilter(searchParams, {
         per_page: Math.min(100, totalScenes),
         sort: "random"
-      }
+      }),
+      scene_filter: sceneFilter
     });
 
     const allScenes = result.findScenes.scenes || [];
@@ -162,10 +252,15 @@
   }
 
   // Swiss mode: fetch two scenes with similar ratings
+  // Left side (scene1): from filtered pool (scenes to be rated)
+  // Right side (scene2): from full collection (opponents)
   async function fetchSwissPair() {
+    const searchParams = getSearchParams();
+    const sceneFilter = getSceneFilter(searchParams);
+
     const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType) {
-        findScenes(filter: $filter) {
+      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
           scenes {
             ${SCENE_FRAGMENT}
           }
@@ -173,29 +268,39 @@
       }
     `;
 
-    // Get scenes sorted by rating
-    const result = await graphqlQuery(scenesQuery, {
-      filter: {
-        per_page: -1, // Get all for accurate ranking
+    // Get filtered scenes for left side (challenger to be rated)
+    const filteredResult = await graphqlQuery(scenesQuery, {
+      filter: getFindFilter(searchParams, {
+        per_page: -1,
         sort: "rating",
         direction: "DESC"
-      }
+      }),
+      scene_filter: sceneFilter
     });
+    const filteredScenes = filteredResult.findScenes.scenes || [];
 
-    const scenes = result.findScenes.scenes || [];
+    // Get ALL scenes for right side (opponent pool)
+    const allResult = await graphqlQuery(scenesQuery, {
+      filter: {
+        per_page: -1,
+        sort: "rating",
+        direction: "DESC"
+      },
+      scene_filter: null
+    });
+    const allScenes = allResult.findScenes.scenes || [];
     
-    if (scenes.length < 2) {
-      // Fallback to random if not enough rated scenes
-      return { scenes: await fetchRandomScenes(2), ranks: [null, null] };
+    if (filteredScenes.length < 1 || allScenes.length < 2) {
+      throw new Error("Not enough scenes for comparison.");
     }
 
-    // Pick a random scene, then find one with similar rating
-    const randomIndex = Math.floor(Math.random() * scenes.length);
-    const scene1 = scenes[randomIndex];
+    // Pick a random scene from filtered pool (left side - to be rated)
+    const randomIndex = Math.floor(Math.random() * filteredScenes.length);
+    const scene1 = filteredScenes[randomIndex];
     const rating1 = scene1.rating100 || 50;
 
-    // Find scenes within ±15 rating points
-    const similarScenes = scenes.filter(s => {
+    // Find opponent from full collection with similar rating (right side)
+    const similarScenes = allScenes.filter(s => {
       if (s.id === scene1.id) return false;
       const rating = s.rating100 || 50;
       return Math.abs(rating - rating1) <= 15;
@@ -206,30 +311,38 @@
     if (similarScenes.length > 0) {
       // Pick random from similar-rated scenes
       scene2 = similarScenes[Math.floor(Math.random() * similarScenes.length)];
-      scene2Index = scenes.findIndex(s => s.id === scene2.id);
+      scene2Index = allScenes.findIndex(s => s.id === scene2.id);
     } else {
-      // No similar scenes, pick closest
-      const otherScenes = scenes.filter(s => s.id !== scene1.id);
+      // No similar scenes, pick closest from full collection
+      const otherScenes = allScenes.filter(s => s.id !== scene1.id);
       otherScenes.sort((a, b) => {
         const diffA = Math.abs((a.rating100 || 50) - rating1);
         const diffB = Math.abs((b.rating100 || 50) - rating1);
         return diffA - diffB;
       });
       scene2 = otherScenes[0];
-      scene2Index = scenes.findIndex(s => s.id === scene2.id);
+      scene2Index = allScenes.findIndex(s => s.id === scene2.id);
     }
+
+    // Rank for scene1 is within filtered pool, scene2 is within full collection
+    const scene1RankInAll = allScenes.findIndex(s => s.id === scene1.id) + 1;
 
     return { 
       scenes: [scene1, scene2], 
-      ranks: [randomIndex + 1, scene2Index + 1] 
+      ranks: [scene1RankInAll || randomIndex + 1, scene2Index + 1] 
     };
   }
 
   // Gauntlet mode: champion vs next challenger
+  // Left side (champion): initially picked from filtered pool (scenes to be rated)
+  // Right side (opponents): from full collection
   async function fetchGauntletPair() {
+    const searchParams = getSearchParams();
+    const sceneFilter = getSceneFilter(searchParams);
+
     const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType) {
-        findScenes(filter: $filter) {
+      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
           count
           scenes {
             ${SCENE_FRAGMENT}
@@ -238,28 +351,29 @@
       }
     `;
 
-    // Get ALL scenes sorted by rating descending (highest first)
-    const result = await graphqlQuery(scenesQuery, {
+    // Get ALL scenes for opponent pool and ranking (no filter)
+    const allResult = await graphqlQuery(scenesQuery, {
       filter: {
-        per_page: -1, // Get all
+        per_page: -1,
         sort: "rating",
         direction: "DESC"
-      }
+      },
+      scene_filter: null
     });
 
-    const scenes = result.findScenes.scenes || [];
-    totalScenesCount = result.findScenes.count || scenes.length;
+    const allScenes = allResult.findScenes.scenes || [];
+    totalScenesCount = allResult.findScenes.count || allScenes.length;
     
-    if (scenes.length < 2) {
+    if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
     }
 
-    // Handle falling mode - find next opponent BELOW to test against
+    // Handle falling mode - find next opponent BELOW to test against (from full collection)
     if (gauntletFalling && gauntletFallingScene) {
-      const fallingIndex = scenes.findIndex(s => s.id === gauntletFallingScene.id);
+      const fallingIndex = allScenes.findIndex(s => s.id === gauntletFallingScene.id);
       
       // Find opponents below (higher index) that haven't been tested
-      const belowOpponents = scenes.filter((s, idx) => {
+      const belowOpponents = allScenes.filter((s, idx) => {
         if (s.id === gauntletFallingScene.id) return false;
         if (gauntletDefeated.includes(s.id)) return false;
         return idx > fallingIndex; // Below in ranking
@@ -267,7 +381,7 @@
       
       if (belowOpponents.length === 0) {
         // Hit the bottom - they're the lowest, place them here
-        const finalRank = scenes.length;
+        const finalRank = allScenes.length;
         const finalRating = 1; // Lowest rating
         updateSceneRating(gauntletFallingScene.id, finalRating);
         
@@ -283,7 +397,7 @@
       } else {
         // Get next opponent below (first one, closest to falling scene)
         const nextBelow = belowOpponents[0];
-        const nextBelowIndex = scenes.findIndex(s => s.id === nextBelow.id);
+        const nextBelowIndex = allScenes.findIndex(s => s.id === nextBelow.id);
         
         // Update the falling scene's rank for display
         gauntletChampionRank = fallingIndex + 1;
@@ -297,43 +411,60 @@
       }
     }
 
-    // If no champion yet, start with a random challenger vs the lowest rated scene
+    // If no champion yet, pick from filtered pool to start
     if (!gauntletChampion) {
       // Reset state
       gauntletDefeated = [];
       gauntletFalling = false;
       gauntletFallingScene = null;
       
-      // Pick random scene as challenger
-      const randomIndex = Math.floor(Math.random() * scenes.length);
-      const challenger = scenes[randomIndex];
+      // Get filtered scenes to pick initial challenger from (scenes to be rated)
+      const filteredResult = await graphqlQuery(scenesQuery, {
+        filter: getFindFilter(searchParams, {
+          per_page: -1,
+          sort: "rating",
+          direction: "DESC"
+        }),
+        scene_filter: sceneFilter
+      });
+      const filteredScenes = filteredResult.findScenes.scenes || [];
       
-      // Start at the bottom - find lowest rated scene that isn't the challenger
-      const lowestRated = scenes
+      if (filteredScenes.length < 1) {
+        throw new Error("No scenes match your filter criteria.");
+      }
+      
+      // Pick random scene from filtered pool as challenger (left side - to be rated)
+      const challenger = filteredScenes[Math.floor(Math.random() * filteredScenes.length)];
+      
+      // Find challenger's position in full collection
+      const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
+      
+      // Start at the bottom of full collection - find lowest rated scene that isn't the challenger
+      const lowestRated = allScenes
         .filter(s => s.id !== challenger.id)
         .sort((a, b) => (a.rating100 || 0) - (b.rating100 || 0))[0];
       
-      const lowestIndex = scenes.findIndex(s => s.id === lowestRated.id);
+      const lowestIndex = allScenes.findIndex(s => s.id === lowestRated.id);
       
-      // Challenger's current rank
-      gauntletChampionRank = randomIndex + 1;
+      // Challenger's current rank in full collection
+      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : allScenes.length;
       
       return { 
         scenes: [challenger, lowestRated], 
-        ranks: [randomIndex + 1, lowestIndex + 1],
+        ranks: [gauntletChampionRank, lowestIndex + 1],
         isVictory: false,
         isFalling: false
       };
     }
 
-    // Champion exists - find next opponent they haven't defeated yet
-    const championIndex = scenes.findIndex(s => s.id === gauntletChampion.id);
+    // Champion exists - find next opponent from full collection they haven't defeated yet
+    const championIndex = allScenes.findIndex(s => s.id === gauntletChampion.id);
     
     // Update champion rank (1-indexed, so +1)
-    gauntletChampionRank = championIndex + 1;
+    gauntletChampionRank = championIndex >= 0 ? championIndex + 1 : 1;
     
-    // Find opponents above champion that haven't been defeated
-    const remainingOpponents = scenes.filter((s, idx) => {
+    // Find opponents above champion that haven't been defeated (from full collection)
+    const remainingOpponents = allScenes.filter((s, idx) => {
       if (s.id === gauntletChampion.id) return false;
       if (gauntletDefeated.includes(s.id)) return false;
       // Only scenes ranked higher (lower index) or same rating
@@ -353,7 +484,7 @@
     
     // Pick the next highest-ranked remaining opponent
     const nextOpponent = remainingOpponents[remainingOpponents.length - 1]; // Closest to champion
-    const nextOpponentIndex = scenes.findIndex(s => s.id === nextOpponent.id);
+    const nextOpponentIndex = allScenes.findIndex(s => s.id === nextOpponent.id);
     
     return { 
       scenes: [gauntletChampion, nextOpponent], 
@@ -364,10 +495,15 @@
   }
 
   // Champion mode: like gauntlet but winner stays on (no falling)
+  // Left side (champion): initially picked from filtered pool (scenes to be rated)
+  // Right side (opponents): from full collection
   async function fetchChampionPair() {
+    const searchParams = getSearchParams();
+    const sceneFilter = getSceneFilter(searchParams);
+
     const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType) {
-        findScenes(filter: $filter) {
+      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
           count
           scenes {
             ${SCENE_FRAGMENT}
@@ -376,53 +512,71 @@
       }
     `;
 
-    // Get ALL scenes sorted by rating descending (highest first)
-    const result = await graphqlQuery(scenesQuery, {
+    // Get ALL scenes for opponent pool and ranking (no filter)
+    const allResult = await graphqlQuery(scenesQuery, {
       filter: {
         per_page: -1,
         sort: "rating",
         direction: "DESC"
-      }
+      },
+      scene_filter: null
     });
 
-    const scenes = result.findScenes.scenes || [];
-    totalScenesCount = result.findScenes.count || scenes.length;
+    const allScenes = allResult.findScenes.scenes || [];
+    totalScenesCount = allResult.findScenes.count || allScenes.length;
     
-    if (scenes.length < 2) {
+    if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
     }
 
-    // If no champion yet, start with a random challenger vs the lowest rated scene
+    // If no champion yet, pick from filtered pool to start
     if (!gauntletChampion) {
       gauntletDefeated = [];
       
-      // Pick random scene as challenger
-      const randomIndex = Math.floor(Math.random() * scenes.length);
-      const challenger = scenes[randomIndex];
+      // Get filtered scenes to pick initial challenger from (scenes to be rated)
+      const filteredResult = await graphqlQuery(scenesQuery, {
+        filter: getFindFilter(searchParams, {
+          per_page: -1,
+          sort: "rating",
+          direction: "DESC"
+        }),
+        scene_filter: sceneFilter
+      });
+      const filteredScenes = filteredResult.findScenes.scenes || [];
       
-      // Start at the bottom - find lowest rated scene that isn't the challenger
-      const lowestRated = scenes
+      if (filteredScenes.length < 1) {
+        throw new Error("No scenes match your filter criteria.");
+      }
+      
+      // Pick random scene from filtered pool as challenger (left side - to be rated)
+      const challenger = filteredScenes[Math.floor(Math.random() * filteredScenes.length)];
+      
+      // Find challenger's position in full collection
+      const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
+      
+      // Start at the bottom of full collection - find lowest rated scene that isn't the challenger
+      const lowestRated = allScenes
         .filter(s => s.id !== challenger.id)
         .sort((a, b) => (a.rating100 || 0) - (b.rating100 || 0))[0];
       
-      const lowestIndex = scenes.findIndex(s => s.id === lowestRated.id);
+      const lowestIndex = allScenes.findIndex(s => s.id === lowestRated.id);
       
-      gauntletChampionRank = randomIndex + 1;
+      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : allScenes.length;
       
       return { 
         scenes: [challenger, lowestRated], 
-        ranks: [randomIndex + 1, lowestIndex + 1],
+        ranks: [gauntletChampionRank, lowestIndex + 1],
         isVictory: false
       };
     }
 
-    // Champion exists - find next opponent they haven't defeated yet
-    const championIndex = scenes.findIndex(s => s.id === gauntletChampion.id);
+    // Champion exists - find next opponent from full collection they haven't defeated yet
+    const championIndex = allScenes.findIndex(s => s.id === gauntletChampion.id);
     
-    gauntletChampionRank = championIndex + 1;
+    gauntletChampionRank = championIndex >= 0 ? championIndex + 1 : 1;
     
-    // Find opponents above champion that haven't been defeated
-    const remainingOpponents = scenes.filter((s, idx) => {
+    // Find opponents above champion that haven't been defeated (from full collection)
+    const remainingOpponents = allScenes.filter((s, idx) => {
       if (s.id === gauntletChampion.id) return false;
       if (gauntletDefeated.includes(s.id)) return false;
       return idx < championIndex || (s.rating100 || 0) >= (gauntletChampion.rating100 || 0);
@@ -440,7 +594,7 @@
     
     // Pick the next highest-ranked remaining opponent
     const nextOpponent = remainingOpponents[remainingOpponents.length - 1];
-    const nextOpponentIndex = scenes.findIndex(s => s.id === nextOpponent.id);
+    const nextOpponentIndex = allScenes.findIndex(s => s.id === nextOpponent.id);
     
     return { 
       scenes: [gauntletChampion, nextOpponent], 
@@ -682,9 +836,13 @@
       streakDisplay = `<div class="pwr-streak-badge">🔥 ${streak} win${streak > 1 ? 's' : ''}</div>`;
     }
 
+    // Preserve URL search params when opening scene
+    const currentParams = window.location.search;
+    const sceneUrl = `/scenes/${scene.id}${currentParams}`;
+
     return `
       <div class="pwr-scene-card" data-scene-id="${scene.id}" data-side="${side}" data-rating="${scene.rating100 || 50}">
-        <div class="pwr-scene-image-container" data-scene-url="/scenes/${scene.id}">
+        <div class="pwr-scene-image-container" data-scene-url="${sceneUrl}">
           ${screenshotPath 
             ? `<img class="pwr-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />`
             : `<div class="pwr-scene-image pwr-no-image">No Screenshot</div>`
@@ -1268,6 +1426,23 @@
     // Try to load saved state
     const hasState = loadState();
 
+    // Check if URL filter params have changed - if so, reset gauntlet state
+    const currentFilterParams = window.location.search;
+    const filtersChanged = hasState && savedFilterParams !== currentFilterParams;
+    
+    if (filtersChanged) {
+      console.log("[Stash Battle] Filter params changed, resetting gauntlet state");
+      currentPair = { left: null, right: null };
+      currentRanks = { left: null, right: null };
+      gauntletChampion = null;
+      gauntletWins = 0;
+      gauntletChampionRank = 0;
+      gauntletDefeated = [];
+      gauntletFalling = false;
+      gauntletFallingScene = null;
+      savedFilterParams = currentFilterParams;
+    }
+
     const modal = document.createElement("div");
     modal.id = "pwr-modal";
     modal.innerHTML = `
@@ -1334,7 +1509,7 @@
     }
 
     // Load initial comparison or restore saved pair
-    if (hasState && currentPair.left && currentPair.right) {
+    if (hasState && currentPair.left && currentPair.right && !filtersChanged) {
       restoreCurrentPair();
     } else {
       loadNewPair();
