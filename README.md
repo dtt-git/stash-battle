@@ -17,6 +17,9 @@ Stash Battle presents you with two scenes side-by-side and asks you to pick the 
   - **Gauntlet** 🎯 – Place a random scene in your rankings. It climbs from the bottom, challenging each scene above it until it loses, then settles into its final position.
   - **Champion** 🏆 – Winner stays on. The winning scene keeps battling until it's dethroned.
 
+- **Filter Support:** Apply filters on the Scenes page before opening Battle to rate specific scenes against your full collection.
+
+
 ## Installation
 
 ⚠️ Install at your own risk, nearly entirely vibe coded for myself using Claude, I have barely reviewed the code at all.
@@ -35,10 +38,11 @@ Recommend saving a backup of your database beforehand (Settings → Interface �
 
 Optional Step: Change Rating System Type to "Decimal" (Settings → Interface → Editing)
 1. Navigate to the **Scenes** page in Stash
-2. Click the floating ⚔️ button in the bottom-right corner
-3. Choose your preferred comparison mode
-4. Click on a scene (or use arrow keys) to pick the winner
-5. Watch your rankings evolve over time!
+2. (Optional) Apply any filters or search to narrow down which scenes you want to rate
+3. Click the floating ⚔️ button in the bottom-right corner
+4. Choose your preferred comparison mode
+5. Click on a scene (or use arrow keys) to pick the winner
+6. Watch your rankings evolve over time!
 
 ## How It Works
 
@@ -46,6 +50,10 @@ The plugin uses an ELO-inspired algorithm where:
 - Beating a higher-rated scene earns more points than beating a lower-rated one
 - Losing to a lower-rated scene costs more points than losing to a higher-rated one
 - Ratings are stored in Stash's native `rating100` field (1-100 scale which is why changing to decimal rating system type is recommended)
+
+Filtering:
+- The filtered scenes will appear on the left side to be rated, while opponents are drawn from your entire library.
+
 
 ## Requirements
 
