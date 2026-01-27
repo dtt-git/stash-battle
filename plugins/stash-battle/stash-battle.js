@@ -2,6 +2,10 @@
   "use strict";
 
   const STORAGE_KEY = "stash-battle-state";
+  const CACHE_DB_NAME = "stash-battle-cache";
+  const CACHE_DB_VERSION = 1;
+  const CACHE_STORE_NAME = "scenes";
+  const CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes cache expiry
 
   // Current comparison pair and mode
   let currentPair = { left: null, right: null };
@@ -16,6 +20,434 @@
   let totalScenesCount = 0; // Total scenes for position display
   let disableChoice = false; // Track when inputs should be disabled to prevent multiple events
   let savedFilterParams = ""; // Store URL filter params to detect changes
+
+  // ============================================
+  // SCENE CACHE (IndexedDB + Memory)
+  // ============================================
+
+  // In-memory cache for current session (avoids repeated IndexedDB reads)
+  let memoryCache = {
+    allScenes: null,           // All scenes (no filter)
+    filteredScenes: null,      // Scenes matching current filter
+    filterKey: null,           // Current filter params for cache validation
+    timestamp: null            // When cache was populated
+  };
+
+  // Open IndexedDB database
+  function openCacheDB() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
+      
+      request.onerror = () => {
+        console.error("[Stash Battle] IndexedDB error:", request.error);
+        reject(request.error);
+      };
+      
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
+          db.createObjectStore(CACHE_STORE_NAME, { keyPath: "cacheKey" });
+        }
+      };
+    });
+  }
+
+  // Get cached scenes from IndexedDB
+  async function getCachedScenes(cacheKey) {
+    try {
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readonly");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        const request = store.get(cacheKey);
+        
+        request.onsuccess = () => {
+          const result = request.result;
+          if (result && (Date.now() - result.timestamp) < CACHE_MAX_AGE_MS) {
+            resolve(result);
+          } else {
+            resolve(null); // Cache miss or expired
+          }
+        };
+        
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] Cache read error:", e);
+      return null;
+    }
+  }
+
+  // Store scenes in IndexedDB
+  async function setCachedScenes(cacheKey, scenes, count) {
+    try {
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        
+        const data = {
+          cacheKey,
+          scenes,
+          count,
+          timestamp: Date.now()
+        };
+        
+        const request = store.put(data);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] Cache write error:", e);
+    }
+  }
+
+  // Store filtered scenes with filter key for validation
+  async function setCachedScenesWithFilter(cacheKey, scenes, count, filterKey) {
+    try {
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        
+        const data = {
+          cacheKey,
+          scenes,
+          count,
+          filterKey,  // Store filter key for validation on read
+          timestamp: Date.now()
+        };
+        
+        const request = store.put(data);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] Cache write error:", e);
+    }
+  }
+
+  // Clear all cached scenes (for manual refresh)
+  async function clearSceneCache() {
+    try {
+      console.log("[Stash Battle] 🗑️ Clearing all scene caches...");
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        const request = store.clear();
+        
+        request.onsuccess = () => {
+          memoryCache = { allScenes: null, filteredScenes: null, filterKey: null, timestamp: null };
+          console.log("[Stash Battle] ✅ All caches cleared (memory + IndexedDB)");
+          resolve();
+        };
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Cache clear error:", e);
+    }
+  }
+
+  // Background refresh - fetch from network and update caches silently
+  async function backgroundRefreshAllScenes() {
+    const cacheKey = "all-scenes";
+    
+    try {
+      console.log("[Stash Battle] 🔄 Background refresh started (all scenes)...");
+      const startTime = Date.now();
+      
+      const scenesQuery = `
+        query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+          findScenes(filter: $filter, scene_filter: $scene_filter) {
+            count
+            scenes {
+              ${SCENE_FRAGMENT}
+            }
+          }
+        }
+      `;
+      
+      const result = await graphqlQuery(scenesQuery, {
+        filter: {
+          per_page: -1,
+          sort: "rating",
+          direction: "DESC"
+        },
+        scene_filter: null
+      });
+      
+      const scenes = result.findScenes.scenes || [];
+      const count = result.findScenes.count || scenes.length;
+      const fetchTime = Date.now() - startTime;
+      
+      // Check if count changed (new scenes added/removed)
+      const oldCount = memoryCache.allScenes ? memoryCache.allScenes.length : 0;
+      if (count !== oldCount) {
+        console.log(`[Stash Battle] 📊 Scene count changed: ${oldCount} → ${count} (${count > oldCount ? '+' : ''}${count - oldCount})`);
+      } else {
+        console.log(`[Stash Battle] 📊 Scene count unchanged: ${count}`);
+      }
+      
+      // Update both caches silently
+      memoryCache.allScenes = scenes;
+      memoryCache.timestamp = Date.now();
+      await setCachedScenes(cacheKey, scenes, count);
+      
+      console.log(`[Stash Battle] ✅ Background refresh complete: ${scenes.length} scenes in ${fetchTime}ms`);
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Background refresh failed:", e);
+    }
+  }
+
+  // Get all scenes (uses cache with stale-while-revalidate)
+  async function getAllScenesCached() {
+    const cacheKey = "all-scenes";
+    
+    // Check memory cache first - return immediately if available
+    if (memoryCache.allScenes) {
+      const cacheAge = Math.round((Date.now() - memoryCache.timestamp) / 1000);
+      const isStale = (Date.now() - memoryCache.timestamp) >= CACHE_MAX_AGE_MS;
+      
+      console.log(`[Stash Battle] 💾 Memory cache hit (all scenes): ${memoryCache.allScenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
+      
+      // If stale, trigger background refresh (but still return cached data)
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
+        backgroundRefreshAllScenes(); // Don't await - runs in background
+      }
+      return { scenes: memoryCache.allScenes, count: memoryCache.allScenes.length };
+    }
+    
+    // Check IndexedDB cache - return immediately if available
+    console.log("[Stash Battle] 🔍 Memory cache miss, checking IndexedDB...");
+    const cached = await getCachedScenes(cacheKey);
+    if (cached) {
+      const cacheAge = Math.round((Date.now() - cached.timestamp) / 1000);
+      const isStale = (Date.now() - cached.timestamp) >= CACHE_MAX_AGE_MS;
+      
+      console.log(`[Stash Battle] 💿 IndexedDB cache hit (all scenes): ${cached.scenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
+      
+      memoryCache.allScenes = cached.scenes;
+      memoryCache.timestamp = cached.timestamp;
+      
+      // If stale, trigger background refresh
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
+        backgroundRefreshAllScenes(); // Don't await - runs in background
+      }
+      return { scenes: cached.scenes, count: cached.count };
+    }
+    
+    // No cache at all - must fetch from network (blocking)
+    console.log("[Stash Battle] 🌐 No cache found, fetching all scenes from network (first load)...");
+    const startTime = Date.now();
+    
+    const scenesQuery = `
+      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
+          count
+          scenes {
+            ${SCENE_FRAGMENT}
+          }
+        }
+      }
+    `;
+    
+    const result = await graphqlQuery(scenesQuery, {
+      filter: {
+        per_page: -1,
+        sort: "rating",
+        direction: "DESC"
+      },
+      scene_filter: null
+    });
+    
+    const scenes = result.findScenes.scenes || [];
+    const count = result.findScenes.count || scenes.length;
+    const fetchTime = Date.now() - startTime;
+    
+    // Store in both caches
+    memoryCache.allScenes = scenes;
+    memoryCache.timestamp = Date.now();
+    await setCachedScenes(cacheKey, scenes, count);
+    
+    console.log(`[Stash Battle] ✅ Fetched and cached ${scenes.length} scenes in ${fetchTime}ms`);
+    return { scenes, count };
+  }
+
+  // Background refresh for filtered scenes
+  async function backgroundRefreshFilteredScenes(searchParams, sceneFilter, filterKey) {
+    const cacheKey = "filtered-scenes";
+    
+    try {
+      console.log("[Stash Battle] 🔄 Background refresh started (filtered scenes)...");
+      const startTime = Date.now();
+      
+      const scenesQuery = `
+        query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+          findScenes(filter: $filter, scene_filter: $scene_filter) {
+            count
+            scenes {
+              ${SCENE_FRAGMENT}
+            }
+          }
+        }
+      `;
+      
+      const result = await graphqlQuery(scenesQuery, {
+        filter: getFindFilter(searchParams, {
+          per_page: -1,
+          sort: "rating",
+          direction: "DESC"
+        }),
+        scene_filter: sceneFilter
+      });
+      
+      const scenes = result.findScenes.scenes || [];
+      const count = result.findScenes.count || scenes.length;
+      const fetchTime = Date.now() - startTime;
+      
+      // Only update if still on same filter
+      if (memoryCache.filterKey === filterKey) {
+        const oldCount = memoryCache.filteredScenes ? memoryCache.filteredScenes.length : 0;
+        if (count !== oldCount) {
+          console.log(`[Stash Battle] 📊 Filtered count changed: ${oldCount} → ${count} (${count > oldCount ? '+' : ''}${count - oldCount})`);
+        } else {
+          console.log(`[Stash Battle] 📊 Filtered count unchanged: ${count}`);
+        }
+        
+        memoryCache.filteredScenes = scenes;
+        memoryCache.timestamp = Date.now();
+        await setCachedScenesWithFilter(cacheKey, scenes, count, filterKey);
+        
+        console.log(`[Stash Battle] ✅ Background refresh complete: ${scenes.length} filtered scenes in ${fetchTime}ms`);
+      } else {
+        console.log(`[Stash Battle] ⚠️ Filter changed during refresh, discarding results`);
+      }
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Background refresh (filtered) failed:", e);
+    }
+  }
+
+  // Get filtered scenes (uses cache with stale-while-revalidate)
+  // NOTE: Only ONE filtered cache is kept (overwrites previous filter cache to prevent IndexedDB bloat)
+  // NOTE: Fetch functions should check hasFilter first and call getAllScenesCached() directly if no filter
+  async function getFilteredScenesCached(searchParams, sceneFilter) {
+    const filterKey = searchParams.toString() + JSON.stringify(sceneFilter || {});
+    const cacheKey = "filtered-scenes"; // Single key - overwrites previous filter cache
+    
+    console.log("[Stash Battle] 🔎 Filter active, checking filtered cache...");
+    
+    // Check memory cache first - return immediately if available and same filter
+    if (memoryCache.filteredScenes && memoryCache.filterKey === filterKey) {
+      const cacheAge = Math.round((Date.now() - memoryCache.timestamp) / 1000);
+      const isStale = (Date.now() - memoryCache.timestamp) >= CACHE_MAX_AGE_MS;
+      
+      console.log(`[Stash Battle] 💾 Memory cache hit (filtered): ${memoryCache.filteredScenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
+      
+      // If stale, trigger background refresh
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
+        backgroundRefreshFilteredScenes(searchParams, sceneFilter, filterKey);
+      }
+      return { scenes: memoryCache.filteredScenes, count: memoryCache.filteredScenes.length };
+    }
+    
+    // Check IndexedDB cache (only if filter key matches)
+    console.log("[Stash Battle] 🔍 Memory cache miss (filtered), checking IndexedDB...");
+    const cached = await getCachedScenes(cacheKey);
+    if (cached && cached.filterKey === filterKey) {
+      const cacheAge = Math.round((Date.now() - cached.timestamp) / 1000);
+      const isStale = (Date.now() - cached.timestamp) >= CACHE_MAX_AGE_MS;
+      
+      console.log(`[Stash Battle] 💿 IndexedDB cache hit (filtered): ${cached.scenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
+      
+      memoryCache.filteredScenes = cached.scenes;
+      memoryCache.filterKey = filterKey;
+      memoryCache.timestamp = cached.timestamp;
+      
+      // If stale, trigger background refresh
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
+        backgroundRefreshFilteredScenes(searchParams, sceneFilter, filterKey);
+      }
+      return { scenes: cached.scenes, count: cached.count };
+    }
+    
+    if (cached) {
+      console.log("[Stash Battle] 💿 IndexedDB cache exists but filter changed, fetching new data...");
+    } else {
+      console.log("[Stash Battle] 💿 IndexedDB cache miss (filtered)");
+    }
+    
+    // No matching cache - must fetch from network (blocking)
+    console.log("[Stash Battle] 🌐 Fetching filtered scenes from network...");
+    const startTime = Date.now();
+    
+    const scenesQuery = `
+      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
+          count
+          scenes {
+            ${SCENE_FRAGMENT}
+          }
+        }
+      }
+    `;
+    
+    const result = await graphqlQuery(scenesQuery, {
+      filter: getFindFilter(searchParams, {
+        per_page: -1,
+        sort: "rating",
+        direction: "DESC"
+      }),
+      scene_filter: sceneFilter
+    });
+    
+    const scenes = result.findScenes.scenes || [];
+    const count = result.findScenes.count || scenes.length;
+    const fetchTime = Date.now() - startTime;
+    
+    // Store in both caches (include filterKey so we can validate on read)
+    memoryCache.filteredScenes = scenes;
+    memoryCache.filterKey = filterKey;
+    memoryCache.timestamp = Date.now();
+    await setCachedScenesWithFilter(cacheKey, scenes, count, filterKey);
+    
+    console.log(`[Stash Battle] ✅ Fetched and cached ${scenes.length} filtered scenes in ${fetchTime}ms`);
+    return { scenes, count };
+  }
+
+  // Update a scene's rating in the memory cache (keeps cache in sync after rating changes)
+  function updateSceneInCache(sceneId, newRating) {
+    let updated = false;
+    if (memoryCache.allScenes) {
+      const scene = memoryCache.allScenes.find(s => s.id === sceneId);
+      if (scene) {
+        scene.rating100 = newRating;
+        updated = true;
+      }
+    }
+    if (memoryCache.filteredScenes) {
+      const scene = memoryCache.filteredScenes.find(s => s.id === sceneId);
+      if (scene) {
+        scene.rating100 = newRating;
+        updated = true;
+      }
+    }
+    if (updated) {
+      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
+    }
+  }
 
   // ============================================
   // STATE PERSISTENCE
@@ -257,38 +689,26 @@
   async function fetchSwissPair() {
     const searchParams = getSearchParams();
     const sceneFilter = getSceneFilter(searchParams);
+    const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
 
-    const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-        findScenes(filter: $filter, scene_filter: $scene_filter) {
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
-        }
-      }
-    `;
-
-    // Get filtered scenes for left side (challenger to be rated)
-    const filteredResult = await graphqlQuery(scenesQuery, {
-      filter: getFindFilter(searchParams, {
-        per_page: -1,
-        sort: "rating",
-        direction: "DESC"
-      }),
-      scene_filter: sceneFilter
-    });
-    const filteredScenes = filteredResult.findScenes.scenes || [];
-
-    // Get ALL scenes for right side (opponent pool)
-    const allResult = await graphqlQuery(scenesQuery, {
-      filter: {
-        per_page: -1,
-        sort: "rating",
-        direction: "DESC"
-      },
-      scene_filter: null
-    });
-    const allScenes = allResult.findScenes.scenes || [];
+    let filteredScenes, allScenes;
+    
+    if (hasFilter) {
+      // With filter: need both filtered scenes and all scenes
+      console.log("[Stash Battle] 📋 Filter active, fetching filtered + all scenes");
+      const [filteredResult, allResult] = await Promise.all([
+        getFilteredScenesCached(searchParams, sceneFilter),
+        getAllScenesCached()
+      ]);
+      filteredScenes = filteredResult.scenes || [];
+      allScenes = allResult.scenes || [];
+    } else {
+      // No filter: all scenes = filtered scenes, only need one fetch
+      console.log("[Stash Battle] 📋 No filter active, using all scenes");
+      const allResult = await getAllScenesCached();
+      allScenes = allResult.scenes || [];
+      filteredScenes = allScenes;
+    }
     
     if (filteredScenes.length < 1 || allScenes.length < 2) {
       throw new Error("Not enough scenes for comparison.");
@@ -339,30 +759,13 @@
   async function fetchGauntletPair() {
     const searchParams = getSearchParams();
     const sceneFilter = getSceneFilter(searchParams);
+    const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
 
-    const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-        findScenes(filter: $filter, scene_filter: $scene_filter) {
-          count
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
-        }
-      }
-    `;
-
-    // Get ALL scenes for opponent pool and ranking (no filter)
-    const allResult = await graphqlQuery(scenesQuery, {
-      filter: {
-        per_page: -1,
-        sort: "rating",
-        direction: "DESC"
-      },
-      scene_filter: null
-    });
-
-    const allScenes = allResult.findScenes.scenes || [];
-    totalScenesCount = allResult.findScenes.count || allScenes.length;
+    // Get ALL scenes for opponent pool and ranking - CACHED
+    console.log("[Stash Battle] 📋 Fetching all scenes for gauntlet...");
+    const allResult = await getAllScenesCached();
+    const allScenes = allResult.scenes || [];
+    totalScenesCount = allResult.count || allScenes.length;
     
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
@@ -418,16 +821,11 @@
       gauntletFalling = false;
       gauntletFallingScene = null;
       
-      // Get filtered scenes to pick initial challenger from (scenes to be rated)
-      const filteredResult = await graphqlQuery(scenesQuery, {
-        filter: getFindFilter(searchParams, {
-          per_page: -1,
-          sort: "rating",
-          direction: "DESC"
-        }),
-        scene_filter: sceneFilter
-      });
-      const filteredScenes = filteredResult.findScenes.scenes || [];
+      // Get filtered scenes to pick initial challenger from (scenes to be rated) - CACHED
+      // If no filter, reuse allScenes to avoid redundant cache hit
+      const filteredScenes = hasFilter 
+        ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
+        : allScenes;
       
       if (filteredScenes.length < 1) {
         throw new Error("No scenes match your filter criteria.");
@@ -500,30 +898,13 @@
   async function fetchChampionPair() {
     const searchParams = getSearchParams();
     const sceneFilter = getSceneFilter(searchParams);
+    const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
 
-    const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-        findScenes(filter: $filter, scene_filter: $scene_filter) {
-          count
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
-        }
-      }
-    `;
-
-    // Get ALL scenes for opponent pool and ranking (no filter)
-    const allResult = await graphqlQuery(scenesQuery, {
-      filter: {
-        per_page: -1,
-        sort: "rating",
-        direction: "DESC"
-      },
-      scene_filter: null
-    });
-
-    const allScenes = allResult.findScenes.scenes || [];
-    totalScenesCount = allResult.findScenes.count || allScenes.length;
+    // Get ALL scenes for opponent pool and ranking - CACHED
+    console.log("[Stash Battle] 📋 Fetching all scenes for champion...");
+    const allResult = await getAllScenesCached();
+    const allScenes = allResult.scenes || [];
+    totalScenesCount = allResult.count || allScenes.length;
     
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
@@ -533,16 +914,11 @@
     if (!gauntletChampion) {
       gauntletDefeated = [];
       
-      // Get filtered scenes to pick initial challenger from (scenes to be rated)
-      const filteredResult = await graphqlQuery(scenesQuery, {
-        filter: getFindFilter(searchParams, {
-          per_page: -1,
-          sort: "rating",
-          direction: "DESC"
-        }),
-        scene_filter: sceneFilter
-      });
-      const filteredScenes = filteredResult.findScenes.scenes || [];
+      // Get filtered scenes to pick initial challenger from (scenes to be rated) - CACHED
+      // If no filter, reuse allScenes to avoid redundant cache hit
+      const filteredScenes = hasFilter 
+        ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
+        : allScenes;
       
       if (filteredScenes.length < 1) {
         throw new Error("No scenes match your filter criteria.");
@@ -703,14 +1079,21 @@
       }
     `;
     
+    const finalRating = Math.max(1, Math.min(100, rating100));
+    
     try {
       await graphqlQuery(mutation, {
         input: {
           id: sceneId,
-          rating100: Math.max(1, Math.min(100, rating100))
+          rating100: finalRating
         }
       });
-      console.log(`[Stash Battle] Updated scene ${sceneId} rating to ${rating100}`);
+      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${finalRating} in Stash`);
+
+      
+      // Update the in-memory cache to keep it in sync
+      updateSceneInCache(sceneId, finalRating);
+      
     } catch (e) {
       console.error(`[Stash Battle] Failed to update scene ${sceneId} rating:`, e);
     }
@@ -909,6 +1292,7 @@
           </div>
           <div class="pwr-actions">
             <button id="pwr-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
+            <button id="pwr-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh Cache</button>
             <div class="pwr-keyboard-hint">
               <span>← Left Arrow</span> to choose left · 
               <span>→ Right Arrow</span> to choose right · 
@@ -929,9 +1313,13 @@
     const comparisonArea = document.getElementById("pwr-comparison-area");
     if (!comparisonArea) return;
 
+    console.log(`[Stash Battle] 🎮 Loading new pair (mode: ${currentMode})...`);
+    const startTime = Date.now();
+
     // Only show loading on first load (when empty or already showing loading)
     if (!comparisonArea.querySelector('.pwr-vs-container')) {
-      comparisonArea.innerHTML = '<div class="pwr-loading">Loading scenes...</div>';
+      const hasCache = memoryCache.allScenes !== null;
+      comparisonArea.innerHTML = `<div class="pwr-loading">${hasCache ? 'Loading scenes...' : 'Loading and caching scenes (first load may take a moment)...'}</div>`;
     }
 
     try {
@@ -1026,6 +1414,9 @@
       currentRanks.left = ranks[0];
       currentRanks.right = ranks[1];
 
+      const loadTime = Date.now() - startTime;
+      console.log(`[Stash Battle] ✅ Pair loaded in ${loadTime}ms: Scene ${scenes[0].id} (rank #${ranks[0]}) vs Scene ${scenes[1].id} (rank #${ranks[1]})`);
+
       // Determine streak for each card (gauntlet and champion modes)
       let leftStreak = null;
       let rightStreak = null;
@@ -1108,8 +1499,16 @@
     const comparisonArea = document.getElementById("pwr-comparison-area");
     if (!comparisonArea) return;
 
+    console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
+
     const scenes = [currentPair.left, currentPair.right];
     const ranks = [currentRanks.left, currentRanks.right];
+    
+    // Pre-warm the cache in background for when user makes a choice
+    if (!memoryCache.allScenes) {
+      console.log("[Stash Battle] 🔥 Pre-warming cache in background...");
+      getAllScenesCached(); // Don't await - runs in background
+    }
 
     // Determine streak for each card (gauntlet and champion modes)
     let leftStreak = null;
@@ -1420,18 +1819,21 @@
   }
 
   function openRankingModal() {
+    console.log("[Stash Battle] 🎯 Opening modal...");
+    
     const existingModal = document.getElementById("pwr-modal");
     if (existingModal) existingModal.remove();
 
     // Try to load saved state
     const hasState = loadState();
+    console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? 'found' : 'none'}`);
 
-    // Check if URL filter params have changed - if so, reset gauntlet state
+    // Check if URL filter params have changed - if so, reset gauntlet state and filtered cache
     const currentFilterParams = window.location.search;
     const filtersChanged = hasState && savedFilterParams !== currentFilterParams;
     
     if (filtersChanged) {
-      console.log("[Stash Battle] Filter params changed, resetting gauntlet state");
+      console.log("[Stash Battle] Filter params changed, resetting gauntlet state and filtered cache");
       currentPair = { left: null, right: null };
       currentRanks = { left: null, right: null };
       gauntletChampion = null;
@@ -1441,6 +1843,10 @@
       gauntletFalling = false;
       gauntletFallingScene = null;
       savedFilterParams = currentFilterParams;
+      
+      // Clear filtered scenes cache (but keep all scenes cache)
+      memoryCache.filteredScenes = null;
+      memoryCache.filterKey = null;
     }
 
     const modal = document.createElement("div");
@@ -1508,10 +1914,46 @@
       });
     }
 
+    // Refresh cache button
+    const refreshCacheBtn = modal.querySelector("#pwr-refresh-cache-btn");
+    if (refreshCacheBtn) {
+      refreshCacheBtn.addEventListener("click", async () => {
+        if (disableChoice) return;
+        
+        refreshCacheBtn.disabled = true;
+        refreshCacheBtn.textContent = "🔄 Refreshing...";
+        
+        try {
+          await clearSceneCache();
+          
+          // Reset gauntlet state since rankings may have changed
+          gauntletChampion = null;
+          gauntletWins = 0;
+          gauntletDefeated = [];
+          gauntletFalling = false;
+          gauntletFallingScene = null;
+          saveState();
+          
+          // Re-show actions in case hidden
+          const actionsEl = document.querySelector(".pwr-actions");
+          if (actionsEl) actionsEl.style.display = "";
+          
+          await loadNewPair();
+        } catch (e) {
+          console.error("[Stash Battle] Refresh failed:", e);
+        } finally {
+          refreshCacheBtn.disabled = false;
+          refreshCacheBtn.textContent = "🔄 Refresh";
+        }
+      });
+    }
+
     // Load initial comparison or restore saved pair
     if (hasState && currentPair.left && currentPair.right && !filtersChanged) {
+      console.log(`[Stash Battle] 📂 Restoring saved pair from localStorage (Scene ${currentPair.left.id} vs Scene ${currentPair.right.id})`);
       restoreCurrentPair();
     } else {
+      console.log(`[Stash Battle] 🆕 No saved pair or filters changed, loading new pair...`);
       loadNewPair();
     }
 
