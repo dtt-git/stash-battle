@@ -21,6 +21,11 @@
   let disableChoice = false; // Track when inputs should be disabled to prevent multiple events
   let savedFilterParams = ""; // Store URL filter params to detect changes
 
+  // Shuffle state for filtered scenes (prevents duplicates when skipping)
+  let shuffledFilteredScenes = [];  // Shuffled copy of filtered scenes
+  let shuffleIndex = 0;             // Current position in shuffled list
+  let shuffleFilterKey = null;      // Filter key to detect changes
+
   // ============================================
   // SCENE CACHE (IndexedDB + Memory)
   // ============================================
@@ -342,7 +347,7 @@
   // NOTE: Only ONE filtered cache is kept (overwrites previous filter cache to prevent IndexedDB bloat)
   // NOTE: Fetch functions should check hasFilter first and call getAllScenesCached() directly if no filter
   async function getFilteredScenesCached(searchParams, sceneFilter) {
-    const filterKey = searchParams.toString() + JSON.stringify(sceneFilter || {});
+    const filterKey = JSON.stringify(sceneFilter || {});
     const cacheKey = "filtered-scenes"; // Single key - overwrites previous filter cache
     
     console.log("[Stash Battle] 🔎 Filter active, checking filtered cache...");
@@ -551,6 +556,20 @@
   `;
 
   // ============================================
+  // NAVIGATION
+  // ============================================
+
+  // Navigate using React Router (preserves JS state)
+  function navigateToUrl(url) {
+    closeRankingModal();
+    
+    // Use History API + popstate event to trigger React Router navigation
+    const path = url.startsWith('/') ? url : new URL(url).pathname + new URL(url).search;
+    window.history.pushState({}, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+  }
+
+  // ============================================
   // URL FILTER PARSING
   // ============================================
 
@@ -577,57 +596,198 @@
     return filter;
   }
 
+  // Translate JSON string between URL format (parentheses) and standard JSON (braces)
+  // Ported from Stash's ListFilterModel.translateJSON
+  // This safely handles parentheses inside quoted strings
+  function translateJSON(jsonString, decoding) {
+    let inString = false;
+    let escape = false;
+    return [...jsonString].map((c) => {
+      if (escape) {
+        escape = false;
+        return c;
+      }
+      switch (c) {
+        case "\\":
+          if (inString) escape = true;
+          break;
+        case '"':
+          inString = !inString;
+          break;
+        case "(":
+          if (decoding && !inString) return "{";
+          break;
+        case ")":
+          if (decoding && !inString) return "}";
+          break;
+      }
+      return c;
+    }).join("");
+  }
+
+  // Criterion category mappings for URL → GraphQL transformation
+  // Each category requires different transformation logic
+  const CRITERION_CATEGORIES = {
+    // Boolean: no modifier, value is "true"/"false" string → convert to boolean
+    boolean: new Set(["organized", "interactive", "performer_favorite"]),
+    // StringEnum: URL has modifier but GraphQL just expects the string value directly
+    stringEnum: new Set(["is_missing", "has_markers"]),
+    // Multi: value is array of {id, label} → extract IDs only
+    multi: new Set(["performers", "groups", "movies", "galleries"]),
+    // HierarchicalMulti: value has {items, excluded, depth} → rename to {value, excludes, depth} and extract IDs
+    hierarchicalMulti: new Set(["tags", "studios", "performer_tags"]),
+  };
+
   // Build SceneFilterType from URL 'c' params
-  // Passes through the filter structure with minimal transformation
+  // Transforms URL criterion format to GraphQL SceneFilterType format
   function getSceneFilter(searchParams) {
     const sceneFilter = {};
     
-    // Boolean fields expect true/false, not criterion objects
-    // Add more here if you encounter "cannot use map as Boolean" errors
-    const booleanFields = ["interactive", "organized", "performer_favorite", "interactive_speed"];
+    if (!searchParams.has("c")) return null;
     
-    if (searchParams.has("c")) {
-      searchParams.getAll("c").forEach((cStr) => {
-        try {
-          // Parse filter condition - URL uses () instead of {}
-          cStr = cStr.replaceAll("(", "{").replaceAll(")", "}");
-          const cObj = JSON.parse(cStr);
+    for (const cStr of searchParams.getAll("c")) {
+      try {
+        // Decode URL format: () → {} (safely preserving strings)
+        const decoded = translateJSON(cStr, true);
+        const cObj = JSON.parse(decoded);
+        
+        const filterType = cObj.type;
+        if (!filterType) {
+          console.warn("[Stash Battle] Filter missing type:", cObj);
+          continue;
+        }
+        
+        // Remove type from the object - it becomes the key
+        const { type, ...rest } = cObj;
+        
+        // Category: Boolean (organized, interactive, performer_favorite)
+        // URL: { type, value: "true" } → GraphQL: true
+        if (CRITERION_CATEGORIES.boolean.has(filterType)) {
+          sceneFilter[filterType] = rest.value === "true" || rest.value === true;
+          continue;
+        }
+        
+        // Category: StringEnum (sceneIsMissing, hasMarkers)
+        // URL: { type, value: "enumValue" } → GraphQL: "enumValue"
+        if (CRITERION_CATEGORIES.stringEnum.has(filterType)) {
+          sceneFilter[filterType] = rest.value;
+          continue;
+        }
+        
+        // Category: Multi (performers, groups, movies, galleries)
+        // URL uses same {items, excluded} structure as hierarchical, but GraphQL doesn't use depth
+        // URL: { type, modifier, value: { items: [{id, label}], excluded: [{id, label}] } }
+        // GraphQL: { modifier, value: [ids], excludes?: [ids] }
+        if (CRITERION_CATEGORIES.multi.has(filterType)) {
+          const result = { modifier: rest.modifier };
+          const val = rest.value || {};
           
-          // Extract type field - this becomes the filter key
-          const filterType = cObj.type;
-          if (!filterType) return;
-          
-          // Handle boolean fields specially
-          if (booleanFields.includes(filterType)) {
-            const val = cObj.value;
-            sceneFilter[filterType] = val === "true" || val === true;
-            return;
+          // Handle {items, excluded} structure (standard URL format)
+          if (val.items !== undefined) {
+            const items = val.items || [];
+            const excluded = val.excluded || [];
+            result.value = items.map(v => (typeof v === "object" && v.id) ? v.id : v);
+            if (excluded.length > 0) {
+              result.excludes = excluded.map(v => (typeof v === "object" && v.id) ? v.id : v);
+            }
+          }
+          // Handle flat array format (fallback)
+          else if (Array.isArray(rest.value)) {
+            result.value = rest.value.map(v => (typeof v === "object" && v.id) ? v.id : v);
+          }
+          // Pass through as-is (shouldn't happen, but safe fallback)
+          else {
+            result.value = rest.value;
           }
           
-          // Initialize the filter for this type
-          sceneFilter[filterType] = {};
-          
-          // Copy all properties except 'type' to the filter
-          Object.keys(cObj).forEach((key) => {
-            if (key === "type") return;
-            
-            const val = cObj[key];
-            if (typeof val === "object" && val !== null) {
-              // Flatten nested objects (e.g., value: {value: 4} becomes value: 4)
-              Object.keys(val).forEach((innerKey) => {
-                sceneFilter[filterType][innerKey] = val[innerKey];
-              });
-            } else {
-              sceneFilter[filterType][key] = val;
-            }
-          });
-        } catch (e) {
-          console.error("[Stash Battle] Failed to parse filter condition:", cStr, e);
+          sceneFilter[filterType] = result;
+          continue;
         }
-      });
+        
+        // Category: HierarchicalMulti (tags, studios, performer_tags)
+        // URL: { type, modifier, value: { items: [{id, label}], excluded: [{id, label}], depth } }
+        // GraphQL: { modifier, value: [ids], excludes: [ids], depth }
+        if (CRITERION_CATEGORIES.hierarchicalMulti.has(filterType)) {
+          const val = rest.value || {};
+          const items = val.items || [];
+          const excluded = val.excluded || [];
+          sceneFilter[filterType] = {
+            modifier: rest.modifier,
+            value: items.map(v => (typeof v === "object" && v.id) ? v.id : v),
+            excludes: excluded.map(v => (typeof v === "object" && v.id) ? v.id : v),
+            depth: val.depth ?? 0
+          };
+          continue;
+        }
+        
+        // Category: Standard (number, string, date, timestamp, duration, special)
+        // Check if value needs flattening (nested { value, value2 } structure from range criteria)
+        if (rest.value && typeof rest.value === "object" && !Array.isArray(rest.value) && "value" in rest.value) {
+          // Flatten: { modifier, value: { value: X, value2: Y } } → { modifier, value: X, value2: Y }
+          sceneFilter[filterType] = {
+            modifier: rest.modifier,
+            value: rest.value.value,
+            ...(rest.value.value2 !== undefined && { value2: rest.value.value2 })
+          };
+        } else {
+          // Pass through as-is (string criteria, special criteria like phash, stash_id, etc.)
+          sceneFilter[filterType] = rest;
+        }
+        
+      } catch (e) {
+        console.error("[Stash Battle] Failed to parse filter:", cStr, e);
+      }
     }
     
     return Object.keys(sceneFilter).length > 0 ? sceneFilter : null;
+  }
+
+  // Fisher-Yates shuffle algorithm - creates a randomized copy of the array
+  function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  // Get next scene from shuffled filtered list (prevents duplicates when skipping)
+  // Reshuffles when filter changes or when all scenes have been shown
+  let lastShownSceneId = null; // Track last scene to avoid immediate repeat after reshuffle
+  
+  function getNextFilteredScene(filteredScenes, filterKey) {
+    // Reshuffle if filter changed or first load
+    if (filterKey !== shuffleFilterKey || shuffledFilteredScenes.length === 0) {
+      console.log("[Stash Battle] 🔀 Shuffling filtered scenes (filter changed or first load)");
+      shuffledFilteredScenes = shuffleArray(filteredScenes);
+      shuffleIndex = 0;
+      shuffleFilterKey = filterKey;
+      lastShownSceneId = null; // Reset on filter change
+    }
+    
+    // Reshuffle if we've gone through all scenes
+    if (shuffleIndex >= shuffledFilteredScenes.length) {
+      console.log("[Stash Battle] 🔀 Reshuffling (completed full cycle)");
+      shuffledFilteredScenes = shuffleArray(filteredScenes);
+      shuffleIndex = 0;
+      
+      // Avoid showing the same scene that ended the previous cycle
+      if (lastShownSceneId && shuffledFilteredScenes.length > 1 && 
+          shuffledFilteredScenes[0].id === lastShownSceneId) {
+        // Swap first scene with a random other position
+        const swapIdx = 1 + Math.floor(Math.random() * (shuffledFilteredScenes.length - 1));
+        [shuffledFilteredScenes[0], shuffledFilteredScenes[swapIdx]] = 
+          [shuffledFilteredScenes[swapIdx], shuffledFilteredScenes[0]];
+        console.log("[Stash Battle] 🔄 Swapped first scene to avoid repeat");
+      }
+    }
+    
+    const scene = shuffledFilteredScenes[shuffleIndex];
+    shuffleIndex++;
+    lastShownSceneId = scene.id; // Remember for next reshuffle
+    console.log(`[Stash Battle] 📍 Scene ${shuffleIndex}/${shuffledFilteredScenes.length} from shuffled list`);
+    return scene;
   }
 
   async function fetchSceneCount() {
@@ -714,9 +874,9 @@
       throw new Error("Not enough scenes for comparison.");
     }
 
-    // Pick a random scene from filtered pool (left side - to be rated)
-    const randomIndex = Math.floor(Math.random() * filteredScenes.length);
-    const scene1 = filteredScenes[randomIndex];
+    // Pick next scene from shuffled filtered pool (left side - to be rated)
+    const filterKey = JSON.stringify(sceneFilter || {});
+    const scene1 = getNextFilteredScene(filteredScenes, filterKey);
     const rating1 = scene1.rating100 || 50;
 
     // Find opponent from full collection with similar rating (right side)
@@ -831,8 +991,9 @@
         throw new Error("No scenes match your filter criteria.");
       }
       
-      // Pick random scene from filtered pool as challenger (left side - to be rated)
-      const challenger = filteredScenes[Math.floor(Math.random() * filteredScenes.length)];
+      // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
+      const filterKey = JSON.stringify(sceneFilter || {});
+      const challenger = getNextFilteredScene(filteredScenes, filterKey);
       
       // Find challenger's position in full collection
       const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
@@ -924,8 +1085,9 @@
         throw new Error("No scenes match your filter criteria.");
       }
       
-      // Pick random scene from filtered pool as challenger (left side - to be rated)
-      const challenger = filteredScenes[Math.floor(Math.random() * filteredScenes.length)];
+      // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
+      const filterKey = JSON.stringify(sceneFilter || {});
+      const challenger = getNextFilteredScene(filteredScenes, filterKey);
       
       // Find challenger's position in full collection
       const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
@@ -1291,8 +1453,10 @@
             <div class="pwr-loading">Loading scenes...</div>
           </div>
           <div class="pwr-actions">
-            <button id="pwr-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
-            <button id="pwr-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh Cache</button>
+            <div class="pwr-action-buttons">
+              <button id="pwr-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
+              <button id="pwr-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh Cache</button>
+            </div>
             <div class="pwr-keyboard-hint">
               <span>← Left Arrow</span> to choose left · 
               <span>→ Right Arrow</span> to choose right · 
@@ -1307,6 +1471,76 @@
   // ============================================
   // EVENT HANDLERS
   // ============================================
+
+  // Shared rendering logic for displaying a pair of scenes
+  function renderPair(scenes, ranks) {
+    const comparisonArea = document.getElementById("pwr-comparison-area");
+    if (!comparisonArea) return;
+
+    // Determine streak for each card (gauntlet and champion modes)
+    let leftStreak = null;
+    let rightStreak = null;
+    if (currentMode === "gauntlet" || currentMode === "champion") {
+      if (gauntletChampion && scenes[0].id === gauntletChampion.id) {
+        leftStreak = gauntletWins;
+      } else if (gauntletChampion && scenes[1].id === gauntletChampion.id) {
+        rightStreak = gauntletWins;
+      }
+    }
+
+    comparisonArea.innerHTML = `
+      <div class="pwr-vs-container">
+        ${createSceneCard(scenes[0], "left", ranks[0], leftStreak)}
+        <div class="pwr-vs-divider">
+          <span class="pwr-vs-text">VS</span>
+        </div>
+        ${createSceneCard(scenes[1], "right", ranks[1], rightStreak)}
+      </div>
+    `;
+
+    // Attach event listeners to scene body (for choosing)
+    comparisonArea.querySelectorAll(".pwr-scene-body").forEach((body) => {
+      body.addEventListener("click", handleChooseScene);
+    });
+
+    // Attach click-to-open (for thumbnail only) - use React Router navigation
+    comparisonArea.querySelectorAll(".pwr-scene-image-container").forEach((container) => {
+      const sceneUrl = container.dataset.sceneUrl;
+      
+      container.addEventListener("click", () => {
+        if (sceneUrl) {
+          navigateToUrl(sceneUrl);
+        }
+      });
+    });
+
+    // Attach hover preview to entire card
+    comparisonArea.querySelectorAll(".pwr-scene-card").forEach((card) => {
+      const video = card.querySelector(".pwr-hover-preview");
+      if (!video) return;
+      
+      card.addEventListener("mouseenter", () => {
+        video.currentTime = 0;
+        video.muted = false;
+        video.volume = 0.5;
+        video.play().catch(() => {});
+      });
+      
+      card.addEventListener("mouseleave", () => {
+        video.pause();
+        video.currentTime = 0;
+      });
+    });
+    
+    // Update skip button state
+    const skipBtn = document.querySelector("#pwr-skip-btn");
+    if (skipBtn) {
+      const disableSkip = (currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion;
+      skipBtn.disabled = disableSkip;
+      skipBtn.style.opacity = disableSkip ? "0.5" : "1";
+      skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
+    }
+  }
 
   async function loadNewPair() {
     disableChoice = false;
@@ -1417,71 +1651,7 @@
       const loadTime = Date.now() - startTime;
       console.log(`[Stash Battle] ✅ Pair loaded in ${loadTime}ms: Scene ${scenes[0].id} (rank #${ranks[0]}) vs Scene ${scenes[1].id} (rank #${ranks[1]})`);
 
-      // Determine streak for each card (gauntlet and champion modes)
-      let leftStreak = null;
-      let rightStreak = null;
-      if (currentMode === "gauntlet" || currentMode === "champion") {
-        if (gauntletChampion && scenes[0].id === gauntletChampion.id) {
-          leftStreak = gauntletWins;
-        } else if (gauntletChampion && scenes[1].id === gauntletChampion.id) {
-          rightStreak = gauntletWins;
-        }
-      }
-
-      comparisonArea.innerHTML = `
-        <div class="pwr-vs-container">
-          ${createSceneCard(scenes[0], "left", ranks[0], leftStreak)}
-          <div class="pwr-vs-divider">
-            <span class="pwr-vs-text">VS</span>
-          </div>
-          ${createSceneCard(scenes[1], "right", ranks[1], rightStreak)}
-        </div>
-      `;
-
-      // Attach event listeners to scene body (for choosing)
-      comparisonArea.querySelectorAll(".pwr-scene-body").forEach((body) => {
-        body.addEventListener("click", handleChooseScene);
-      });
-
-      // Attach click-to-open (for thumbnail only) - redirect instead of new tab
-      comparisonArea.querySelectorAll(".pwr-scene-image-container").forEach((container) => {
-        const sceneUrl = container.dataset.sceneUrl;
-        
-        container.addEventListener("click", () => {
-          if (sceneUrl) {
-            window.location.href = sceneUrl;
-          }
-        });
-      });
-
-      // Attach hover preview to entire card
-      comparisonArea.querySelectorAll(".pwr-scene-card").forEach((card) => {
-        const video = card.querySelector(".pwr-hover-preview");
-        if (!video) return;
-        
-        card.addEventListener("mouseenter", () => {
-          video.currentTime = 0;
-          video.muted = false;
-          video.volume = 0.5;
-          video.play().catch(() => {});
-        });
-        
-        card.addEventListener("mouseleave", () => {
-          video.pause();
-          video.currentTime = 0;
-        });
-      });
-      
-      // Update skip button state
-      const skipBtn = document.querySelector("#pwr-skip-btn");
-      if (skipBtn) {
-        const disableSkip = (currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion;
-        skipBtn.disabled = disableSkip;
-        skipBtn.style.opacity = disableSkip ? "0.5" : "1";
-        skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
-      }
-
-      // Save state after loading new pair
+      renderPair(scenes, ranks);
       saveState();
     } catch (error) {
       console.error("[Stash Battle] Error loading scenes:", error);
@@ -1496,83 +1666,18 @@
 
   function restoreCurrentPair() {
     disableChoice = false;
-    const comparisonArea = document.getElementById("pwr-comparison-area");
-    if (!comparisonArea) return;
-
     console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
 
-    const scenes = [currentPair.left, currentPair.right];
-    const ranks = [currentRanks.left, currentRanks.right];
-    
     // Pre-warm the cache in background for when user makes a choice
     if (!memoryCache.allScenes) {
       console.log("[Stash Battle] 🔥 Pre-warming cache in background...");
       getAllScenesCached(); // Don't await - runs in background
     }
 
-    // Determine streak for each card (gauntlet and champion modes)
-    let leftStreak = null;
-    let rightStreak = null;
-    if (currentMode === "gauntlet" || currentMode === "champion") {
-      if (gauntletChampion && scenes[0] && scenes[0].id === gauntletChampion.id) {
-        leftStreak = gauntletWins;
-      } else if (gauntletChampion && scenes[1] && scenes[1].id === gauntletChampion.id) {
-        rightStreak = gauntletWins;
-      }
-    }
-
-    comparisonArea.innerHTML = `
-      <div class="pwr-vs-container">
-        ${createSceneCard(scenes[0], "left", ranks[0], leftStreak)}
-        <div class="pwr-vs-divider">
-          <span class="pwr-vs-text">VS</span>
-        </div>
-        ${createSceneCard(scenes[1], "right", ranks[1], rightStreak)}
-      </div>
-    `;
-
-    // Attach event listeners to scene body (for choosing)
-    comparisonArea.querySelectorAll(".pwr-scene-body").forEach((body) => {
-      body.addEventListener("click", handleChooseScene);
-    });
-
-    // Attach click-to-open (for thumbnail only) - redirect instead of new tab
-    comparisonArea.querySelectorAll(".pwr-scene-image-container").forEach((container) => {
-      const sceneUrl = container.dataset.sceneUrl;
-      
-      container.addEventListener("click", () => {
-        if (sceneUrl) {
-          window.location.href = sceneUrl;
-        }
-      });
-    });
-
-    // Attach hover preview to entire card
-    comparisonArea.querySelectorAll(".pwr-scene-card").forEach((card) => {
-      const video = card.querySelector(".pwr-hover-preview");
-      if (!video) return;
-      
-      card.addEventListener("mouseenter", () => {
-        video.currentTime = 0;
-        video.muted = false;
-        video.volume = 0.5;
-        video.play().catch(() => {});
-      });
-      
-      card.addEventListener("mouseleave", () => {
-        video.pause();
-        video.currentTime = 0;
-      });
-    });
-    
-    // Update skip button state
-    const skipBtn = document.querySelector("#pwr-skip-btn");
-    if (skipBtn) {
-      const disableSkip = (currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion;
-      skipBtn.disabled = disableSkip;
-      skipBtn.style.opacity = disableSkip ? "0.5" : "1";
-      skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
-    }
+    renderPair(
+      [currentPair.left, currentPair.right],
+      [currentRanks.left, currentRanks.right]
+    );
   }
 
   function handleChooseScene(event) {
@@ -1821,14 +1926,11 @@
   function openRankingModal() {
     console.log("[Stash Battle] 🎯 Opening modal...");
     
-    const existingModal = document.getElementById("pwr-modal");
-    if (existingModal) existingModal.remove();
-
     // Try to load saved state
     const hasState = loadState();
     console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? 'found' : 'none'}`);
-
-    // Check if URL filter params have changed - if so, reset gauntlet state and filtered cache
+    
+    // Check if URL filter params have changed - if so, reset state
     const currentFilterParams = window.location.search;
     const filtersChanged = hasState && savedFilterParams !== currentFilterParams;
     
@@ -1847,6 +1949,44 @@
       // Clear filtered scenes cache (but keep all scenes cache)
       memoryCache.filteredScenes = null;
       memoryCache.filterKey = null;
+      
+      // Reset shuffle for new filter
+      shuffledFilteredScenes = [];
+      shuffleIndex = 0;
+      shuffleFilterKey = null;
+    }
+    
+    // Check for existing hidden modal - reuse it
+    const existingModal = document.getElementById("pwr-modal");
+    if (existingModal && existingModal.classList.contains("pwr-modal-hidden")) {
+      console.log("[Stash Battle] ♻️ Reusing existing modal");
+      existingModal.classList.remove("pwr-modal-hidden", "pwr-modal-closing");
+      
+      // Re-register keyboard handler
+      if (modalKeyHandler) {
+        document.removeEventListener("keydown", modalKeyHandler, true);
+      }
+      document.addEventListener("keydown", modalKeyHandler, true);
+      
+      // Focus modal content
+      const modalContent = existingModal.querySelector(".pwr-modal-content");
+      if (modalContent) modalContent.focus();
+      
+      // If filters changed or no pair, load new content
+      if (filtersChanged || !currentPair.left || !currentPair.right) {
+        loadNewPair();
+      }
+      // Otherwise the existing content is still valid
+      
+      return;
+    }
+    
+    // Remove any non-hidden existing modal (shouldn't happen, but safety)
+    if (existingModal) existingModal.remove();
+    
+    // Initialize filter params tracking
+    if (!savedFilterParams) {
+      savedFilterParams = currentFilterParams;
     }
 
     const modal = document.createElement("div");
@@ -1861,6 +2001,14 @@
 
     document.body.appendChild(modal);
 
+    // Focus the modal content so keyboard shortcuts work immediately
+    const modalContent = modal.querySelector(".pwr-modal-content");
+    if (modalContent) {
+      modalContent.setAttribute("tabindex", "-1");
+      modalContent.style.outline = "none";
+      modalContent.focus();
+    }
+
     // Mode toggle buttons
     modal.querySelectorAll(".pwr-mode-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1874,6 +2022,9 @@
           gauntletDefeated = [];
           gauntletFalling = false;
           gauntletFallingScene = null;
+          
+          // Reset shuffle to start fresh with new mode
+          shuffleIndex = 0;
           
           // Update button states
           modal.querySelectorAll(".pwr-mode-btn").forEach((b) => {
@@ -1926,6 +2077,11 @@
         try {
           await clearSceneCache();
           
+          // Reset shuffle state since scene list is being refreshed
+          shuffledFilteredScenes = [];
+          shuffleIndex = 0;
+          shuffleFilterKey = null;
+          
           // Reset gauntlet state since rankings may have changed
           gauntletChampion = null;
           gauntletWins = 0;
@@ -1943,7 +2099,7 @@
           console.error("[Stash Battle] Refresh failed:", e);
         } finally {
           refreshCacheBtn.disabled = false;
-          refreshCacheBtn.textContent = "🔄 Refresh";
+          refreshCacheBtn.textContent = "🔄 Refresh Cache";
         }
       });
     }
@@ -1961,57 +2117,92 @@
     modal.querySelector(".pwr-modal-backdrop").addEventListener("click", closeRankingModal);
     modal.querySelector(".pwr-modal-close").addEventListener("click", closeRankingModal);
     
-    document.addEventListener("keydown", function escHandler(e) {
-      if (e.key === "Escape") {
-        closeRankingModal();
-        document.removeEventListener("keydown", escHandler);
-      }
-    });
-
-    // Keyboard shortcuts for choosing
-    document.addEventListener("keydown", function keyHandler(e) {
+    // Remove any existing keyboard handlers before adding new ones
+    if (modalKeyHandler) {
+      document.removeEventListener("keydown", modalKeyHandler, true);
+    }
+    
+    // Single keyboard handler for all modal shortcuts
+    modalKeyHandler = function(e) {
       const modal = document.getElementById("pwr-modal");
       if (!modal) {
-        document.removeEventListener("keydown", keyHandler);
+        document.removeEventListener("keydown", modalKeyHandler, true);
+        modalKeyHandler = null;
         return;
       }
 
+      // Escape to close
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeRankingModal();
+        return;
+      }
+
+      // Arrow keys to choose (stop propagation to prevent Stash scene navigation)
       if (e.key === "ArrowLeft" && currentPair.left) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
         const leftBody = modal.querySelector('.pwr-scene-card[data-side="left"] .pwr-scene-body');
         if (leftBody) leftBody.click();
       }
       if (e.key === "ArrowRight" && currentPair.right) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
         const rightBody = modal.querySelector('.pwr-scene-card[data-side="right"] .pwr-scene-body');
         if (rightBody) rightBody.click();
       }
+      
+      // Spacebar to skip
       if (e.key === " " || e.code === "Space") {
         const activeElement = document.activeElement;
-        if (activeElement.tagName !== "INPUT" && activeElement.tagName !== "TEXTAREA") {
-          e.preventDefault();
-          // Don't skip during active gauntlet/champion run
-          if ((currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion) {
-            return;
-          }
-          // TODO: Put these skip functionalities into ONE function
-          if(disableChoice) return;
-          disableChoice = true;
-          if (currentMode === "gauntlet" || currentMode === "champion") {
-            gauntletChampion = null;
-            gauntletWins = 0;
-            gauntletDefeated = [];
-            gauntletFalling = false;
-            gauntletFallingScene = null;
-            saveState();
-          }
-          loadNewPair();
+        // Skip if focused on input/textarea, or if a button is focused (let button's click handle it)
+        if (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.tagName === "BUTTON") {
+          return;
         }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        // Don't skip during active gauntlet/champion run
+        if ((currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion) {
+          return;
+        }
+        if(disableChoice) return;
+        disableChoice = true;
+        if (currentMode === "gauntlet" || currentMode === "champion") {
+          gauntletChampion = null;
+          gauntletWins = 0;
+          gauntletDefeated = [];
+          gauntletFalling = false;
+          gauntletFallingScene = null;
+          saveState();
+        }
+        loadNewPair();
       }
-    });
+    };
+    
+    document.addEventListener("keydown", modalKeyHandler, true);
   }
+
+  // Track keyboard handler so we can remove it on close
+  let modalKeyHandler = null;
 
   function closeRankingModal() {
     const modal = document.getElementById("pwr-modal");
-    if (modal) modal.remove();
+    if (!modal || modal.classList.contains("pwr-modal-hidden")) return;
+    
+    // Add closing class to trigger fade-out animation
+    modal.classList.add("pwr-modal-closing");
+    
+    // After animation completes, hide the modal (keep in DOM for reuse)
+    setTimeout(() => {
+      modal.classList.add("pwr-modal-hidden");
+      modal.classList.remove("pwr-modal-closing");
+    }, 200); // Match CSS animation duration
+    
+    // Clean up keyboard handler
+    if (modalKeyHandler) {
+      document.removeEventListener("keydown", modalKeyHandler, true);
+    }
   }
 
   // ============================================

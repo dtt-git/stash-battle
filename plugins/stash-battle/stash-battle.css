@@ -425,9 +425,16 @@
   margin-top: 30px;
 }
 
-.pwr-actions .btn {
-  padding: 12px 30px;
-  font-size: 1rem;
+.pwr-action-buttons {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 12px;
+}
+
+.pwr-action-buttons .btn {
+  padding: 10px 20px;
+  font-size: 0.9rem;
 }
 
 .pwr-keyboard-hint {
@@ -518,6 +525,10 @@
   justify-content: center;
 }
 
+#pwr-modal.pwr-modal-hidden {
+  display: none;
+}
+
 .pwr-modal-backdrop {
   position: absolute;
   top: 0;
@@ -525,6 +536,21 @@
   width: 100%;
   height: 100%;
   background: rgba(0, 0, 0, 0.95);
+  animation: backdropFadeIn 0.2s ease-out;
+}
+
+#pwr-modal.pwr-modal-closing .pwr-modal-backdrop {
+  animation: backdropFadeOut 0.2s ease-out forwards;
+}
+
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes backdropFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .pwr-modal-content {
@@ -536,7 +562,23 @@
   background: #121212;
   border-radius: 12px;
   box-shadow: 0 25px 80px rgba(0, 0, 0, 0.8);
+  animation: contentSlideIn 0.2s ease-out;
 }
+
+#pwr-modal.pwr-modal-closing .pwr-modal-content {
+  animation: contentSlideOut 0.2s ease-out forwards;
+}
+
+@keyframes contentSlideIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes contentSlideOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(20px); }
+}
+
 
 @media (max-width: 1200px) {
   .pwr-modal-content {
