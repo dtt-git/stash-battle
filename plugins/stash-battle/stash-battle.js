@@ -637,6 +637,32 @@
     // HierarchicalMulti: value has {items, excluded, depth} → rename to {value, excludes, depth} and extract IDs
     hierarchicalMulti: new Set(["tags", "studios", "performer_tags"]),
   };
+  
+  // Resolution string to GraphQL enum mapping
+  // URL uses human-readable strings, GraphQL expects ResolutionEnum values
+  const RESOLUTION_MAP = {
+    "144p": "VERY_LOW",
+    "240p": "LOW",
+    "360p": "R360P",
+    "480p": "STANDARD",
+    "540p": "WEB_HD",
+    "720p": "STANDARD_HD",
+    "1080p": "FULL_HD",
+    "1440p": "QUAD_HD",
+    "4k": "FOUR_K",
+    "5k": "FIVE_K",
+    "6k": "SIX_K",
+    "7k": "SEVEN_K",
+    "8k": "EIGHT_K",
+    "Huge": "HUGE",
+  };
+  
+  // Orientation string to GraphQL enum mapping
+  const ORIENTATION_MAP = {
+    "Landscape": "LANDSCAPE",
+    "Portrait": "PORTRAIT",
+    "Square": "SQUARE",
+  };
 
   // Build SceneFilterType from URL 'c' params
   // Transforms URL criterion format to GraphQL SceneFilterType format
@@ -695,6 +721,10 @@
           else if (Array.isArray(rest.value)) {
             result.value = rest.value.map(v => (typeof v === "object" && v.id) ? v.id : v);
           }
+          // IS_NULL/NOT_NULL don't use value, but GraphQL schema still requires it (empty array for multi)
+          else if (rest.modifier === "IS_NULL" || rest.modifier === "NOT_NULL") {
+            result.value = [];
+          }
           // Pass through as-is (shouldn't happen, but safe fallback)
           else {
             result.value = rest.value;
@@ -720,6 +750,35 @@
           continue;
         }
         
+        // Category: Resolution (needs string → enum conversion)
+        // URL: { type: "resolution", modifier, value: "720p" } → GraphQL: { modifier, value: "STANDARD_HD" }
+        if (filterType === "resolution") {
+          sceneFilter[filterType] = {
+            modifier: rest.modifier,
+            value: RESOLUTION_MAP[rest.value] || rest.value
+          };
+          continue;
+        }
+        
+        // Category: Orientation (multi-select enum, no modifier)
+        // URL: { type: "orientation", value: ["Landscape", "Portrait"] } → GraphQL: { value: ["LANDSCAPE", "PORTRAIT"] }
+        if (filterType === "orientation") {
+          const values = Array.isArray(rest.value) ? rest.value : [rest.value];
+          sceneFilter[filterType] = {
+            value: values.map(v => ORIENTATION_MAP[v] || v).filter(Boolean)
+          };
+          continue;
+        }
+        
+        // Category: Duplicated (phash duplicate filter - different structure)
+        // URL: { type: "duplicated", value: "true" } → GraphQL: { duplicated: true }
+        if (filterType === "duplicated") {
+          sceneFilter[filterType] = {
+            duplicated: rest.value === "true" || rest.value === true
+          };
+          continue;
+        }
+        
         // Category: Standard (number, string, date, timestamp, duration, special)
         // Check if value needs flattening (nested { value, value2 } structure from range criteria)
         if (rest.value && typeof rest.value === "object" && !Array.isArray(rest.value) && "value" in rest.value) {
@@ -728,6 +787,13 @@
             modifier: rest.modifier,
             value: rest.value.value,
             ...(rest.value.value2 !== undefined && { value2: rest.value.value2 })
+          };
+        } else if (rest.modifier === "IS_NULL" || rest.modifier === "NOT_NULL") {
+          // IS_NULL/NOT_NULL modifiers don't use the value, but GraphQL schema still requires it
+          // Provide a dummy value (0 for numbers, empty string for strings) to satisfy the schema
+          sceneFilter[filterType] = {
+            modifier: rest.modifier,
+            value: 0
           };
         } else {
           // Pass through as-is (string criteria, special criteria like phash, stash_id, etc.)
