@@ -343,11 +343,17 @@
     }
   }
 
+  // Build a cache key that includes both sceneFilter (c params) AND search query (q param)
+  function buildFilterKey(searchParams, sceneFilter) {
+    const q = searchParams.get("q") || "";
+    return JSON.stringify({ q, filter: sceneFilter || {} });
+  }
+
   // Get filtered scenes (uses cache with stale-while-revalidate)
   // NOTE: Only ONE filtered cache is kept (overwrites previous filter cache to prevent IndexedDB bloat)
   // NOTE: Fetch functions should check hasFilter first and call getAllScenesCached() directly if no filter
   async function getFilteredScenesCached(searchParams, sceneFilter) {
-    const filterKey = JSON.stringify(sceneFilter || {});
+    const filterKey = buildFilterKey(searchParams, sceneFilter);
     const cacheKey = "filtered-scenes"; // Single key - overwrites previous filter cache
     
     console.log("[Stash Battle] 🔎 Filter active, checking filtered cache...");
@@ -941,7 +947,7 @@
     }
 
     // Pick next scene from shuffled filtered pool (left side - to be rated)
-    const filterKey = JSON.stringify(sceneFilter || {});
+    const filterKey = buildFilterKey(searchParams, sceneFilter);
     const scene1 = getNextFilteredScene(filteredScenes, filterKey);
     const rating1 = scene1.rating100 || 50;
 
@@ -1058,7 +1064,7 @@
       }
       
       // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
-      const filterKey = JSON.stringify(sceneFilter || {});
+      const filterKey = buildFilterKey(searchParams, sceneFilter);
       const challenger = getNextFilteredScene(filteredScenes, filterKey);
       
       // Find challenger's position in full collection
@@ -1152,7 +1158,7 @@
       }
       
       // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
-      const filterKey = JSON.stringify(sceneFilter || {});
+      const filterKey = buildFilterKey(searchParams, sceneFilter);
       const challenger = getNextFilteredScene(filteredScenes, filterKey);
       
       // Find challenger's position in full collection
