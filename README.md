@@ -51,13 +51,18 @@ The plugin uses an ELO-inspired algorithm where:
 - Losing to a lower-rated scene costs more points than losing to a higher-rated one
 - Ratings are stored in Stash's native `rating100` field (1-100 scale which is why changing to decimal rating system type is recommended)
 
+**Dynamic K-Factor:** Rating changes scale based on a scene's `play_count` (similar to chess ELO where new players' ratings are more volatile):
+| Play Count | K-Factor | Behavior |
+|------------|----------|----------|
+| 0-2 | 12 | New scenes adjust quickly to find their true rating |
+| 3-7 | 8 | Settling in with moderate changes |
+| 8-14 | 6 | Established scenes change more slowly |
+| 15+ | 4 | Very stable ratings that resist large swings |
+
 Filtering:
 - The filtered scenes will appear on the left side to be rated, while opponents are drawn from your entire library.
 
 
-## Requirements
-
-- At least 2 scenes in your library
 
 ## License
 
