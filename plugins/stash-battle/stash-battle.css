@@ -475,6 +475,33 @@
   color: #dc3545;
 }
 
+/* Error Screen */
+.pwr-error-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  width: 100%;
+  min-height: 300px;
+}
+
+.pwr-error-icon {
+  font-size: 3rem;
+  margin-bottom: 0.75rem;
+}
+
+.pwr-error-message {
+  font-size: 1.1rem;
+  color: #dc3545;
+  margin: 0 0 1.5rem 0;
+}
+
+.pwr-error-screen .btn {
+  min-width: 120px;
+}
+
 /* Button overrides for Stash theme compatibility */
 .pwr-container .btn {
   display: inline-block;

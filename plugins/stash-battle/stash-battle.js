@@ -25,6 +25,7 @@
   let shuffledFilteredScenes = [];  // Shuffled copy of filtered scenes
   let shuffleIndex = 0;             // Current position in shuffled list
   let shuffleFilterKey = null;      // Filter key to detect changes
+  let removedSceneIds = new Set();  // Track scenes removed during this session (survives background refresh)
 
   // ============================================
   // SCENE CACHE (IndexedDB + Memory)
@@ -159,6 +160,32 @@
       });
     } catch (e) {
       console.error("[Stash Battle] ❌ Cache clear error:", e);
+    }
+  }
+
+  // Clear just the filtered scenes cache (for auto-refresh after pool exhaustion)
+  async function clearFilteredCache() {
+    try {
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        const request = store.delete("filtered-scenes");
+        
+        request.onsuccess = () => {
+          memoryCache.filteredScenes = null;
+          memoryCache.filterKey = null;
+          console.log("[Stash Battle] 🗑️ Filtered cache cleared (memory + IndexedDB)");
+          resolve();
+        };
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Filtered cache clear error:", e);
+      // Still clear memory cache even if IndexedDB fails
+      memoryCache.filteredScenes = null;
+      memoryCache.filterKey = null;
     }
   }
 
@@ -438,25 +465,44 @@
     return { scenes, count };
   }
 
+  // Update a scene's rating and reposition it in the sorted array to keep ranks accurate
+  function repositionSceneInArray(arr, sceneId, newRating) {
+    const idx = arr.findIndex(s => s.id === sceneId);
+    if (idx === -1) return false;
+    
+    const scene = arr[idx];
+    scene.rating100 = newRating;
+    
+    // Remove from current position
+    arr.splice(idx, 1);
+    
+    // Find correct position (array is sorted by rating DESC)
+    const newIdx = arr.findIndex(s => (s.rating100 || 0) < newRating);
+    
+    // Insert at correct position
+    if (newIdx === -1) {
+      arr.push(scene); // Lowest rated, goes at end
+    } else {
+      arr.splice(newIdx, 0, scene);
+    }
+    
+    return true;
+  }
+
   // Update a scene's rating in the memory cache (keeps cache in sync after rating changes)
   function updateSceneInCache(sceneId, newRating) {
-    let updated = false;
+    // Reposition in allScenes (keeps rankings accurate, scene stays for opponent pool)
     if (memoryCache.allScenes) {
-      const scene = memoryCache.allScenes.find(s => s.id === sceneId);
-      if (scene) {
-        scene.rating100 = newRating;
-        updated = true;
-      }
+      repositionSceneInArray(memoryCache.allScenes, sceneId, newRating);
+      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
     }
+    
+    // Also update in filteredScenes if present (but don't remove - that's done separately)
     if (memoryCache.filteredScenes) {
       const scene = memoryCache.filteredScenes.find(s => s.id === sceneId);
       if (scene) {
         scene.rating100 = newRating;
-        updated = true;
       }
-    }
-    if (updated) {
-      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
     }
   }
 
@@ -542,6 +588,7 @@
     title
     date
     rating100
+    play_count
     paths {
       screenshot
       preview
@@ -829,19 +876,34 @@
   let lastShownSceneId = null; // Track last scene to avoid immediate repeat after reshuffle
   
   function getNextFilteredScene(filteredScenes, filterKey) {
+    // If filter changed, clear removed tracking BEFORE filtering
+    if (shuffleFilterKey !== null && filterKey !== shuffleFilterKey) {
+      console.log("[Stash Battle] 🔀 Filter changed, resetting removed scenes tracking");
+      removedSceneIds.clear();
+    }
+    
+    // Filter out scenes that were removed this session (survives background refresh race condition)
+    const availableScenes = filteredScenes.filter(s => !removedSceneIds.has(s.id));
+    
+    // Check if pool is exhausted (all scenes rated)
+    if (availableScenes.length === 0) {
+      console.log("[Stash Battle] 🏁 Filtered pool exhausted - all scenes rated!");
+      return null; // Signal that pool is empty
+    }
+    
     // Reshuffle if filter changed or first load
     if (filterKey !== shuffleFilterKey || shuffledFilteredScenes.length === 0) {
       console.log("[Stash Battle] 🔀 Shuffling filtered scenes (filter changed or first load)");
-      shuffledFilteredScenes = shuffleArray(filteredScenes);
+      shuffledFilteredScenes = shuffleArray(availableScenes);
       shuffleIndex = 0;
       shuffleFilterKey = filterKey;
       lastShownSceneId = null; // Reset on filter change
     }
     
-    // Reshuffle if we've gone through all scenes
+    // Reshuffle if we've gone through all remaining scenes
     if (shuffleIndex >= shuffledFilteredScenes.length) {
       console.log("[Stash Battle] 🔀 Reshuffling (completed full cycle)");
-      shuffledFilteredScenes = shuffleArray(filteredScenes);
+      shuffledFilteredScenes = shuffleArray(availableScenes);
       shuffleIndex = 0;
       
       // Avoid showing the same scene that ended the previous cycle
@@ -858,7 +920,7 @@
     const scene = shuffledFilteredScenes[shuffleIndex];
     shuffleIndex++;
     lastShownSceneId = scene.id; // Remember for next reshuffle
-    console.log(`[Stash Battle] 📍 Scene ${shuffleIndex}/${shuffledFilteredScenes.length} from shuffled list`);
+    console.log(`[Stash Battle] 📍 Picked scene ${scene.id} (${shuffledFilteredScenes.length - shuffleIndex} remaining in pool, ${removedSceneIds.size} removed this session)`);
     return scene;
   }
 
@@ -942,46 +1004,79 @@
       filteredScenes = allScenes;
     }
     
-    if (filteredScenes.length < 1 || allScenes.length < 2) {
+    // Need at least 2 scenes in full collection for opponents
+    if (allScenes.length < 2) {
       throw new Error("Not enough scenes for comparison.");
     }
+    // Note: filteredScenes can be empty - getNextFilteredScene will return null for poolExhausted
 
     // Pick next scene from shuffled filtered pool (left side - to be rated)
-    const filterKey = buildFilterKey(searchParams, sceneFilter);
-    const scene1 = getNextFilteredScene(filteredScenes, filterKey);
+    let filterKey = buildFilterKey(searchParams, sceneFilter);
+    let scene1 = getNextFilteredScene(filteredScenes, filterKey);
+    
+    // Handle pool exhaustion - auto-refresh and continue
+    if (!scene1) {
+      console.log("[Stash Battle] 🏁 Pool exhausted, fetching fresh from network...");
+      
+      // Clear filtered cache (memory + IndexedDB) to force fresh network fetch
+      // This picks up newly-qualified scenes (e.g., a scene that just hit rating 100)
+      await clearFilteredCache();
+      shuffledFilteredScenes = [];
+      shuffleIndex = 0;
+      shuffleFilterKey = null;
+      removedSceneIds.clear(); // Safe to clear since we're forcing a fresh network fetch
+      
+      // Re-fetch filtered scenes (will hit network since cache is cleared)
+      if (hasFilter) {
+        const freshResult = await getFilteredScenesCached(searchParams, sceneFilter);
+        filteredScenes = freshResult.scenes || [];
+      } else {
+        // For no filter, allScenes is already fresh enough
+        filteredScenes = allScenes;
+      }
+      
+      // Try again with fresh pool (removedSceneIds will filter out already-rated scenes)
+      filterKey = buildFilterKey(searchParams, sceneFilter);
+      scene1 = getNextFilteredScene(filteredScenes, filterKey);
+      
+      // If still empty after fresh fetch, truly no scenes match (or all were already rated)
+      if (!scene1) {
+        throw new Error("No scenes match your filter criteria.");
+      }
+    }
+    
     const rating1 = scene1.rating100 || 50;
 
     // Find opponent from full collection with similar rating (right side)
-    const similarScenes = allScenes.filter(s => {
-      if (s.id === scene1.id) return false;
-      const rating = s.rating100 || 50;
-      return Math.abs(rating - rating1) <= 15;
-    });
-
-    let scene2;
-    let scene2Index;
-    if (similarScenes.length > 0) {
-      // Pick random from similar-rated scenes
-      scene2 = similarScenes[Math.floor(Math.random() * similarScenes.length)];
-      scene2Index = allScenes.findIndex(s => s.id === scene2.id);
-    } else {
-      // No similar scenes, pick closest from full collection
-      const otherScenes = allScenes.filter(s => s.id !== scene1.id);
-      otherScenes.sort((a, b) => {
-        const diffA = Math.abs((a.rating100 || 50) - rating1);
-        const diffB = Math.abs((b.rating100 || 50) - rating1);
-        return diffA - diffB;
-      });
-      scene2 = otherScenes[0];
-      scene2Index = allScenes.findIndex(s => s.id === scene2.id);
+    // allScenes is already sorted by rating DESC, so grab neighbors around scene1's position
+    const scene1Idx = allScenes.findIndex(s => s.id === scene1.id);
+    const scene1RankInAll = scene1Idx + 1; // Reuse the index we already found
+    
+    // Collect candidates from nearby positions (excluding scene1)
+    const candidates = [];
+    const reach = 5; // How far above/below to look (gives up to 10 candidates)
+    
+    // Grab scenes above (higher rated) and below (lower rated)
+    for (let i = scene1Idx - reach; i <= scene1Idx + reach; i++) {
+      if (i >= 0 && i < allScenes.length && i !== scene1Idx) {
+        candidates.push({ scene: allScenes[i], idx: i });
+      }
     }
-
-    // Rank for scene1 is within filtered pool, scene2 is within full collection
-    const scene1RankInAll = allScenes.findIndex(s => s.id === scene1.id) + 1;
+    
+    // Fallback: if no candidates (shouldn't happen with 2+ scenes), pick any other scene
+    if (candidates.length === 0) {
+      const fallbackIdx = scene1Idx === 0 ? 1 : 0;
+      candidates.push({ scene: allScenes[fallbackIdx], idx: fallbackIdx });
+    }
+    
+    // Pick randomly from candidates
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    const scene2 = pick.scene;
+    const scene2Index = pick.idx;
 
     return { 
       scenes: [scene1, scene2], 
-      ranks: [scene1RankInAll || randomIndex + 1, scene2Index + 1] 
+      ranks: [scene1RankInAll, scene2Index + 1] 
     };
   }
 
@@ -1066,6 +1161,10 @@
       // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
       const filterKey = buildFilterKey(searchParams, sceneFilter);
       const challenger = getNextFilteredScene(filteredScenes, filterKey);
+      
+      if (!challenger) {
+        throw new Error("No scenes match your filter criteria.");
+      }
       
       // Find challenger's position in full collection
       const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
@@ -1160,6 +1259,10 @@
       // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
       const filterKey = buildFilterKey(searchParams, sceneFilter);
       const challenger = getNextFilteredScene(filteredScenes, filterKey);
+      
+      if (!challenger) {
+        throw new Error("No scenes match your filter criteria.");
+      }
       
       // Find challenger's position in full collection
       const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
@@ -1333,15 +1436,50 @@
     }
   }
 
+  // Remove a scene from the filtered pool (called after battle regardless of rating change)
+  function removeFromFilteredPool(sceneId) {
+    // Track removal - survives background refresh race condition
+    removedSceneIds.add(sceneId);
+    
+    // Remove from filtered cache
+    if (memoryCache.filteredScenes) {
+      const idx = memoryCache.filteredScenes.findIndex(s => s.id === sceneId);
+      if (idx !== -1) {
+        memoryCache.filteredScenes.splice(idx, 1);
+        console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from filtered pool (${memoryCache.filteredScenes.length} remaining, ${removedSceneIds.size} removed this session)`);
+      }
+    }
+    
+    // Also remove from shuffled queue
+    const shuffleIdx = shuffledFilteredScenes.findIndex(s => s.id === sceneId);
+    if (shuffleIdx !== -1) {
+      shuffledFilteredScenes.splice(shuffleIdx, 1);
+      if (shuffleIdx < shuffleIndex) {
+        shuffleIndex--;
+      }
+    }
+  }
+
   // ============================================
   // RATING LOGIC
   // ============================================
 
-  function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, loserRank = null) {
+  // Dynamic K-factor based on play_count (similar to chess ELO for new vs established players)
+  // Scenes with more plays have more "established" ratings and change more slowly
+  function getKFactor(playCount) {
+    const count = playCount || 0;   // Handle null/undefined
+    if (count < 3) return 12;       // New: volatile, find true rating fast
+    if (count < 8) return 8;        // Settling: moderate changes
+    if (count < 15) return 6;       // Established: smaller changes
+    return 4;                       // Very established: stable rating
+  }
+
+  function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, winnerPlayCount = 0, loserPlayCount = 0, loserRank = null) {
     const winnerRating = winnerCurrentRating || 50;
     const loserRating = loserCurrentRating || 50;
     
     const ratingDiff = loserRating - winnerRating;
+    const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff / 40));
     
     let winnerGain = 0, loserLoss = 0;
     
@@ -1354,14 +1492,13 @@
       const isChampionLoser = gauntletChampion && loserId === gauntletChampion.id;
       const isFallingLoser = gauntletFalling && gauntletFallingScene && loserId === gauntletFallingScene.id;
       
-      const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff / 40));
-      const kFactor = 8;
-      
       // Only the active scene (champion or falling) gets rating changes
       if (isChampionWinner || isFallingWinner) {
+        const kFactor = getKFactor(winnerPlayCount);
         winnerGain = Math.max(1, Math.round(kFactor * (1 - expectedWinner)));
       }
       if (isChampionLoser || isFallingLoser) {
+        const kFactor = getKFactor(loserPlayCount);
         loserLoss = Math.max(1, Math.round(kFactor * expectedWinner));
       }
       
@@ -1371,11 +1508,11 @@
       }
     } else {
       // Swiss mode: True ELO - both change based on expected outcome
-      const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff / 40));
-      const kFactor = 8;
+      const winnerK = getKFactor(winnerPlayCount);
+      const loserK = getKFactor(loserPlayCount);
       
-      winnerGain = Math.max(1, Math.round(kFactor * (1 - expectedWinner)));
-      loserLoss = Math.max(1, Math.round(kFactor * expectedWinner));
+      winnerGain = Math.max(1, Math.round(winnerK * (1 - expectedWinner)));
+      loserLoss = Math.max(1, Math.round(loserK * expectedWinner));
     }
     
     const newWinnerRating = Math.min(100, Math.max(1, winnerRating + winnerGain));
@@ -1480,7 +1617,7 @@
             <div class="pwr-scene-meta">
               <div class="pwr-meta-item"><strong>Studio:</strong> ${studio}</div>
               <div class="pwr-meta-item"><strong>Performers:</strong> ${performers}</div>
-              <div class="pwr-meta-item"><strong>Date:</strong> ${scene.date || '<span class="pwr-none">None</span>'}</div>
+              <div class="pwr-meta-item"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
               <div class="pwr-meta-item"><strong>Rating:</strong> ${stashRating}</div>
               <div class="pwr-meta-item pwr-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="pwr-tag">${tag}</span>`).join("") : '<span class="pwr-none">None</span>'}</div>
             </div>
@@ -1705,6 +1842,7 @@
         ranks = championResult.ranks;
       } else {
         const swissResult = await fetchSwissPair();
+        
         scenes = swissResult.scenes;
         ranks = swissResult.ranks;
       }
@@ -1727,12 +1865,35 @@
       saveState();
     } catch (error) {
       console.error("[Stash Battle] Error loading scenes:", error);
+      const isNoScenes = error.message.includes("No scenes") || error.message.includes("Not enough");
       comparisonArea.innerHTML = `
-        <div class="pwr-error">
-          Error loading scenes: ${error.message}<br>
-          <button class="btn btn-primary" onclick="location.reload()">Retry</button>
+        <div class="pwr-error-screen">
+          <div class="pwr-error-icon">⚠️</div>
+          <p class="pwr-error-message">${error.message}</p>
+          <button id="pwr-error-retry" class="btn btn-primary">Retry</button>
         </div>
       `;
+      
+      // Attach retry handler
+      const retryBtn = document.getElementById("pwr-error-retry");
+      if (retryBtn) {
+        retryBtn.addEventListener("click", async () => {
+          retryBtn.disabled = true;
+          retryBtn.textContent = "Loading...";
+          
+          if (isNoScenes) {
+            // "No scenes" error: clear everything and start fresh
+            await clearFilteredCache();
+            shuffledFilteredScenes = [];
+            shuffleIndex = 0;
+            shuffleFilterKey = null;
+            removedSceneIds.clear();
+          }
+          // Network/other errors: just retry without clearing session state
+          
+          await loadNewPair();
+        });
+      }
     }
   }
 
@@ -1811,7 +1972,10 @@
       }
       
       // Normal climbing - calculate rating changes (pass loserRank for #1 dethrone)
-      const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(winnerId, loserId, winnerRating, loserRating, loserRank);
+      const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
+        winnerId, loserId, winnerRating, loserRating,
+        winnerScene.play_count, loserScene.play_count, loserRank
+      );
       
       if (gauntletChampion && winnerId === gauntletChampion.id) {
         // Champion won - add loser to defeated list and continue climbing
@@ -1857,9 +2021,13 @@
     // Handle champion mode (like gauntlet but winner always takes over)
     if (currentMode === "champion") {
       const winnerScene = winnerId === currentPair.left.id ? currentPair.left : currentPair.right;
+      const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
       
       // Calculate rating changes (pass loserRank for #1 dethrone)
-      const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(winnerId, loserId, winnerRating, loserRating, loserRank);
+      const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
+        winnerId, loserId, winnerRating, loserRating,
+        winnerScene.play_count, loserScene.play_count, loserRank
+      );
       
       if (gauntletChampion && winnerId === gauntletChampion.id) {
         // Champion won - continue climbing
@@ -1893,7 +2061,17 @@
     }
 
     // For Swiss: Calculate and show rating changes
-    const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(winnerId, loserId, winnerRating, loserRating);
+    const winnerScene = winnerId === currentPair.left.id ? currentPair.left : currentPair.right;
+    const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
+    const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
+      winnerId, loserId, winnerRating, loserRating,
+      winnerScene.play_count, loserScene.play_count
+    );
+    
+    // Remove both scenes from filtered pool (they've been processed)
+    // This prevents the loser from reappearing if it no longer matches the filter
+    removeFromFilteredPool(currentPair.left.id);
+    removeFromFilteredPool(currentPair.right.id);
 
     saveState();
 
@@ -2153,6 +2331,7 @@
           shuffledFilteredScenes = [];
           shuffleIndex = 0;
           shuffleFilterKey = null;
+          removedSceneIds.clear(); // Reset removed tracking for fresh data
           
           // Reset gauntlet state since rankings may have changed
           gauntletChampion = null;
