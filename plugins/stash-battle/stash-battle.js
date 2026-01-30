@@ -1080,6 +1080,20 @@
     };
   }
 
+  // Find the lowest actually rated scene in a descending-sorted array, excluding a specific scene
+  // Returns { scene, index } or fallback to first non-excluded scene if none rated
+  function findLowestRated(scenes, excludeId) {
+    for (let i = scenes.length - 1; i >= 0; i--) {
+      const s = scenes[i];
+      if (s.id !== excludeId && s.rating100 != null) {
+        return { scene: s, index: i };
+      }
+    }
+    // Fallback to any scene if none rated
+    const fallbackIndex = scenes.findIndex(s => s.id !== excludeId);
+    return { scene: scenes[fallbackIndex], index: fallbackIndex };
+  }
+
   // Gauntlet mode: champion vs next challenger
   // Left side (champion): initially picked from filtered pool (scenes to be rated)
   // Right side (opponents): from full collection
@@ -1169,12 +1183,8 @@
       // Find challenger's position in full collection
       const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
       
-      // Start at the bottom of full collection - find lowest rated scene that isn't the challenger
-      const lowestRated = allScenes
-        .filter(s => s.id !== challenger.id)
-        .sort((a, b) => (a.rating100 || 0) - (b.rating100 || 0))[0];
-      
-      const lowestIndex = allScenes.findIndex(s => s.id === lowestRated.id);
+      // Start at the bottom - find lowest actually rated scene (unrated = unknown, not lowest)
+      const { scene: lowestRated, index: lowestIndex } = findLowestRated(allScenes, challenger.id);
       
       // Challenger's current rank in full collection
       gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : allScenes.length;
@@ -1267,12 +1277,8 @@
       // Find challenger's position in full collection
       const challengerIndex = allScenes.findIndex(s => s.id === challenger.id);
       
-      // Start at the bottom of full collection - find lowest rated scene that isn't the challenger
-      const lowestRated = allScenes
-        .filter(s => s.id !== challenger.id)
-        .sort((a, b) => (a.rating100 || 0) - (b.rating100 || 0))[0];
-      
-      const lowestIndex = allScenes.findIndex(s => s.id === lowestRated.id);
+      // Start at the bottom - find lowest actually rated scene (unrated = unknown, not lowest)
+      const { scene: lowestRated, index: lowestIndex } = findLowestRated(allScenes, challenger.id);
       
       gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : allScenes.length;
       
