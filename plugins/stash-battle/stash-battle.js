@@ -2148,36 +2148,65 @@
   }
 
   function addFloatingButton() {
-    const existingBtn = document.getElementById("pwr-floating-btn");
-    
+    const buttonId = "plugin_pwr";
+	
+// Prevent double patching
+if (!window.__stashBattleHistoryPatched) {
+  window.__stashBattleHistoryPatched = true;
+
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+
+  history.pushState = function (...args) {
+    const result = originalPushState.apply(this, args);
+    setTimeout(addFloatingButton, 50);
+    return result;
+  };
+
+  history.replaceState = function (...args) {
+    const result = originalReplaceState.apply(this, args);
+    setTimeout(addFloatingButton, 50);
+    return result;
+  };
+}
     // Remove button if we're not on the scenes page
     if (!shouldShowButton()) {
-      if (existingBtn) existingBtn.remove();
-      return;
+        const existing = document.getElementById(buttonId);
+        if (existing) {
+            existing.closest("a")?.remove();
+        }
+        return;
     }
     
-    // Don't add duplicate
-    if (existingBtn) return;
+    // Prevent duplicates
+    if (document.getElementById(buttonId)) return;
 
-    const btn = document.createElement("button");
-    btn.id = "pwr-floating-btn";
-    btn.innerHTML = "⚔️";
-    btn.title = "Stash Battle";
+    const buttonContainer = document.createElement("a");
+    buttonContainer.className = "mr-2";
 
-    btn.addEventListener("mouseenter", () => {
-      btn.style.transform = "scale(1.1)";
-      btn.style.boxShadow = "0 6px 20px rgba(13, 110, 253, 0.6)";
-    });
+    buttonContainer.innerHTML = `
+        <button id="${buttonId}" 
+                type="button" 
+                class="minimal d-flex align-items-center h-100 btn btn-primary"
+                title="Stash Battle">
+            <span class="d-flex align-items-center">
+                Stash Battle
+            </span>
+        </button>
+    `;
 
-    btn.addEventListener("mouseleave", () => {
-      btn.style.transform = "scale(1)";
-      btn.style.boxShadow = "0 4px 15px rgba(13, 110, 253, 0.4)";
-    });
+    // Attach click handler after insertion
+    buttonContainer
+        .querySelector(`#${buttonId}`)
+        .addEventListener("click", openRankingModal);
 
-    btn.addEventListener("click", openRankingModal);
-
-    document.body.appendChild(btn);
+    // Append to navbar (adjust selector if needed)
+    const navTarget = document.querySelector(".navbar-nav");
+    if (navTarget) {
+        navTarget.appendChild(buttonContainer);
+    }
   }
+
 
   function openRankingModal() {
     console.log("[Stash Battle] 🎯 Opening modal...");
