@@ -30,6 +30,15 @@
     if (stored !== null) filterOpponents = stored === "1";
   } catch (e) { /* ignore */ }
 
+  function resetGauntletState() {
+    gauntletChampion = null;
+    gauntletWins = 0;
+    gauntletChampionRank = 0;
+    gauntletDefeated = [];
+    gauntletFalling = false;
+    gauntletFallingScene = null;
+  }
+
   // Shuffle state for filtered scenes (prevents duplicates when skipping)
   let shuffledFilteredScenes = [];  // Shuffled copy of filtered scenes
   let shuffleIndex = 0;             // Current position in shuffled list
@@ -547,9 +556,6 @@
         const state = JSON.parse(saved);
         currentPair = state.currentPair || { left: null, right: null };
         currentRanks = state.currentRanks || { left: null, right: null };
-        if (state.filterOpponents !== undefined) {
-          filterOpponents = state.filterOpponents;
-        }
         currentMode = state.currentMode || "swiss";
         gauntletChampion = state.gauntletChampion || null;
         gauntletWins = state.gauntletWins || 0;
@@ -1060,8 +1066,7 @@
     const rating1 = scene1.rating100 || 50;
 
     // decide which list to draw opponents from; ranking numbers come from same list
-    const opponentPool = (filterOpponents && hasFilter) ? filteredScenes : allScenes;
-    const rankSource = opponentPool;
+    const opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
 
     // index of scene1 within the chosen pool
     const scene1IdxInPool = opponentPool.findIndex(s => s.id === scene1.id);
@@ -1082,6 +1087,7 @@
       candidates.push({ scene: opponentPool[fallbackIdx], idx: fallbackIdx });
     }
 
+    // Pick randomly from candidates
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
     const scene2 = pick.scene;
     const scene2Index = pick.idx;
@@ -1126,8 +1132,7 @@
       : allScenes;
 
     // choose pool for opponents / ranking; use filtered list when flag is on and a filter exists
-    const opponentPool = (filterOpponents && hasFilter) ? filteredScenes : allScenes;
-    const rankSource   = opponentPool;
+    const opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
 
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
@@ -1146,7 +1151,7 @@
       
       if (belowOpponents.length === 0) {
         // Hit the bottom - they're the lowest, place them here
-        const finalRank = rankSource.length;
+        const finalRank = opponentPool.length;
         const finalRating = 1; // Lowest rating
         updateSceneRating(gauntletFallingScene.id, finalRating);
         
@@ -1162,7 +1167,7 @@
       } else {
         // Get next opponent below (first one, closest to falling scene)
         const nextBelow = belowOpponents[0];
-        const nextBelowIndex = rankSource.findIndex(s => s.id === nextBelow.id);
+        const nextBelowIndex = opponentPool.findIndex(s => s.id === nextBelow.id);
         
         // Update the falling scene's rank for display
         gauntletChampionRank = fallingIndex + 1;
@@ -1196,13 +1201,13 @@
       }
       
       // Find challenger's position in ranking source (may be filtered or all)
-      const challengerIndex = rankSource.findIndex(s => s.id === challenger.id);
+      const challengerIndex = opponentPool.findIndex(s => s.id === challenger.id);
       
-      // Start at the bottom - find lowest actually rated scene in rankSource
-      const { scene: lowestRated, index: lowestIndex } = findLowestRated(rankSource, challenger.id);
+      // Start at the bottom - find lowest actually rated scene in opponentPool
+      const { scene: lowestRated, index: lowestIndex } = findLowestRated(opponentPool, challenger.id);
       
       // Challenger's current rank in ranking source
-      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : rankSource.length;
+      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : opponentPool.length;
       
       return { 
         scenes: [challenger, lowestRated], 
@@ -1213,12 +1218,12 @@
     }
 
     // Champion exists - find next opponent from the chosen opponent pool
-    const championIndex = rankSource.findIndex(s => s.id === gauntletChampion.id);
+    const championIndex = opponentPool.findIndex(s => s.id === gauntletChampion.id);
     
     // Update champion rank (1-indexed, so +1)
     gauntletChampionRank = championIndex >= 0 ? championIndex + 1 : 1;
     
-    // Find opponents above champion that haven't been defeated (from opponentPool)
+    // Find opponents above champion that haven't been defeated
     const remainingOpponents = opponentPool.filter((s, idx) => {
       if (s.id === gauntletChampion.id) return false;
       if (gauntletDefeated.includes(s.id)) return false;
@@ -1239,7 +1244,7 @@
     
     // Pick the next highest-ranked remaining opponent
     const nextOpponent = remainingOpponents[remainingOpponents.length - 1]; // Closest to champion
-    const nextOpponentIndex = rankSource.findIndex(s => s.id === nextOpponent.id);
+    const nextOpponentIndex = opponentPool.findIndex(s => s.id === nextOpponent.id);
     
     return { 
       scenes: [gauntletChampion, nextOpponent], 
@@ -1267,8 +1272,7 @@
     let filteredScenes = hasFilter
       ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
       : allScenes;
-    const opponentPool = (filterOpponents && hasFilter) ? filteredScenes : allScenes;
-    const rankSource   = opponentPool;
+    const opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
     
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
@@ -1290,13 +1294,12 @@
         throw new Error("No scenes match your filter criteria.");
       }
       
-      // Find challenger's position in ranking source
-      const challengerIndex = rankSource.findIndex(s => s.id === challenger.id);
+      const challengerIndex = opponentPool.findIndex(s => s.id === challenger.id);
       
-      // Start at the bottom - find lowest actually rated scene in rankSource
-      const { scene: lowestRated, index: lowestIndex } = findLowestRated(rankSource, challenger.id);
+      // Start at the bottom - find lowest actually rated scene
+      const { scene: lowestRated, index: lowestIndex } = findLowestRated(opponentPool, challenger.id);
       
-      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : rankSource.length;
+      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : opponentPool.length;
       
       return { 
         scenes: [challenger, lowestRated], 
@@ -1306,11 +1309,11 @@
     }
 
     // Champion exists - find next opponent from the chosen pool
-    const championIndex = rankSource.findIndex(s => s.id === gauntletChampion.id);
+    const championIndex = opponentPool.findIndex(s => s.id === gauntletChampion.id);
     
     gauntletChampionRank = championIndex >= 0 ? championIndex + 1 : 1;
     
-    // Find opponents above champion that haven't been defeated (from opponentPool)
+    // Find opponents above champion that haven't been defeated
     const remainingOpponents = opponentPool.filter((s, idx) => {
       if (s.id === gauntletChampion.id) return false;
       if (gauntletDefeated.includes(s.id)) return false;
@@ -1329,7 +1332,7 @@
     
     // Pick the next highest-ranked remaining opponent
     const nextOpponent = remainingOpponents[remainingOpponents.length - 1];
-    const nextOpponentIndex = rankSource.findIndex(s => s.id === nextOpponent.id);
+    const nextOpponentIndex = opponentPool.findIndex(s => s.id === nextOpponent.id);
     
     return { 
       scenes: [gauntletChampion, nextOpponent], 
@@ -1409,12 +1412,7 @@
     if (statusEl) statusEl.style.display = "none";
     if (actionsEl) actionsEl.style.display = "none";
     
-    // Reset state
-    gauntletFalling = false;
-    gauntletFallingScene = null;
-    gauntletChampion = null;
-    gauntletWins = 0;
-    gauntletDefeated = [];
+    resetGauntletState();
     saveState();
     
     // Attach button handler
@@ -1681,7 +1679,7 @@
           <div class="pwr-opponents-toggle" style="margin-top:8px;">
             <label>
               <input type="checkbox" id="pwr-filter-opponents-checkbox" ${filterOpponents ? "checked" : ""}>
-              Only use filtered scenes for both sides
+               Use filtered scenes for both sides
             </label>
           </div>
         </div>
@@ -1815,12 +1813,7 @@
           const newGauntletBtn = comparisonArea.querySelector("#pwr-new-gauntlet");
           if (newGauntletBtn) {
             newGauntletBtn.addEventListener("click", () => {
-              gauntletChampion = null;
-              gauntletWins = 0;
-              gauntletChampionRank = 0;
-              gauntletDefeated = [];
-              gauntletFalling = false;
-              gauntletFallingScene = null;
+              resetGauntletState();
               saveState();
               // Show the actions again
               if (actionsEl) actionsEl.style.display = "";
@@ -1854,10 +1847,7 @@
           const newGauntletBtn = comparisonArea.querySelector("#pwr-new-gauntlet");
           if (newGauntletBtn) {
             newGauntletBtn.addEventListener("click", () => {
-              gauntletChampion = null;
-              gauntletWins = 0;
-              gauntletChampionRank = 0;
-              gauntletDefeated = [];
+              resetGauntletState();
               saveState();
               if (actionsEl) actionsEl.style.display = "";
               loadNewPair();
@@ -2240,12 +2230,7 @@
       console.log("[Stash Battle] Filter params changed, resetting gauntlet state and filtered cache");
       currentPair = { left: null, right: null };
       currentRanks = { left: null, right: null };
-      gauntletChampion = null;
-      gauntletWins = 0;
-      gauntletChampionRank = 0;
-      gauntletDefeated = [];
-      gauntletFalling = false;
-      gauntletFallingScene = null;
+      resetGauntletState();
       savedFilterParams = currentFilterParams;
       
       // Clear filtered scenes cache (but keep all scenes cache)
@@ -2318,12 +2303,7 @@
         if (newMode !== currentMode) {
           currentMode = newMode;
           
-          // Reset gauntlet state when switching modes
-          gauntletChampion = null;
-          gauntletWins = 0;
-          gauntletDefeated = [];
-          gauntletFalling = false;
-          gauntletFallingScene = null;
+          resetGauntletState();
           
           // Reset shuffle to start fresh with new mode
           shuffleIndex = 0;
@@ -2354,11 +2334,7 @@
         } catch {}
         // switching the toggle counts as changing filters: reset gauntlet/champion run
         if (currentMode === "gauntlet" || currentMode === "champion") {
-          gauntletChampion = null;
-          gauntletWins = 0;
-          gauntletDefeated = [];
-          gauntletFalling = false;
-          gauntletFallingScene = null;
+          resetGauntletState();
         }
         saveState();
         loadNewPair();
@@ -2377,11 +2353,7 @@
         disableChoice = true;
         // Reset state on skip
         if (currentMode === "gauntlet" || currentMode === "champion") {
-          gauntletChampion = null;
-          gauntletWins = 0;
-          gauntletDefeated = [];
-          gauntletFalling = false;
-          gauntletFallingScene = null;
+          resetGauntletState();
           saveState();
         }
         loadNewPair();
@@ -2407,11 +2379,7 @@
           removedSceneIds.clear(); // Reset removed tracking for fresh data
           
           // Reset gauntlet state since rankings may have changed
-          gauntletChampion = null;
-          gauntletWins = 0;
-          gauntletDefeated = [];
-          gauntletFalling = false;
-          gauntletFallingScene = null;
+          resetGauntletState();
           saveState();
           
           // Re-show actions in case hidden
@@ -2493,11 +2461,7 @@
         if(disableChoice) return;
         disableChoice = true;
         if (currentMode === "gauntlet" || currentMode === "champion") {
-          gauntletChampion = null;
-          gauntletWins = 0;
-          gauntletDefeated = [];
-          gauntletFalling = false;
-          gauntletFallingScene = null;
+          resetGauntletState();
           saveState();
         }
         loadNewPair();
