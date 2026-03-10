@@ -1540,8 +1540,8 @@
   }
 
   function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, winnerPlayCount = 0, loserPlayCount = 0, loserRank = null) {
-    const winnerRating = winnerCurrentRating || 50;
-    const loserRating = loserCurrentRating || 50;
+    const winnerRating = winnerCurrentRating || 1;
+    const loserRating = loserCurrentRating || 1;
     
     const ratingDiff = loserRating - winnerRating;
     const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff / 40));
@@ -1562,7 +1562,7 @@
         const kFactor = getKFactor(winnerPlayCount);
         winnerGain = Math.max(1, Math.round(kFactor * (1 - expectedWinner)));
       }
-      if (isChampionLoser || isFallingLoser) {
+      if (isFallingLoser) {
         const kFactor = getKFactor(loserPlayCount);
         loserLoss = Math.max(1, Math.round(kFactor * expectedWinner));
       }
@@ -1660,7 +1660,7 @@
     const sceneUrl = `/scenes/${scene.id}${currentParams}`;
 
     return `
-      <div class="pwr-scene-card" data-scene-id="${scene.id}" data-side="${side}" data-rating="${scene.rating100 || 50}">
+      <div class="pwr-scene-card" data-side="${side}">
         <div class="pwr-scene-image-container" data-scene-url="${sceneUrl}">
           ${screenshotPath 
             ? `<img class="pwr-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />`
@@ -1985,17 +1985,18 @@
     const winnerCard = body.closest(".pwr-scene-card");
     const loserId = winnerId === currentPair.left.id ? currentPair.right.id : currentPair.left.id;
     
-    const winnerRating = parseInt(winnerCard.dataset.rating) || 50;
-    const loserCard = document.querySelector(`.pwr-scene-card[data-scene-id="${loserId}"]`);
-    const loserRating = parseInt(loserCard?.dataset.rating) || 50;
+    const winnerScene = winnerId === currentPair.left.id ? currentPair.left : currentPair.right;
+    const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
+    const winnerRating = winnerScene.rating100 || 1;
+    const loserRating = loserScene.rating100 || 1;
+    const loserSide = winnerId === currentPair.left.id ? "right" : "left";
+    const loserCard = document.querySelector(`.pwr-scene-card[data-side="${loserSide}"]`);
     
     // Get the loser's rank for #1 dethrone logic
     const loserRank = loserId === currentPair.left.id ? currentRanks.left : currentRanks.right;
 
     // Handle gauntlet mode (champion tracking)
     if (currentMode === "gauntlet") {
-      const winnerScene = winnerId === currentPair.left.id ? currentPair.left : currentPair.right;
-      const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
       
       // Check if we're in falling mode (finding floor after a loss)
       if (gauntletFalling && gauntletFallingScene) {
@@ -2084,8 +2085,6 @@
 
     // Handle champion mode (like gauntlet but winner always takes over)
     if (currentMode === "champion") {
-      const winnerScene = winnerId === currentPair.left.id ? currentPair.left : currentPair.right;
-      const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
       
       // Calculate rating changes (pass loserRank for #1 dethrone)
       const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
@@ -2125,8 +2124,6 @@
     }
 
     // For Swiss: Calculate and show rating changes
-    const winnerScene = winnerId === currentPair.left.id ? currentPair.left : currentPair.right;
-    const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
     const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
       winnerId, loserId, winnerRating, loserRating,
       winnerScene.play_count, loserScene.play_count
