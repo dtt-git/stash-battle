@@ -1063,10 +1063,33 @@
       }
     }
     
-    const rating1 = scene1.rating100 || 50;
-
     // decide which list to draw opponents from; ranking numbers come from same list
-    const opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
+    let opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
+
+    // If filtered opponent pool is too small, restart the cycle (clear removals, refresh cache)
+    if (opponentPool.length < 2 && filterOpponents && hasFilter) {
+      console.log("[Stash Battle] 🔄 Filtered opponent pool too small, restarting cycle...");
+      await clearFilteredCache();
+      shuffledFilteredScenes = [];
+      shuffleIndex = 0;
+      shuffleFilterKey = null;
+      removedSceneIds.clear();
+
+      const freshResult = await getFilteredScenesCached(searchParams, sceneFilter);
+      filteredScenes = freshResult.scenes || [];
+      opponentPool = filteredScenes;
+
+      // Re-pick scene1 from the refreshed pool
+      filterKey = buildFilterKey(searchParams, sceneFilter);
+      scene1 = getNextFilteredScene(filteredScenes, filterKey);
+      if (!scene1) {
+        throw new Error("No scenes match your filter criteria.");
+      }
+
+      if (opponentPool.length < 2) {
+        throw new Error("Not enough scenes in your filter for a match. You need at least 2 scenes.");
+      }
+    }
 
     // index of scene1 within the chosen pool
     const scene1IdxInPool = opponentPool.findIndex(s => s.id === scene1.id);
@@ -1084,7 +1107,11 @@
     // fallback if somehow no candidates
     if (candidates.length === 0) {
       const fallbackIdx = scene1IdxInPool === 0 ? 1 : 0;
-      candidates.push({ scene: opponentPool[fallbackIdx], idx: fallbackIdx });
+      if (fallbackIdx < opponentPool.length) {
+        candidates.push({ scene: opponentPool[fallbackIdx], idx: fallbackIdx });
+      } else {
+        throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
+      }
     }
 
     // Pick randomly from candidates
