@@ -2218,6 +2218,9 @@
   function openRankingModal() {
     console.log("[Stash Battle] 🎯 Opening modal...");
     
+    // Pause all media playing in stash when battle modal is opened to prevent audio overlap with hover previews
+    document.querySelectorAll('video, audio').forEach(v => v.pause());
+    
     // Try to load saved state
     const hasState = loadState();
     console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? 'found' : 'none'}`);
