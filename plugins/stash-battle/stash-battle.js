@@ -1064,7 +1064,14 @@
     }
     
     // decide which list to draw opponents from; ranking numbers come from same list
-    let opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
+    // Right side should only show rated scenes unless filter applies to both sides
+    let opponentPool;
+    if (filterOpponents && hasFilter) {
+      opponentPool = filteredScenes;
+    } else {
+      const ratedOnly = allScenes.filter(s => s.rating100 != null);
+      opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
+    }
 
     // If filtered opponent pool is too small, restart the cycle (clear removals, refresh cache)
     if (opponentPool.length < 2 && filterOpponents && hasFilter) {
@@ -1093,25 +1100,22 @@
 
     // index of scene1 within the chosen pool
     const scene1IdxInPool = opponentPool.findIndex(s => s.id === scene1.id);
-    const scene1RankInPool = scene1IdxInPool + 1;
+    // If scene1 not in opponent pool (unrated), position at end to match against lowest-rated
+    const effectiveScene1Idx = scene1IdxInPool >= 0 ? scene1IdxInPool : opponentPool.length;
+    const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
 
-    // Collect candidates near scene1 in opponentPool
-    const candidates = [];
-    const reach = 5; // How far above/below to look (gives up to 10 candidates)
-    for (let i = scene1IdxInPool - reach; i <= scene1IdxInPool + reach; i++) {
-      if (i >= 0 && i < opponentPool.length && i !== scene1IdxInPool) {
-        candidates.push({ scene: opponentPool[i], idx: i });
+    // Collect candidates near scene1 in opponentPool, expanding reach if needed
+    let candidates = [];
+    for (let reach = 5; candidates.length === 0 && reach <= opponentPool.length; reach *= 2) {
+      for (let i = effectiveScene1Idx - reach; i <= effectiveScene1Idx + reach; i++) {
+        if (i >= 0 && i < opponentPool.length && i !== scene1IdxInPool) {
+          candidates.push({ scene: opponentPool[i], idx: i });
+        }
       }
     }
 
-    // fallback if somehow no candidates
     if (candidates.length === 0) {
-      const fallbackIdx = scene1IdxInPool === 0 ? 1 : 0;
-      if (fallbackIdx < opponentPool.length) {
-        candidates.push({ scene: opponentPool[fallbackIdx], idx: fallbackIdx });
-      } else {
-        throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
-      }
+      throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
     }
 
     // Pick randomly from candidates
@@ -1159,7 +1163,14 @@
       : allScenes;
 
     // choose pool for opponents / ranking; use filtered list when flag is on and a filter exists
-    const opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
+    // Right side should only show rated scenes unless filter applies to both sides
+    let opponentPool;
+    if (filterOpponents && hasFilter) {
+      opponentPool = filteredScenes;
+    } else {
+      const ratedOnly = allScenes.filter(s => s.rating100 != null);
+      opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
+    }
 
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
@@ -1299,7 +1310,14 @@
     let filteredScenes = hasFilter
       ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
       : allScenes;
-    const opponentPool = filterOpponents && hasFilter ? filteredScenes : allScenes;
+    // Right side should only show rated scenes unless filter applies to both sides
+    let opponentPool;
+    if (filterOpponents && hasFilter) {
+      opponentPool = filteredScenes;
+    } else {
+      const ratedOnly = allScenes.filter(s => s.rating100 != null);
+      opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
+    }
     
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
