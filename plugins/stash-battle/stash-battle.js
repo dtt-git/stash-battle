@@ -1155,8 +1155,6 @@
     console.log("[Stash Battle] 📋 Fetching all scenes for gauntlet...");
     const allResult = await getAllScenesCached();
     const allScenes = allResult.scenes || [];
-    totalScenesCount = allResult.count || allScenes.length;
-    
     // compute filtered list once (used for left side and, optionally, for opponents)
     let filteredScenes = hasFilter
       ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
@@ -1171,6 +1169,7 @@
       const ratedOnly = allScenes.filter(s => s.rating100 != null);
       opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
     }
+    totalScenesCount = opponentPool.length;
 
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
@@ -1188,9 +1187,11 @@
       });
       
       if (belowOpponents.length === 0) {
-        // Hit the bottom - they're the lowest, place them here
+        // Hit the bottom - place 1 below the last opponent that beat them
         const finalRank = opponentPool.length;
-        const finalRating = 1; // Lowest rating
+        const lastDefeatedById = gauntletDefeated[gauntletDefeated.length - 1];
+        const lastOpponent = opponentPool.find(s => s.id === lastDefeatedById);
+        const finalRating = Math.max(1, (lastOpponent?.rating100 || 2) - 1);
         updateSceneRating(gauntletFallingScene.id, finalRating);
         
         return {
@@ -1304,8 +1305,6 @@
     console.log("[Stash Battle] 📋 Fetching all scenes for champion...");
     const allResult = await getAllScenesCached();
     const allScenes = allResult.scenes || [];
-    totalScenesCount = allResult.count || allScenes.length;
-    
     // precompute filtered list and opponent/rank pools
     let filteredScenes = hasFilter
       ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
@@ -1318,6 +1317,7 @@
       const ratedOnly = allScenes.filter(s => s.rating100 != null);
       opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
     }
+    totalScenesCount = opponentPool.length;
     
     if (allScenes.length < 2) {
       return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
@@ -1548,36 +1548,39 @@
     
     let winnerGain = 0, loserLoss = 0;
     
+    console.log(`[Stash Battle] 📊 ELO Input: mode=${currentMode} winner=${winnerId}(raw=${winnerCurrentRating}, used=${winnerRating}, plays=${winnerPlayCount}) loser=${loserId}(raw=${loserCurrentRating}, used=${loserRating}, plays=${loserPlayCount}) loserRank=${loserRank}`);
+    console.log(`[Stash Battle] 📊 ELO Math: ratingDiff=${ratingDiff} expectedWinner=${expectedWinner.toFixed(4)}`);
+
     if (currentMode === "gauntlet" || currentMode === "champion") {
-      // In gauntlet/champion, only the champion/falling scene changes rating
-      // Defenders stay the same (they're just benchmarks)
-      // EXCEPT: if the defender is rank #1, they lose 1 point when defeated
       const isChampionWinner = gauntletChampion && winnerId === gauntletChampion.id;
       const isFallingWinner = gauntletFalling && gauntletFallingScene && winnerId === gauntletFallingScene.id;
       const isChampionLoser = gauntletChampion && loserId === gauntletChampion.id;
       const isFallingLoser = gauntletFalling && gauntletFallingScene && loserId === gauntletFallingScene.id;
       
-      // Only the active scene (champion or falling) gets rating changes
+      console.log(`[Stash Battle] 📊 Roles: championId=${gauntletChampion?.id} fallingId=${gauntletFallingScene?.id} isChampionWinner=${isChampionWinner} isFallingWinner=${isFallingWinner} isChampionLoser=${isChampionLoser} isFallingLoser=${isFallingLoser}`);
+
       if (isChampionWinner || isFallingWinner) {
         const kFactor = getKFactor(winnerPlayCount);
         winnerGain = Math.max(1, Math.round(kFactor * (1 - expectedWinner)));
+        console.log(`[Stash Battle] 📊 Winner gain: K=${kFactor} raw=${(kFactor * (1 - expectedWinner)).toFixed(2)} gain=${winnerGain}`);
       }
       if (isFallingLoser) {
         const kFactor = getKFactor(loserPlayCount);
         loserLoss = Math.max(1, Math.round(kFactor * expectedWinner));
+        console.log(`[Stash Battle] 📊 Falling loser loss: K=${kFactor} raw=${(kFactor * expectedWinner).toFixed(2)} loss=${loserLoss}`);
       }
       
-      // Special case: if defender was rank #1 and lost, drop their rating by 1
       if (loserRank === 1 && !isChampionLoser && !isFallingLoser) {
         loserLoss = 1;
+        console.log(`[Stash Battle] 📊 Rank #1 dethrone: loserLoss forced to 1`);
       }
     } else {
-      // Swiss mode: True ELO - both change based on expected outcome
       const winnerK = getKFactor(winnerPlayCount);
       const loserK = getKFactor(loserPlayCount);
       
       winnerGain = Math.max(1, Math.round(winnerK * (1 - expectedWinner)));
       loserLoss = Math.max(1, Math.round(loserK * expectedWinner));
+      console.log(`[Stash Battle] 📊 Swiss ELO: winnerK=${winnerK} loserK=${loserK} winnerGain=${winnerGain} loserLoss=${loserLoss}`);
     }
     
     const newWinnerRating = Math.min(100, Math.max(1, winnerRating + winnerGain));
@@ -1586,7 +1589,8 @@
     const winnerChange = newWinnerRating - winnerRating;
     const loserChange = newLoserRating - loserRating;
     
-    // Update scenes in Stash (only if changed)
+    console.log(`[Stash Battle] 📊 ELO Result: winner ${winnerRating}→${newWinnerRating} (${winnerChange >= 0 ? '+' : ''}${winnerChange}) loser ${loserRating}→${newLoserRating} (${loserChange >= 0 ? '+' : ''}${loserChange})`);
+
     if (winnerChange !== 0) updateSceneRating(winnerId, newWinnerRating);
     if (loserChange !== 0) updateSceneRating(loserId, newLoserRating);
     
@@ -2000,10 +2004,12 @@
       
       // Check if we're in falling mode (finding floor after a loss)
       if (gauntletFalling && gauntletFallingScene) {
+        console.log(`[Stash Battle] 📊 Falling mode: fallingScene=${gauntletFallingScene.id} winnerId=${winnerId} loserId=${loserId} loserRating=${loserRating}`);
         if (winnerId === gauntletFallingScene.id) {
           // Falling scene won - found their floor!
           // Set their rating to just above the scene they beat
           const finalRating = Math.min(100, loserRating + 1);
+          console.log(`[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`);
           updateSceneRating(gauntletFallingScene.id, finalRating);
           
           // Final rank is one above the opponent (we beat them, so we're above them)
@@ -2036,32 +2042,37 @@
         }
       }
       
+      // First battle: set champion so handleComparison recognizes the active scene
+      const isFirstBattle = !gauntletChampion;
+      if (isFirstBattle) {
+        gauntletChampion = currentPair.left;
+      }
+
       // Normal climbing - calculate rating changes (pass loserRank for #1 dethrone)
       const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
         winnerId, loserId, winnerRating, loserRating,
         winnerScene.play_count, loserScene.play_count, loserRank
       );
       
-      if (gauntletChampion && winnerId === gauntletChampion.id) {
-        // Champion won - add loser to defeated list and continue climbing
+      if (winnerId === gauntletChampion.id) {
         gauntletDefeated.push(loserId);
         gauntletWins++;
         gauntletChampion.rating100 = newWinnerRating;
-      } else if (gauntletChampion && winnerId !== gauntletChampion.id) {
-        // Champion LOST - start falling to find their floor
-        gauntletFalling = true;
-        gauntletFallingScene = loserScene; // The old champion is now falling
-        gauntletDefeated = [winnerId]; // They lost to this scene
-        
-        // Winner becomes the new climbing champion
-        gauntletChampion = winnerScene;
-        gauntletChampion.rating100 = newWinnerRating;
-        gauntletWins = 1;
-      } else {
-        // No champion yet - winner becomes champion
+        console.log(`[Stash Battle] 📊 Gauntlet: champion ${winnerId} won (streak=${gauntletWins}), rating → ${newWinnerRating}`);
+      } else if (isFirstBattle) {
         gauntletChampion = winnerScene;
         gauntletChampion.rating100 = newWinnerRating;
         gauntletDefeated = [loserId];
+        gauntletWins = 1;
+        console.log(`[Stash Battle] 📊 Gauntlet: first battle, ${winnerId} becomes champion with rating ${newWinnerRating}`);
+      } else {
+        console.log(`[Stash Battle] 📊 Gauntlet: champion ${gauntletChampion.id}(rating=${gauntletChampion.rating100}) LOST to ${winnerId}(rating=${newWinnerRating}), entering falling mode`);
+        gauntletFalling = true;
+        gauntletFallingScene = loserScene;
+        gauntletDefeated = [winnerId];
+        
+        gauntletChampion = winnerScene;
+        gauntletChampion.rating100 = newWinnerRating;
         gauntletWins = 1;
       }
       
@@ -2086,13 +2097,19 @@
     // Handle champion mode (like gauntlet but winner always takes over)
     if (currentMode === "champion") {
       
+      // First battle: set champion so handleComparison recognizes the active scene
+      const isFirstBattle = !gauntletChampion;
+      if (isFirstBattle) {
+        gauntletChampion = currentPair.left;
+      }
+
       // Calculate rating changes (pass loserRank for #1 dethrone)
       const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
         winnerId, loserId, winnerRating, loserRating,
         winnerScene.play_count, loserScene.play_count, loserRank
       );
       
-      if (gauntletChampion && winnerId === gauntletChampion.id) {
+      if (winnerId === gauntletChampion.id) {
         // Champion won - continue climbing
         gauntletDefeated.push(loserId);
         gauntletWins++;
