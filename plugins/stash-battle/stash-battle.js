@@ -1653,9 +1653,11 @@
       }
     }
     
-    // Streak badge for gauntlet champion
+    // Status badge (streak or falling)
     let streakDisplay = '';
-    if (streak !== null && streak > 0) {
+    if (typeof streak === 'string') {
+      streakDisplay = `<div class="pwr-streak-badge">${streak}</div>`;
+    } else if (streak !== null && streak > 0) {
       streakDisplay = `<div class="pwr-streak-badge">🔥 ${streak} win${streak > 1 ? 's' : ''}</div>`;
     }
 
@@ -1762,10 +1764,17 @@
     const comparisonArea = document.getElementById("pwr-comparison-area");
     if (!comparisonArea) return;
 
-    // Determine streak for each card (gauntlet and champion modes)
+    // Determine badge for each card (gauntlet and champion modes)
     let leftStreak = null;
     let rightStreak = null;
     if (currentMode === "gauntlet" || currentMode === "champion") {
+      if (gauntletFalling && gauntletFallingScene) {
+        if (scenes[0].id === gauntletFallingScene.id) {
+          leftStreak = "📍 Finding final placement...";
+        } else if (scenes[1].id === gauntletFallingScene.id) {
+          rightStreak = "📍 Finding final placement...";
+        }
+      }
       if (gauntletChampion && scenes[0].id === gauntletChampion.id) {
         leftStreak = gauntletWins;
       } else if (gauntletChampion && scenes[1].id === gauntletChampion.id) {
