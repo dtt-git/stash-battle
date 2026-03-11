@@ -2002,6 +2002,7 @@
     const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
     const winnerRating = winnerScene.rating100 || 1;
     const loserRating = loserScene.rating100 || 1;
+    const loserDisplayRating = loserScene.rating100 || 0;
     const loserSide = winnerId === currentPair.left.id ? "right" : "left";
     const loserCard = document.querySelector(`.pwr-scene-card[data-side="${loserSide}"]`);
     
@@ -2093,7 +2094,8 @@
       
       showRatingAnimation(winnerCard, winnerRating, newWinnerRating, winnerChange, true);
       if (loserCard) {
-        showRatingAnimation(loserCard, loserRating, newLoserRating, loserChange, false);
+        const loserDisplayNew = loserChange !== 0 ? newLoserRating : loserDisplayRating;
+        showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, loserChange, false);
       }
       
       // Load new pair after animation
@@ -2139,7 +2141,8 @@
       
       showRatingAnimation(winnerCard, winnerRating, newWinnerRating, winnerChange, true);
       if (loserCard) {
-        showRatingAnimation(loserCard, loserRating, newLoserRating, loserChange, false);
+        const loserDisplayNew = loserChange !== 0 ? newLoserRating : loserDisplayRating;
+        showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, loserChange, false);
       }
       
       // Load new pair after animation
@@ -2169,7 +2172,8 @@
     // Show rating change animation
     showRatingAnimation(winnerCard, winnerRating, newWinnerRating, winnerChange, true);
     if (loserCard) {
-      showRatingAnimation(loserCard, loserRating, newLoserRating, loserChange, false);
+      const loserDisplayNew = loserChange !== 0 ? newLoserRating : loserDisplayRating;
+      showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, loserChange, false);
     }
 
     // Load new pair after animation
