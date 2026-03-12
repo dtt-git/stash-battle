@@ -1106,7 +1106,7 @@
 
     // Collect candidates near scene1 in opponentPool, expanding reach if needed
     let candidates = [];
-    for (let reach = 5; candidates.length === 0 && reach <= opponentPool.length; reach *= 2) {
+    for (let reach = 10; candidates.length === 0 && reach <= opponentPool.length; reach *= 2) {
       for (let i = effectiveScene1Idx - reach; i <= effectiveScene1Idx + reach; i++) {
         if (i >= 0 && i < opponentPool.length && i !== scene1IdxInPool) {
           candidates.push({ scene: opponentPool[i], idx: i });
@@ -1281,8 +1281,10 @@
       };
     }
     
-    // Pick the next highest-ranked remaining opponent
-    const nextOpponent = remainingOpponents[remainingOpponents.length - 1]; // Closest to champion
+    // Pick from the closest undefeated opponents above the champion (up to 5)
+    const pickWindow = Math.min(5, remainingOpponents.length);
+    const windowStart = remainingOpponents.length - pickWindow;
+    const nextOpponent = remainingOpponents[windowStart + Math.floor(Math.random() * pickWindow)];
     const nextOpponentIndex = opponentPool.findIndex(s => s.id === nextOpponent.id);
     
     return { 
@@ -1375,8 +1377,10 @@
       };
     }
     
-    // Pick the next highest-ranked remaining opponent
-    const nextOpponent = remainingOpponents[remainingOpponents.length - 1];
+    // Pick from the closest undefeated opponents above the champion (up to 5)
+    const pickWindow = Math.min(5, remainingOpponents.length);
+    const windowStart = remainingOpponents.length - pickWindow;
+    const nextOpponent = remainingOpponents[windowStart + Math.floor(Math.random() * pickWindow)];
     const nextOpponentIndex = opponentPool.findIndex(s => s.id === nextOpponent.id);
     
     return { 

@@ -174,7 +174,7 @@ The default mode. Pairs scenes with similar ratings for meaningful comparisons.
 1. Pick the next scene from the shuffled filtered pool (left side)
 2. Find its position in the opponent pool (sorted by rating DESC)
 3. If the scene isn't in the opponent pool (unrated), position it at the end (lowest ranked)
-4. Collect candidates within ±5 of that position
+4. Collect candidates within ±10 of that position
 5. If no candidates found, **expand the search** (double the reach) until candidates exist
 6. Pick randomly from candidates
 
@@ -195,7 +195,7 @@ A climb-the-ladder mode where a challenger fights their way up from the bottom.
 
 **Climbing**:
 - Champion wins → opponent added to `gauntletDefeated`, streak increments, champion's rating increases via ELO
-- Next opponent: the closest undefeated scene ranked above the champion (`remainingOpponents` filtered by `idx < championIndex` or `rating >= champion's rating`)
+- Next opponent: picked randomly from up to 5 of the closest undefeated scenes ranked above the champion (`remainingOpponents` filtered by `idx < championIndex` or `rating >= champion's rating`). This selection window prevents every climb from fighting the exact same sequence of opponents.
 - As champion wins and their rating increases, `repositionSceneInArray` moves them up in the sorted pool. The champion can leapfrog multiple opponents if their ELO gain is large enough — skipped opponents are excluded from future matchups since they now rank below the champion
 
 **Champion loses → Falling mode**:
@@ -296,7 +296,7 @@ All data comes from Stash's GraphQL API:
 
 2. **First battle right-side win**: If the user picks the right side on the first gauntlet battle, it should become champion without triggering falling mode. The `isFirstBattle` flag handles this.
 
-3. **Unrated in opponent pool**: Without the rated-only filter, unrated scenes cluster at the bottom of the DESC-sorted list. Swiss mode's ±5 reach around an unrated left-side scene would pick other unrated scenes as opponents — defeating the purpose.
+3. **Unrated in opponent pool**: Without the rated-only filter, unrated scenes cluster at the bottom of the DESC-sorted list. Swiss mode's ±10 reach around an unrated left-side scene would pick other unrated scenes as opponents — defeating the purpose.
 
 4. **Falling scene at the bottom**: If the falling scene was already the lowest-rated scene (e.g., it was picked as the initial gauntlet opponent and later became champion), `belowOpponents` is immediately empty. The rating is set to 1 below the last opponent's rating rather than hardcoded to 1.
 
