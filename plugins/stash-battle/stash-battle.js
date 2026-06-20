@@ -30,6 +30,13 @@
     if (stored !== null) filterOpponents = stored === "1";
   } catch (e) { /* ignore */ }
 
+  // toggle: mute hover preview audio (default: unmuted to match prior behavior)
+  let mutePreviews = false;
+  try {
+    const storedMute = localStorage.getItem("pwr_mutePreviews");
+    if (storedMute !== null) mutePreviews = storedMute === "1";
+  } catch (e) { /* ignore */ }
+
   function resetGauntletState() {
     gauntletChampion = null;
     gauntletWins = 0;
@@ -1736,6 +1743,10 @@
               <input type="checkbox" id="pwr-filter-opponents-checkbox" ${filterOpponents ? "checked" : ""}>
                Use filtered scenes for both sides
             </label>
+            <label style="margin-left:16px;">
+              <input type="checkbox" id="pwr-mute-previews-checkbox" ${mutePreviews ? "checked" : ""}>
+               Mute hover previews
+            </label>
           </div>
         </div>
 
@@ -1819,7 +1830,7 @@
       
       card.addEventListener("mouseenter", () => {
         video.currentTime = 0;
-        video.muted = false;
+        video.muted = mutePreviews;
         video.volume = 0.5;
         video.play().catch(() => {});
       });
@@ -2417,6 +2428,21 @@
         }
         saveState();
         loadNewPair();
+      });
+    }
+
+    // Mute hover previews checkbox
+    const muteCheckbox = modal.querySelector("#pwr-mute-previews-checkbox");
+    if (muteCheckbox) {
+      muteCheckbox.addEventListener("change", (e) => {
+        mutePreviews = e.target.checked;
+        try {
+          localStorage.setItem("pwr_mutePreviews", mutePreviews ? "1" : "0");
+        } catch {}
+        // apply immediately to any preview videos currently rendered
+        document.querySelectorAll(".pwr-hover-preview").forEach((v) => {
+          v.muted = mutePreviews;
+        });
       });
     }
 
