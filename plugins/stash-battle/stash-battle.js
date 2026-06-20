@@ -22,8 +22,8 @@
   let savedFilterParams = ""; // Store URL filter params to detect changes
 
   // toggle: should scene2/opponents obey the same filter as scene1?
-  // default is true (apply filter to both sides); user can override via UI.
-  const DEFAULT_FILTER_OPPONENTS = true;
+  // default is false (don't apply filter to both sides); user can override via UI.
+  const DEFAULT_FILTER_OPPONENTS = false;
   let filterOpponents = DEFAULT_FILTER_OPPONENTS;
   try {
     const stored = localStorage.getItem("pwr_filterOpponents");
@@ -626,6 +626,24 @@
     }
   `;
 
+  // Extract scene ID from individual scene pages like /scenes/123
+  function getSceneIdFromUrl() {
+    const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
+    return match ? match[1] : null;
+  }
+
+  async function fetchSceneById(sceneId) {
+    const query = `
+      query FindScene($id: ID!) {
+        findScene(id: $id) {
+          ${SCENE_FRAGMENT}
+        }
+      }
+    `;
+    const result = await graphqlQuery(query, { id: sceneId });
+    return result.findScene;
+  }
+
   // ============================================
   // NAVIGATION
   // ============================================
@@ -998,7 +1016,7 @@
   // Swiss mode: fetch two scenes with similar ratings
   // Left side (scene1): from filtered pool (scenes to be rated)
   // Right side (scene2): from full collection (opponents)
-  async function fetchSwissPair() {
+  async function fetchSwissPair(forcedLeftScene = null) {
     const searchParams = getSearchParams();
     const sceneFilter = getSceneFilter(searchParams);
     const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
@@ -1028,9 +1046,9 @@
     }
     // Note: filteredScenes can be empty - getNextFilteredScene will return null for poolExhausted
 
-    // Pick next scene from shuffled filtered pool (left side - to be rated)
+    // Pick left side scene: use forced scene if provided, otherwise shuffled filtered pool
     let filterKey = buildFilterKey(searchParams, sceneFilter);
-    let scene1 = getNextFilteredScene(filteredScenes, filterKey);
+    let scene1 = forcedLeftScene || getNextFilteredScene(filteredScenes, filterKey);
     
     // Handle pool exhaustion - auto-refresh and continue
     if (!scene1) {
@@ -1146,7 +1164,7 @@
   // Gauntlet mode: champion vs next challenger
   // Left side (champion): initially picked from filtered pool (scenes to be rated)
   // Right side (opponents): from full collection
-  async function fetchGauntletPair() {
+  async function fetchGauntletPair(forcedLeftScene = null) {
     const searchParams = getSearchParams();
     const sceneFilter = getSceneFilter(searchParams);
     const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
@@ -1227,13 +1245,9 @@
       gauntletFalling = false;
       gauntletFallingScene = null;
       
-      if (filteredScenes.length < 1) {
-        throw new Error("No scenes match your filter criteria.");
-      }
-      
-      // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
+      // Use forced scene if provided, otherwise pick from shuffled filtered pool
       const filterKey = buildFilterKey(searchParams, sceneFilter);
-      const challenger = getNextFilteredScene(filteredScenes, filterKey);
+      const challenger = forcedLeftScene || getNextFilteredScene(filteredScenes, filterKey);
       
       if (!challenger) {
         throw new Error("No scenes match your filter criteria.");
@@ -1298,7 +1312,7 @@
   // Champion mode: like gauntlet but winner stays on (no falling)
   // Left side (champion): initially picked from filtered pool (scenes to be rated)
   // Right side (opponents): from full collection
-  async function fetchChampionPair() {
+  async function fetchChampionPair(forcedLeftScene = null) {
     const searchParams = getSearchParams();
     const sceneFilter = getSceneFilter(searchParams);
     const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
@@ -1329,13 +1343,13 @@
     if (!gauntletChampion) {
       gauntletDefeated = [];
       
-      if (filteredScenes.length < 1) {
+      if (!forcedLeftScene && filteredScenes.length < 1) {
         throw new Error("No scenes match your filter criteria.");
       }
       
-      // Pick next scene from shuffled filtered pool as challenger (left side - to be rated)
+      // Use forced scene if provided, otherwise pick from shuffled filtered pool
       const filterKey = buildFilterKey(searchParams, sceneFilter);
-      const challenger = getNextFilteredScene(filteredScenes, filterKey);
+      const challenger = forcedLeftScene || getNextFilteredScene(filteredScenes, filterKey);
       
       if (!challenger) {
         throw new Error("No scenes match your filter criteria.");
@@ -1840,12 +1854,12 @@
     }
   }
 
-  async function loadNewPair() {
+  async function loadNewPair(forcedLeftSceneId = null) {
     disableChoice = false;
     const comparisonArea = document.getElementById("pwr-comparison-area");
     if (!comparisonArea) return;
 
-    console.log(`[Stash Battle] 🎮 Loading new pair (mode: ${currentMode})...`);
+    console.log(`[Stash Battle] 🎮 Loading new pair (mode: ${currentMode})${forcedLeftSceneId ? ` with forced scene ${forcedLeftSceneId}` : ''}...`);
     const startTime = Date.now();
 
     // Only show loading on first load (when empty or already showing loading)
@@ -1855,11 +1869,20 @@
     }
 
     try {
+      // Fetch forced scene data if a scene ID was provided
+      let forcedLeftScene = null;
+      if (forcedLeftSceneId) {
+        forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+        if (!forcedLeftScene) {
+          console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
+        }
+      }
+
       let scenes;
       let ranks = [null, null];
       
       if (currentMode === "gauntlet") {
-        const gauntletResult = await fetchGauntletPair();
+        const gauntletResult = await fetchGauntletPair(forcedLeftScene);
         
         // Check for victory (champion reached #1)
         if (gauntletResult.isVictory) {
@@ -1895,7 +1918,7 @@
         scenes = gauntletResult.scenes;
         ranks = gauntletResult.ranks;
       } else if (currentMode === "champion") {
-        const championResult = await fetchChampionPair();
+        const championResult = await fetchChampionPair(forcedLeftScene);
         
         // Check for victory (champion beat everyone)
         if (championResult.isVictory) {
@@ -1922,7 +1945,7 @@
         scenes = championResult.scenes;
         ranks = championResult.ranks;
       } else {
-        const swissResult = await fetchSwissPair();
+        const swissResult = await fetchSwissPair(forcedLeftScene);
         
         scenes = swissResult.scenes;
         ranks = swissResult.ranks;
@@ -2322,6 +2345,19 @@
       shuffleFilterKey = null;
     }
     
+    // Detect if opened from an individual scene page (e.g. /scenes/123)
+    const scenePageId = getSceneIdFromUrl();
+    const sceneAlreadyInPair = scenePageId && currentPair.left && currentPair.right &&
+      (String(currentPair.left.id) === scenePageId || String(currentPair.right.id) === scenePageId);
+    const forceSceneBattle = scenePageId && !sceneAlreadyInPair;
+    
+    if (forceSceneBattle) {
+      console.log(`[Stash Battle] 🎯 Opened from scene page ${scenePageId}, starting new battle with this scene`);
+      resetGauntletState();
+      currentPair = { left: null, right: null };
+      currentRanks = { left: null, right: null };
+    }
+    
     // Check for existing hidden modal - reuse it
     const existingModal = document.getElementById("pwr-modal");
     if (existingModal && existingModal.classList.contains("pwr-modal-hidden")) {
@@ -2338,8 +2374,10 @@
       const modalContent = existingModal.querySelector(".pwr-modal-content");
       if (modalContent) modalContent.focus();
       
-      // If filters changed or no pair, load new content
-      if (filtersChanged || !currentPair.left || !currentPair.right) {
+      // If filters changed, no pair, or forced scene, load new content
+      if (forceSceneBattle) {
+        loadNewPair(scenePageId);
+      } else if (filtersChanged || !currentPair.left || !currentPair.right) {
         loadNewPair();
       }
       // Otherwise the existing content is still valid
@@ -2396,8 +2434,8 @@
           const actionsEl = document.querySelector(".pwr-actions");
           if (actionsEl) actionsEl.style.display = "";
           
-          // Load new pair in new mode
-          loadNewPair();
+          // Load new pair in new mode, preserving scene page context
+          loadNewPair(getSceneIdFromUrl());
           saveState();
         }
       });
@@ -2476,7 +2514,10 @@
     }
 
     // Load initial comparison or restore saved pair
-    if (hasState && currentPair.left && currentPair.right && !filtersChanged) {
+    if (forceSceneBattle) {
+      console.log(`[Stash Battle] 🎯 Starting battle with scene ${scenePageId} from scene page`);
+      loadNewPair(scenePageId);
+    } else if (hasState && currentPair.left && currentPair.right && !filtersChanged) {
       console.log(`[Stash Battle] 📂 Restoring saved pair from localStorage (Scene ${currentPair.left.id} vs Scene ${currentPair.right.id})`);
       restoreCurrentPair();
     } else {

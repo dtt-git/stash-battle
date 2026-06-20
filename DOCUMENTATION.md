@@ -22,9 +22,10 @@ The plugin is a single IIFE (`stash-battle.js`, ~2600 lines) injected into the S
 ### Entry Flow
 
 1. `init()` fires on `DOMContentLoaded`
-2. `addFloatingButton()` injects a nav item on `/scenes` pages
+2. `addFloatingButton()` injects a nav item on `/scenes` pages (list and individual scene pages)
 3. A `MutationObserver` re-adds the button on SPA navigation (Stash uses React Router)
 4. Clicking the button opens `openRankingModal()` which renders the full battle UI
+5. If opened from an individual scene page (`/scenes/123`), the scene is forced onto the left side of a new battle — unless it's already one of the two scenes in the current pair, in which case the existing pair is restored
 
 ### Core State
 
@@ -266,6 +267,19 @@ State is saved to `localStorage` under `"stash-battle-state"` after every battle
 
 **Filter change detection**: `savedFilterParams` stores the URL search string. If it differs on modal open, gauntlet state and caches are reset.
 
+### Scene Page Battle
+
+When the Battle button is clicked on an individual scene page (`/scenes/123`):
+
+1. `getSceneIdFromUrl()` extracts the scene ID from the URL pathname
+2. If the scene is already in `currentPair.left` or `currentPair.right`, the existing pair is restored normally (no disruption)
+3. If the scene is NOT in the current pair, a new battle is forced:
+   - Gauntlet state is reset
+   - `currentPair` and `currentRanks` are cleared
+   - `fetchSceneById()` loads the scene via GraphQL
+   - The scene is passed as `forcedLeftScene` through `loadNewPair` → the active mode's fetch function
+   - In all modes, the forced scene replaces the normal `getNextFilteredScene()` call for the left/challenger side
+
 ---
 
 ## URL Filter Integration
@@ -285,6 +299,7 @@ The plugin reads Stash's URL filter parameters to determine which scenes to show
 All data comes from Stash's GraphQL API:
 
 - **`findScenes`** query: fetches scene lists with `per_page: -1`, sorted by rating DESC
+- **`findScene`** query: fetches a single scene by ID (used for scene page battle)
 - **`sceneUpdate`** mutation: writes rating changes back to Stash
 - **Fragment fields**: `id`, `title`, `date`, `rating100`, `play_count`, `paths` (screenshot, preview), `files` (path, duration, resolution), `studio`, `performers`, `tags`
 
@@ -307,3 +322,7 @@ All data comes from Stash's GraphQL API:
 7. **Background refresh race condition**: `removedSceneIds` persists across background cache refreshes. Without it, a background refresh could re-add scenes to the filtered pool that were already processed this session.
 
 8. **Pool size for rank display**: `totalScenesCount` is set from `opponentPool.length`, not `allScenes.length`. This ensures "Rank #X of Y" is consistent when unrated scenes are excluded from the pool.
+
+9. **Scene page battle with active gauntlet**: Opening battle from a scene page always resets gauntlet state if the scene isn't already in the pair. This prevents a forced scene from being injected mid-gauntlet-run, which would corrupt the champion/defeated tracking.
+
+10. **Scene page ID matching**: Scene IDs from the URL and from GraphQL are compared as strings via `String()`. The `getSceneIdFromUrl()` regex requires a pure numeric path segment (`/scenes/(\d+)$`) — tab paths like `/scenes/123/markers` won't match.
