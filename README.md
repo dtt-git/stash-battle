@@ -39,7 +39,7 @@ Recommend saving a backup of your database beforehand (Settings → Interface �
 Optional Step: Change Rating System Type to "Decimal" (Settings → Interface → Editing)
 1. Navigate to the **Scenes** page in Stash
 2. (Optional) Apply any filters or search to narrow down which scenes you want to rate
-3. Click the floating ⚔️ button in the bottom-right corner
+3. Click the **Battle** button in the navbar
 4. Choose your preferred comparison mode
 5. Click on a scene (or use arrow keys) to pick the winner
 6. Watch your rankings evolve over time!
@@ -63,6 +63,58 @@ Filtering:
 - The filtered scenes will appear on the left side to be rated, while opponents are drawn from your entire library.
 
 
+
+## Development
+
+The plugin is written in TypeScript under [`src/`](src/) and bundled by [esbuild](https://esbuild.github.io/) into a single IIFE at `plugins/stash-battle/stash-battle.js` (which is what Stash actually loads). The committed `stash-battle.js` is a build artifact — edit the TypeScript modules, not the bundle.
+
+### Setup
+
+```bash
+npm install
+```
+
+### Scripts
+
+| Command | What it does |
+|---------|--------------|
+| `npm run build` | Production build -> `plugins/stash-battle/stash-battle.js` |
+| `npm run dev` | Watch `src/`, rebuild on save, and deploy the bundle + css + yml into your live Stash plugins folder (when `STASH_PLUGINS_DIR` is set in `.env`) |
+| `npm run typecheck` | Strict TypeScript type-check (`tsc --noEmit`) — esbuild does not type-check on its own. |
+
+### Live development against Stash
+
+To have `npm run dev` deploy straight into your local Stash install, point it at your Stash `plugins` folder. Copy `.env.example` to `.env` (which is gitignored, so your local path is never committed) and set:
+
+```bash
+# .env
+STASH_PLUGINS_DIR=C:\Path\To\Stash\plugins
+```
+
+Each rebuild then writes the bundle + css + yml into `<STASH_PLUGINS_DIR>/stash-battle`. If `STASH_PLUGINS_DIR` is unset (or `none`), dev builds are produced in the repo but not deployed into Stash. You can also set it inline instead of using `.env`:
+
+```bash
+# PowerShell
+$env:STASH_PLUGINS_DIR = "D:\path\to\Stash\plugins"; npm run dev
+```
+
+With the watcher running, edit any file in `src/` and save — the build deploys automatically. **Refresh Stash manually (F5)** to load the new bundle. (Browser auto-reload is not used: Stash's Content Security Policy blocks connections to `localhost`.)
+
+### Source layout
+
+| Module | Responsibility |
+|--------|----------------|
+| `types.ts` / `constants.ts` | Shared types and constants |
+| `state.ts` | Central mutable runtime state + `resetGauntletState()` |
+| `graphql.ts` | Stash GraphQL access + `SCENE_FRAGMENT` |
+| `cache.ts` | IndexedDB + in-memory scene cache (stale-while-revalidate) |
+| `storage.ts` | localStorage session persistence |
+| `filters.ts` | URL filter parsing + filtered-scene selection |
+| `pairs.ts` | Matchmaking for Swiss / Gauntlet / Champion modes |
+| `elo.ts` | ELO rating math |
+| `rating.ts` | Persist ratings to Stash, keep pools in sync |
+| `ui/*` | Scene cards, screens, main UI, nav button, modal |
+| `main.ts` | Entry point / bootstrap |
 
 ## License
 

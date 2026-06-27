@@ -1,700 +1,35 @@
-(function () {
-  "use strict";
+"use strict";
+(() => {
+  // src/constants.ts
+  var STORAGE_KEY = "stash-battle-state";
+  var CACHE_DB_NAME = "stash-battle-cache";
+  var CACHE_DB_VERSION = 1;
+  var CACHE_STORE_NAME = "scenes";
+  var CACHE_MAX_AGE_MS = 5 * 60 * 1e3;
+  var DEFAULT_FILTER_OPPONENTS = false;
+  var FILTER_OPPONENTS_KEY = "sb_filterOpponents";
+  var MUTE_PREVIEWS_KEY = "sb_mutePreviews";
+  var SWISS_OPPONENT_REACH_INITIAL = 10;
+  var SWISS_OPPONENT_REACH_MULTIPLIER = 2;
+  var CLIMB_OPPONENT_PICK_WINDOW = 5;
 
-  const STORAGE_KEY = "stash-battle-state";
-  const CACHE_DB_NAME = "stash-battle-cache";
-  const CACHE_DB_VERSION = 1;
-  const CACHE_STORE_NAME = "scenes";
-  const CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes cache expiry
-
-  // Current comparison pair and mode
-  let currentPair = { left: null, right: null };
-  let currentRanks = { left: null, right: null };
-  let currentMode = "swiss"; // "swiss", "gauntlet", or "champion"
-  let gauntletChampion = null; // The scene currently on a winning streak
-  let gauntletWins = 0; // Current win streak
-  let gauntletChampionRank = 0; // Current rank position (1 = top)
-  let gauntletDefeated = []; // IDs of scenes defeated in current run
-  let gauntletFalling = false; // True when champion lost and is finding their floor
-  let gauntletFallingScene = null; // The scene that's falling to find its position
-  let totalScenesCount = 0; // Total scenes for position display
-  let disableChoice = false; // Track when inputs should be disabled to prevent multiple events
-  let savedFilterParams = ""; // Store URL filter params to detect changes
-
-  // toggle: should scene2/opponents obey the same filter as scene1?
-  // default is false (don't apply filter to both sides); user can override via UI.
-  const DEFAULT_FILTER_OPPONENTS = false;
-  let filterOpponents = DEFAULT_FILTER_OPPONENTS;
-  try {
-    const stored = localStorage.getItem("pwr_filterOpponents");
-    if (stored !== null) filterOpponents = stored === "1";
-  } catch (e) { /* ignore */ }
-
-  // toggle: mute hover preview audio (default: unmuted to match prior behavior)
-  let mutePreviews = false;
-  try {
-    const storedMute = localStorage.getItem("pwr_mutePreviews");
-    if (storedMute !== null) mutePreviews = storedMute === "1";
-  } catch (e) { /* ignore */ }
-
-  function resetGauntletState() {
-    gauntletChampion = null;
-    gauntletWins = 0;
-    gauntletChampionRank = 0;
-    gauntletDefeated = [];
-    gauntletFalling = false;
-    gauntletFallingScene = null;
-  }
-
-  // Shuffle state for filtered scenes (prevents duplicates when skipping)
-  let shuffledFilteredScenes = [];  // Shuffled copy of filtered scenes
-  let shuffleIndex = 0;             // Current position in shuffled list
-  let shuffleFilterKey = null;      // Filter key to detect changes
-  let removedSceneIds = new Set();  // Track scenes removed during this session (survives background refresh)
-
-  // ============================================
-  // SCENE CACHE (IndexedDB + Memory)
-  // ============================================
-
-  // In-memory cache for current session (avoids repeated IndexedDB reads)
-  let memoryCache = {
-    allScenes: null,           // All scenes (no filter)
-    filteredScenes: null,      // Scenes matching current filter
-    filterKey: null,           // Current filter params for cache validation
-    timestamp: null            // When cache was populated
-  };
-
-  // Open IndexedDB database
-  function openCacheDB() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
-      
-      request.onerror = () => {
-        console.error("[Stash Battle] IndexedDB error:", request.error);
-        reject(request.error);
-      };
-      
-      request.onsuccess = () => {
-        resolve(request.result);
-      };
-      
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
-          db.createObjectStore(CACHE_STORE_NAME, { keyPath: "cacheKey" });
-        }
-      };
-    });
-  }
-
-  // Get cached scenes from IndexedDB
-  async function getCachedScenes(cacheKey) {
-    try {
-      const db = await openCacheDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CACHE_STORE_NAME, "readonly");
-        const store = transaction.objectStore(CACHE_STORE_NAME);
-        const request = store.get(cacheKey);
-        
-        request.onsuccess = () => {
-          const result = request.result;
-          if (result && (Date.now() - result.timestamp) < CACHE_MAX_AGE_MS) {
-            resolve(result);
-          } else {
-            resolve(null); // Cache miss or expired
-          }
-        };
-        
-        request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
-      });
-    } catch (e) {
-      console.error("[Stash Battle] Cache read error:", e);
-      return null;
-    }
-  }
-
-  // Store scenes in IndexedDB
-  async function setCachedScenes(cacheKey, scenes, count) {
-    try {
-      const db = await openCacheDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
-        const store = transaction.objectStore(CACHE_STORE_NAME);
-        
-        const data = {
-          cacheKey,
-          scenes,
-          count,
-          timestamp: Date.now()
-        };
-        
-        const request = store.put(data);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
-      });
-    } catch (e) {
-      console.error("[Stash Battle] Cache write error:", e);
-    }
-  }
-
-  // Store filtered scenes with filter key for validation
-  async function setCachedScenesWithFilter(cacheKey, scenes, count, filterKey) {
-    try {
-      const db = await openCacheDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
-        const store = transaction.objectStore(CACHE_STORE_NAME);
-        
-        const data = {
-          cacheKey,
-          scenes,
-          count,
-          filterKey,  // Store filter key for validation on read
-          timestamp: Date.now()
-        };
-        
-        const request = store.put(data);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
-      });
-    } catch (e) {
-      console.error("[Stash Battle] Cache write error:", e);
-    }
-  }
-
-  // Clear all cached scenes (for manual refresh)
-  async function clearSceneCache() {
-    try {
-      console.log("[Stash Battle] 🗑️ Clearing all scene caches...");
-      const db = await openCacheDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
-        const store = transaction.objectStore(CACHE_STORE_NAME);
-        const request = store.clear();
-        
-        request.onsuccess = () => {
-          memoryCache = { allScenes: null, filteredScenes: null, filterKey: null, timestamp: null };
-          console.log("[Stash Battle] ✅ All caches cleared (memory + IndexedDB)");
-          resolve();
-        };
-        request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
-      });
-    } catch (e) {
-      console.error("[Stash Battle] ❌ Cache clear error:", e);
-    }
-  }
-
-  // Clear just the filtered scenes cache (for auto-refresh after pool exhaustion)
-  async function clearFilteredCache() {
-    try {
-      const db = await openCacheDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
-        const store = transaction.objectStore(CACHE_STORE_NAME);
-        const request = store.delete("filtered-scenes");
-        
-        request.onsuccess = () => {
-          memoryCache.filteredScenes = null;
-          memoryCache.filterKey = null;
-          console.log("[Stash Battle] 🗑️ Filtered cache cleared (memory + IndexedDB)");
-          resolve();
-        };
-        request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
-      });
-    } catch (e) {
-      console.error("[Stash Battle] ❌ Filtered cache clear error:", e);
-      // Still clear memory cache even if IndexedDB fails
-      memoryCache.filteredScenes = null;
-      memoryCache.filterKey = null;
-    }
-  }
-
-  // Background refresh - fetch from network and update caches silently
-  async function backgroundRefreshAllScenes() {
-    const cacheKey = "all-scenes";
-    
-    try {
-      console.log("[Stash Battle] 🔄 Background refresh started (all scenes)...");
-      const startTime = Date.now();
-      
-      const scenesQuery = `
-        query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-          findScenes(filter: $filter, scene_filter: $scene_filter) {
-            count
-            scenes {
-              ${SCENE_FRAGMENT}
-            }
-          }
-        }
-      `;
-      
-      const result = await graphqlQuery(scenesQuery, {
-        filter: {
-          per_page: -1,
-          sort: "rating",
-          direction: "DESC"
-        },
-        scene_filter: null
-      });
-      
-      const scenes = result.findScenes.scenes || [];
-      const count = result.findScenes.count || scenes.length;
-      const fetchTime = Date.now() - startTime;
-      
-      // Check if count changed (new scenes added/removed)
-      const oldCount = memoryCache.allScenes ? memoryCache.allScenes.length : 0;
-      if (count !== oldCount) {
-        console.log(`[Stash Battle] 📊 Scene count changed: ${oldCount} → ${count} (${count > oldCount ? '+' : ''}${count - oldCount})`);
-      } else {
-        console.log(`[Stash Battle] 📊 Scene count unchanged: ${count}`);
-      }
-      
-      // Update both caches silently
-      memoryCache.allScenes = scenes;
-      memoryCache.timestamp = Date.now();
-      await setCachedScenes(cacheKey, scenes, count);
-      
-      console.log(`[Stash Battle] ✅ Background refresh complete: ${scenes.length} scenes in ${fetchTime}ms`);
-    } catch (e) {
-      console.error("[Stash Battle] ❌ Background refresh failed:", e);
-    }
-  }
-
-  // Get all scenes (uses cache with stale-while-revalidate)
-  async function getAllScenesCached() {
-    const cacheKey = "all-scenes";
-    
-    // Check memory cache first - return immediately if available
-    if (memoryCache.allScenes) {
-      const cacheAge = Math.round((Date.now() - memoryCache.timestamp) / 1000);
-      const isStale = (Date.now() - memoryCache.timestamp) >= CACHE_MAX_AGE_MS;
-      
-      console.log(`[Stash Battle] 💾 Memory cache hit (all scenes): ${memoryCache.allScenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
-      
-      // If stale, trigger background refresh (but still return cached data)
-      if (isStale) {
-        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
-        backgroundRefreshAllScenes(); // Don't await - runs in background
-      }
-      return { scenes: memoryCache.allScenes, count: memoryCache.allScenes.length };
-    }
-    
-    // Check IndexedDB cache - return immediately if available
-    console.log("[Stash Battle] 🔍 Memory cache miss, checking IndexedDB...");
-    const cached = await getCachedScenes(cacheKey);
-    if (cached) {
-      const cacheAge = Math.round((Date.now() - cached.timestamp) / 1000);
-      const isStale = (Date.now() - cached.timestamp) >= CACHE_MAX_AGE_MS;
-      
-      console.log(`[Stash Battle] 💿 IndexedDB cache hit (all scenes): ${cached.scenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
-      
-      memoryCache.allScenes = cached.scenes;
-      memoryCache.timestamp = cached.timestamp;
-      
-      // If stale, trigger background refresh
-      if (isStale) {
-        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
-        backgroundRefreshAllScenes(); // Don't await - runs in background
-      }
-      return { scenes: cached.scenes, count: cached.count };
-    }
-    
-    // No cache at all - must fetch from network (blocking)
-    console.log("[Stash Battle] 🌐 No cache found, fetching all scenes from network (first load)...");
-    const startTime = Date.now();
-    
-    const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-        findScenes(filter: $filter, scene_filter: $scene_filter) {
-          count
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
-        }
-      }
-    `;
-    
-    const result = await graphqlQuery(scenesQuery, {
-      filter: {
-        per_page: -1,
-        sort: "rating",
-        direction: "DESC"
-      },
-      scene_filter: null
-    });
-    
-    const scenes = result.findScenes.scenes || [];
-    const count = result.findScenes.count || scenes.length;
-    const fetchTime = Date.now() - startTime;
-    
-    // Store in both caches
-    memoryCache.allScenes = scenes;
-    memoryCache.timestamp = Date.now();
-    await setCachedScenes(cacheKey, scenes, count);
-    
-    console.log(`[Stash Battle] ✅ Fetched and cached ${scenes.length} scenes in ${fetchTime}ms`);
-    return { scenes, count };
-  }
-
-  // Background refresh for filtered scenes
-  async function backgroundRefreshFilteredScenes(searchParams, sceneFilter, filterKey) {
-    const cacheKey = "filtered-scenes";
-    
-    try {
-      console.log("[Stash Battle] 🔄 Background refresh started (filtered scenes)...");
-      const startTime = Date.now();
-      
-      const scenesQuery = `
-        query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-          findScenes(filter: $filter, scene_filter: $scene_filter) {
-            count
-            scenes {
-              ${SCENE_FRAGMENT}
-            }
-          }
-        }
-      `;
-      
-      const result = await graphqlQuery(scenesQuery, {
-        filter: getFindFilter(searchParams, {
-          per_page: -1,
-          sort: "rating",
-          direction: "DESC"
-        }),
-        scene_filter: sceneFilter
-      });
-      
-      const scenes = result.findScenes.scenes || [];
-      const count = result.findScenes.count || scenes.length;
-      const fetchTime = Date.now() - startTime;
-      
-      // Only update if still on same filter
-      if (memoryCache.filterKey === filterKey) {
-        const oldCount = memoryCache.filteredScenes ? memoryCache.filteredScenes.length : 0;
-        if (count !== oldCount) {
-          console.log(`[Stash Battle] 📊 Filtered count changed: ${oldCount} → ${count} (${count > oldCount ? '+' : ''}${count - oldCount})`);
-        } else {
-          console.log(`[Stash Battle] 📊 Filtered count unchanged: ${count}`);
-        }
-        
-        memoryCache.filteredScenes = scenes;
-        memoryCache.timestamp = Date.now();
-        await setCachedScenesWithFilter(cacheKey, scenes, count, filterKey);
-        
-        console.log(`[Stash Battle] ✅ Background refresh complete: ${scenes.length} filtered scenes in ${fetchTime}ms`);
-      } else {
-        console.log(`[Stash Battle] ⚠️ Filter changed during refresh, discarding results`);
-      }
-    } catch (e) {
-      console.error("[Stash Battle] ❌ Background refresh (filtered) failed:", e);
-    }
-  }
-
-  // Build a cache key that includes both sceneFilter (c params) AND search query (q param)
-  function buildFilterKey(searchParams, sceneFilter) {
-    const q = searchParams.get("q") || "";
-    return JSON.stringify({ q, filter: sceneFilter || {} });
-  }
-
-  // Get filtered scenes (uses cache with stale-while-revalidate)
-  // NOTE: Only ONE filtered cache is kept (overwrites previous filter cache to prevent IndexedDB bloat)
-  // NOTE: Fetch functions should check hasFilter first and call getAllScenesCached() directly if no filter
-  async function getFilteredScenesCached(searchParams, sceneFilter) {
-    const filterKey = buildFilterKey(searchParams, sceneFilter);
-    const cacheKey = "filtered-scenes"; // Single key - overwrites previous filter cache
-    
-    console.log("[Stash Battle] 🔎 Filter active, checking filtered cache...");
-    
-    // Check memory cache first - return immediately if available and same filter
-    if (memoryCache.filteredScenes && memoryCache.filterKey === filterKey) {
-      const cacheAge = Math.round((Date.now() - memoryCache.timestamp) / 1000);
-      const isStale = (Date.now() - memoryCache.timestamp) >= CACHE_MAX_AGE_MS;
-      
-      console.log(`[Stash Battle] 💾 Memory cache hit (filtered): ${memoryCache.filteredScenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
-      
-      // If stale, trigger background refresh
-      if (isStale) {
-        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
-        backgroundRefreshFilteredScenes(searchParams, sceneFilter, filterKey);
-      }
-      return { scenes: memoryCache.filteredScenes, count: memoryCache.filteredScenes.length };
-    }
-    
-    // Check IndexedDB cache (only if filter key matches)
-    console.log("[Stash Battle] 🔍 Memory cache miss (filtered), checking IndexedDB...");
-    const cached = await getCachedScenes(cacheKey);
-    if (cached && cached.filterKey === filterKey) {
-      const cacheAge = Math.round((Date.now() - cached.timestamp) / 1000);
-      const isStale = (Date.now() - cached.timestamp) >= CACHE_MAX_AGE_MS;
-      
-      console.log(`[Stash Battle] 💿 IndexedDB cache hit (filtered): ${cached.scenes.length} scenes, age: ${cacheAge}s${isStale ? ' [STALE]' : ''}`);
-      
-      memoryCache.filteredScenes = cached.scenes;
-      memoryCache.filterKey = filterKey;
-      memoryCache.timestamp = cached.timestamp;
-      
-      // If stale, trigger background refresh
-      if (isStale) {
-        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS/1000}s), triggering background refresh...`);
-        backgroundRefreshFilteredScenes(searchParams, sceneFilter, filterKey);
-      }
-      return { scenes: cached.scenes, count: cached.count };
-    }
-    
-    if (cached) {
-      console.log("[Stash Battle] 💿 IndexedDB cache exists but filter changed, fetching new data...");
-    } else {
-      console.log("[Stash Battle] 💿 IndexedDB cache miss (filtered)");
-    }
-    
-    // No matching cache - must fetch from network (blocking)
-    console.log("[Stash Battle] 🌐 Fetching filtered scenes from network...");
-    const startTime = Date.now();
-    
-    const scenesQuery = `
-      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-        findScenes(filter: $filter, scene_filter: $scene_filter) {
-          count
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
-        }
-      }
-    `;
-    
-    const result = await graphqlQuery(scenesQuery, {
-      filter: getFindFilter(searchParams, {
-        per_page: -1,
-        sort: "rating",
-        direction: "DESC"
-      }),
-      scene_filter: sceneFilter
-    });
-    
-    const scenes = result.findScenes.scenes || [];
-    const count = result.findScenes.count || scenes.length;
-    const fetchTime = Date.now() - startTime;
-    
-    // Store in both caches (include filterKey so we can validate on read)
-    memoryCache.filteredScenes = scenes;
-    memoryCache.filterKey = filterKey;
-    memoryCache.timestamp = Date.now();
-    await setCachedScenesWithFilter(cacheKey, scenes, count, filterKey);
-    
-    console.log(`[Stash Battle] ✅ Fetched and cached ${scenes.length} filtered scenes in ${fetchTime}ms`);
-    return { scenes, count };
-  }
-
-  // Update a scene's rating and reposition it in the sorted array to keep ranks accurate
-  function repositionSceneInArray(arr, sceneId, newRating) {
-    const idx = arr.findIndex(s => s.id === sceneId);
-    if (idx === -1) return false;
-    
-    const scene = arr[idx];
-    scene.rating100 = newRating;
-    
-    // Remove from current position
-    arr.splice(idx, 1);
-    
-    // Find correct position (array is sorted by rating DESC)
-    const newIdx = arr.findIndex(s => (s.rating100 || 0) < newRating);
-    
-    // Insert at correct position
-    if (newIdx === -1) {
-      arr.push(scene); // Lowest rated, goes at end
-    } else {
-      arr.splice(newIdx, 0, scene);
-    }
-    
-    return true;
-  }
-
-  // Update a scene's rating in the memory cache (keeps cache in sync after rating changes)
-  function updateSceneInCache(sceneId, newRating) {
-    // Reposition in allScenes (keeps rankings accurate, scene stays for opponent pool)
-    if (memoryCache.allScenes) {
-      repositionSceneInArray(memoryCache.allScenes, sceneId, newRating);
-      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
-    }
-    
-    // Also update in filteredScenes if present (but don't remove - that's done separately)
-    if (memoryCache.filteredScenes) {
-      const scene = memoryCache.filteredScenes.find(s => s.id === sceneId);
-      if (scene) {
-        scene.rating100 = newRating;
-      }
-    }
-  }
-
-  // ============================================
-  // STATE PERSISTENCE
-  // ============================================
-
-  function saveState() {
-    const state = {
-      currentPair,
-      currentRanks,
-      currentMode,
-      gauntletChampion,
-      gauntletWins,
-      gauntletChampionRank,
-      gauntletDefeated,
-      gauntletFalling,
-      gauntletFallingScene,
-      totalScenesCount,
-      savedFilterParams: window.location.search
-    };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-      console.error("[Stash Battle] Failed to save state:", e);
-    }
-  }
-
-  function loadState() {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const state = JSON.parse(saved);
-        currentPair = state.currentPair || { left: null, right: null };
-        currentRanks = state.currentRanks || { left: null, right: null };
-        currentMode = state.currentMode || "swiss";
-        gauntletChampion = state.gauntletChampion || null;
-        gauntletWins = state.gauntletWins || 0;
-        gauntletChampionRank = state.gauntletChampionRank || 0;
-        gauntletDefeated = state.gauntletDefeated || [];
-        gauntletFalling = state.gauntletFalling || false;
-        gauntletFallingScene = state.gauntletFallingScene || null;
-        totalScenesCount = state.totalScenesCount || 0;
-        savedFilterParams = state.savedFilterParams || "";
-        return true;
-      }
-    } catch (e) {
-      console.error("[Stash Battle] Failed to load state:", e);
-    }
-    return false;
-  }
-
-  function clearState() {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {
-      console.error("[Stash Battle] Failed to clear state:", e);
-    }
-  } 
-
-  // ============================================
-  // GRAPHQL QUERIES
-  // ============================================
-
-  async function graphqlQuery(query, variables = {}) {
-    const response = await fetch("/graphql", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-    });
-    const result = await response.json();
-    if (result.errors) {
-      console.error("[Stash Battle] GraphQL error:", result.errors);
-      throw new Error(result.errors[0].message);
-    }
-    return result.data;
-  }
-
-  const SCENE_FRAGMENT = `
-    id
-    title
-    date
-    rating100
-    play_count
-    paths {
-      screenshot
-      preview
-    }
-    files {
-      duration
-      path
-    }
-    studio {
-      name
-    }
-    performers {
-      name
-    }
-    tags {
-      name
-    }
-  `;
-
-  // Extract scene ID from individual scene pages like /scenes/123
-  function getSceneIdFromUrl() {
-    const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
-    return match ? match[1] : null;
-  }
-
-  async function fetchSceneById(sceneId) {
-    const query = `
-      query FindScene($id: ID!) {
-        findScene(id: $id) {
-          ${SCENE_FRAGMENT}
-        }
-      }
-    `;
-    const result = await graphqlQuery(query, { id: sceneId });
-    return result.findScene;
-  }
-
-  // ============================================
-  // NAVIGATION
-  // ============================================
-
-  // Navigate using React Router (preserves JS state)
-  function navigateToUrl(url) {
-    closeRankingModal();
-    
-    // Use History API + popstate event to trigger React Router navigation
-    const path = url.startsWith('/') ? url : new URL(url).pathname + new URL(url).search;
-    window.history.pushState({}, '', path);
-    window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-  }
-
-  // ============================================
-  // URL FILTER PARSING
-  // ============================================
-
-  // Get current URL search params
+  // src/filters.ts
   function getSearchParams() {
     return new URLSearchParams(window.location.search);
   }
-
-  // Build FindFilterType from search params
-  function getFindFilter(searchParams, overrides = {}) {
+  function getFindFilter(overrides = {}, searchParams = getSearchParams()) {
     const filter = {
       per_page: overrides.per_page ?? -1,
       sort: overrides.sort ?? (searchParams.get("sortby") || "rating"),
       direction: overrides.direction ?? (searchParams.get("sortdir")?.toUpperCase() || "DESC"),
       ...overrides
     };
-    
-    // Include search query if present
     const query = searchParams.get("q");
     if (query) {
       filter.q = query;
     }
-    
     return filter;
   }
-
-  // Translate JSON string between URL format (parentheses) and standard JSON (braces)
-  // Ported from Stash's ListFilterModel.translateJSON
-  // This safely handles parentheses inside quoted strings
   function translateJSON(jsonString, decoding) {
     let inString = false;
     let escape = false;
@@ -720,23 +55,17 @@
       return c;
     }).join("");
   }
-
-  // Criterion category mappings for URL → GraphQL transformation
-  // Each category requires different transformation logic
-  const CRITERION_CATEGORIES = {
-    // Boolean: no modifier, value is "true"/"false" string → convert to boolean
-    boolean: new Set(["organized", "interactive", "performer_favorite"]),
+  var CRITERION_CATEGORIES = {
+    // Boolean: no modifier, value is "true"/"false" string -> convert to boolean
+    boolean: /* @__PURE__ */ new Set(["organized", "interactive", "performer_favorite"]),
     // StringEnum: URL has modifier but GraphQL just expects the string value directly
-    stringEnum: new Set(["is_missing", "has_markers"]),
-    // Multi: value is array of {id, label} → extract IDs only
-    multi: new Set(["performers", "groups", "movies", "galleries"]),
-    // HierarchicalMulti: value has {items, excluded, depth} → rename to {value, excludes, depth} and extract IDs
-    hierarchicalMulti: new Set(["tags", "studios", "performer_tags"]),
+    stringEnum: /* @__PURE__ */ new Set(["is_missing", "has_markers"]),
+    // Multi: value is array of {id, label} -> extract IDs only
+    multi: /* @__PURE__ */ new Set(["performers", "groups", "movies", "galleries"]),
+    // HierarchicalMulti: value has {items, excluded, depth} -> rename to {value, excludes, depth} and extract IDs
+    hierarchicalMulti: /* @__PURE__ */ new Set(["tags", "studios", "performer_tags"])
   };
-  
-  // Resolution string to GraphQL enum mapping
-  // URL uses human-readable strings, GraphQL expects ResolutionEnum values
-  const RESOLUTION_MAP = {
+  var RESOLUTION_MAP = {
     "144p": "VERY_LOW",
     "240p": "LOW",
     "360p": "R360P",
@@ -750,104 +79,67 @@
     "6k": "SIX_K",
     "7k": "SEVEN_K",
     "8k": "EIGHT_K",
-    "Huge": "HUGE",
+    Huge: "HUGE"
   };
-  
-  // Orientation string to GraphQL enum mapping
-  const ORIENTATION_MAP = {
-    "Landscape": "LANDSCAPE",
-    "Portrait": "PORTRAIT",
-    "Square": "SQUARE",
+  var ORIENTATION_MAP = {
+    Landscape: "LANDSCAPE",
+    Portrait: "PORTRAIT",
+    Square: "SQUARE"
   };
-
-  // Build SceneFilterType from URL 'c' params
-  // Transforms URL criterion format to GraphQL SceneFilterType format
-  function getSceneFilter(searchParams) {
+  var idOf = (v) => typeof v === "object" && v && v.id ? v.id : v;
+  function getSceneFilter(searchParams = getSearchParams()) {
     const sceneFilter = {};
-    
     if (!searchParams.has("c")) return null;
-    
     for (const cStr of searchParams.getAll("c")) {
       try {
-        // Decode URL format: () → {} (safely preserving strings)
         const decoded = translateJSON(cStr, true);
         const cObj = JSON.parse(decoded);
-        
         const filterType = cObj.type;
         if (!filterType) {
           console.warn("[Stash Battle] Filter missing type:", cObj);
           continue;
         }
-        
-        // Remove type from the object - it becomes the key
-        const { type, ...rest } = cObj;
-        
-        // Category: Boolean (organized, interactive, performer_favorite)
-        // URL: { type, value: "true" } → GraphQL: true
+        const { type: _type, ...rest } = cObj;
         if (CRITERION_CATEGORIES.boolean.has(filterType)) {
           sceneFilter[filterType] = rest.value === "true" || rest.value === true;
           continue;
         }
-        
-        // Category: StringEnum (sceneIsMissing, hasMarkers)
-        // URL: { type, value: "enumValue" } → GraphQL: "enumValue"
         if (CRITERION_CATEGORIES.stringEnum.has(filterType)) {
           sceneFilter[filterType] = rest.value;
           continue;
         }
-        
-        // Category: Multi (performers, groups, movies, galleries)
-        // URL uses same {items, excluded} structure as hierarchical, but GraphQL doesn't use depth
-        // URL: { type, modifier, value: { items: [{id, label}], excluded: [{id, label}] } }
-        // GraphQL: { modifier, value: [ids], excludes?: [ids] }
         if (CRITERION_CATEGORIES.multi.has(filterType)) {
           const result = { modifier: rest.modifier };
           const val = rest.value || {};
-          
-          // Handle {items, excluded} structure (standard URL format)
-          if (val.items !== undefined) {
+          if (val.items !== void 0) {
             const items = val.items || [];
             const excluded = val.excluded || [];
-            result.value = items.map(v => (typeof v === "object" && v.id) ? v.id : v);
+            result.value = items.map(idOf);
             if (excluded.length > 0) {
-              result.excludes = excluded.map(v => (typeof v === "object" && v.id) ? v.id : v);
+              result.excludes = excluded.map(idOf);
             }
-          }
-          // Handle flat array format (fallback)
-          else if (Array.isArray(rest.value)) {
-            result.value = rest.value.map(v => (typeof v === "object" && v.id) ? v.id : v);
-          }
-          // IS_NULL/NOT_NULL don't use value, but GraphQL schema still requires it (empty array for multi)
-          else if (rest.modifier === "IS_NULL" || rest.modifier === "NOT_NULL") {
+          } else if (Array.isArray(rest.value)) {
+            result.value = rest.value.map(idOf);
+          } else if (rest.modifier === "IS_NULL" || rest.modifier === "NOT_NULL") {
             result.value = [];
-          }
-          // Pass through as-is (shouldn't happen, but safe fallback)
-          else {
+          } else {
             result.value = rest.value;
           }
-          
           sceneFilter[filterType] = result;
           continue;
         }
-        
-        // Category: HierarchicalMulti (tags, studios, performer_tags)
-        // URL: { type, modifier, value: { items: [{id, label}], excluded: [{id, label}], depth } }
-        // GraphQL: { modifier, value: [ids], excludes: [ids], depth }
         if (CRITERION_CATEGORIES.hierarchicalMulti.has(filterType)) {
           const val = rest.value || {};
           const items = val.items || [];
           const excluded = val.excluded || [];
           sceneFilter[filterType] = {
             modifier: rest.modifier,
-            value: items.map(v => (typeof v === "object" && v.id) ? v.id : v),
-            excludes: excluded.map(v => (typeof v === "object" && v.id) ? v.id : v),
+            value: items.map(idOf),
+            excludes: excluded.map(idOf),
             depth: val.depth ?? 0
           };
           continue;
         }
-        
-        // Category: Resolution (needs string → enum conversion)
-        // URL: { type: "resolution", modifier, value: "720p" } → GraphQL: { modifier, value: "STANDARD_HD" }
         if (filterType === "resolution") {
           sceneFilter[filterType] = {
             modifier: rest.modifier,
@@ -855,56 +147,619 @@
           };
           continue;
         }
-        
-        // Category: Orientation (multi-select enum, no modifier)
-        // URL: { type: "orientation", value: ["Landscape", "Portrait"] } → GraphQL: { value: ["LANDSCAPE", "PORTRAIT"] }
         if (filterType === "orientation") {
           const values = Array.isArray(rest.value) ? rest.value : [rest.value];
           sceneFilter[filterType] = {
-            value: values.map(v => ORIENTATION_MAP[v] || v).filter(Boolean)
+            value: values.map((v) => ORIENTATION_MAP[v] || v).filter(Boolean)
           };
           continue;
         }
-        
-        // Category: Duplicated (phash duplicate filter - different structure)
-        // URL: { type: "duplicated", value: "true" } → GraphQL: { duplicated: true }
         if (filterType === "duplicated") {
           sceneFilter[filterType] = {
             duplicated: rest.value === "true" || rest.value === true
           };
           continue;
         }
-        
-        // Category: Standard (number, string, date, timestamp, duration, special)
-        // Check if value needs flattening (nested { value, value2 } structure from range criteria)
         if (rest.value && typeof rest.value === "object" && !Array.isArray(rest.value) && "value" in rest.value) {
-          // Flatten: { modifier, value: { value: X, value2: Y } } → { modifier, value: X, value2: Y }
           sceneFilter[filterType] = {
             modifier: rest.modifier,
             value: rest.value.value,
-            ...(rest.value.value2 !== undefined && { value2: rest.value.value2 })
+            ...rest.value.value2 !== void 0 && { value2: rest.value.value2 }
           };
         } else if (rest.modifier === "IS_NULL" || rest.modifier === "NOT_NULL") {
-          // IS_NULL/NOT_NULL modifiers don't use the value, but GraphQL schema still requires it
-          // Provide a dummy value (0 for numbers, empty string for strings) to satisfy the schema
           sceneFilter[filterType] = {
             modifier: rest.modifier,
             value: 0
           };
         } else {
-          // Pass through as-is (string criteria, special criteria like phash, stash_id, etc.)
           sceneFilter[filterType] = rest;
         }
-        
       } catch (e) {
         console.error("[Stash Battle] Failed to parse filter:", cStr, e);
       }
     }
-    
     return Object.keys(sceneFilter).length > 0 ? sceneFilter : null;
   }
+  function readFilters() {
+    const searchParams = getSearchParams();
+    const sceneFilter = getSceneFilter(searchParams);
+    const q = searchParams.get("q") || "";
+    return {
+      filterKey: JSON.stringify({ q, filter: sceneFilter || {} }),
+      sceneFilter,
+      filterActive: Boolean(sceneFilter || searchParams.has("c") || searchParams.get("q"))
+    };
+  }
 
-  // Fisher-Yates shuffle algorithm - creates a randomized copy of the array
+  // src/graphql.ts
+  async function graphqlQuery(query, variables = {}) {
+    const response = await fetch("/graphql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ query, variables })
+    });
+    const result = await response.json();
+    if (result.errors) {
+      console.error("[Stash Battle] GraphQL error:", result.errors);
+      throw new Error(result.errors[0].message);
+    }
+    return result.data;
+  }
+  var SCENE_FRAGMENT = `
+    id
+    title
+    date
+    rating100
+    play_count
+    paths {
+      screenshot
+      preview
+    }
+    files {
+      duration
+      path
+    }
+    studio {
+      name
+    }
+    performers {
+      name
+    }
+    tags {
+      name
+    }
+  `;
+  var FIND_SCENES_QUERY = `
+      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
+          count
+          scenes {
+            ${SCENE_FRAGMENT}
+          }
+        }
+      }
+    `;
+  function getSceneIdFromUrl() {
+    const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
+    return match ? match[1] : null;
+  }
+  async function fetchSceneById(sceneId) {
+    const query = `
+      query FindScene($id: ID!) {
+        findScene(id: $id) {
+          ${SCENE_FRAGMENT}
+        }
+      }
+    `;
+    const result = await graphqlQuery(query, { id: sceneId });
+    return result.findScene;
+  }
+
+  // src/state.ts
+  function readBooleanPref(key, fallback) {
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored !== null) return stored === "1";
+    } catch {
+    }
+    return fallback;
+  }
+  var state = {
+    currentPair: { left: null, right: null },
+    currentRanks: { left: null, right: null },
+    currentMode: "swiss",
+    gauntletClimber: null,
+    gauntletWins: 0,
+    gauntletClimberRank: 0,
+    gauntletDefeated: [],
+    gauntletFalling: false,
+    gauntletFallingScene: null,
+    totalScenesCount: 0,
+    disableChoice: false,
+    savedFilterParams: "",
+    filterOpponents: readBooleanPref(FILTER_OPPONENTS_KEY, DEFAULT_FILTER_OPPONENTS),
+    mutePreviews: readBooleanPref(MUTE_PREVIEWS_KEY, false),
+    shuffledFilteredScenes: [],
+    shuffleIndex: 0,
+    shuffleFilterKey: null,
+    removedSceneIds: /* @__PURE__ */ new Set(),
+    memoryCache: {
+      allScenes: null,
+      filteredScenes: null,
+      filterKey: null,
+      timestamp: null
+    }
+  };
+  function resetGauntletState() {
+    state.gauntletClimber = null;
+    state.gauntletWins = 0;
+    state.gauntletClimberRank = 0;
+    state.gauntletDefeated = [];
+    state.gauntletFalling = false;
+    state.gauntletFallingScene = null;
+  }
+
+  // src/cache.ts
+  function openCacheDB() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
+      request.onerror = () => {
+        console.error("[Stash Battle] IndexedDB error:", request.error);
+        reject(request.error);
+      };
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
+          db.createObjectStore(CACHE_STORE_NAME, { keyPath: "cacheKey" });
+        }
+      };
+    });
+  }
+  async function getCachedScenes(cacheKey) {
+    try {
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readonly");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        const request = store.get(cacheKey);
+        request.onsuccess = () => {
+          const result = request.result;
+          if (result && Date.now() - result.timestamp < CACHE_MAX_AGE_MS) {
+            resolve(result);
+          } else {
+            resolve(null);
+          }
+        };
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] Cache read error:", e);
+      return null;
+    }
+  }
+  async function setCachedScenes(cacheKey, scenes, count, filterKey) {
+    try {
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        const data = {
+          cacheKey,
+          scenes,
+          count,
+          timestamp: Date.now(),
+          ...filterKey !== void 0 && { filterKey }
+        };
+        const request = store.put(data);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] Cache write error:", e);
+    }
+  }
+  async function clearSceneCache() {
+    try {
+      console.log("[Stash Battle] 🗑️ Clearing all scene caches...");
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        const request = store.clear();
+        request.onsuccess = () => {
+          state.memoryCache = { allScenes: null, filteredScenes: null, filterKey: null, timestamp: null };
+          console.log("[Stash Battle] ✅ All caches cleared (memory + IndexedDB)");
+          resolve();
+        };
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Cache clear error:", e);
+    }
+  }
+  async function clearFilteredCache() {
+    try {
+      const db = await openCacheDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CACHE_STORE_NAME, "readwrite");
+        const store = transaction.objectStore(CACHE_STORE_NAME);
+        const request = store.delete("filtered-scenes");
+        request.onsuccess = () => {
+          state.memoryCache.filteredScenes = null;
+          state.memoryCache.filterKey = null;
+          console.log("[Stash Battle] 🗑️ Filtered cache cleared (memory + IndexedDB)");
+          resolve();
+        };
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+      });
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Filtered cache clear error:", e);
+      state.memoryCache.filteredScenes = null;
+      state.memoryCache.filterKey = null;
+    }
+  }
+  async function backgroundRefreshAllScenes() {
+    const cacheKey = "all-scenes";
+    try {
+      console.log("[Stash Battle] 🔄 Background refresh started (all scenes)...");
+      const startTime = Date.now();
+      const result = await graphqlQuery(FIND_SCENES_QUERY, {
+        filter: {
+          per_page: -1,
+          sort: "rating",
+          direction: "DESC"
+        },
+        scene_filter: null
+      });
+      const scenes = result.findScenes.scenes || [];
+      const count = result.findScenes.count || scenes.length;
+      const fetchTime = Date.now() - startTime;
+      const oldCount = state.memoryCache.allScenes ? state.memoryCache.allScenes.length : 0;
+      if (count !== oldCount) {
+        console.log(
+          `[Stash Battle] 📊 Scene count changed: ${oldCount} → ${count} (${count > oldCount ? "+" : ""}${count - oldCount})`
+        );
+      } else {
+        console.log(`[Stash Battle] 📊 Scene count unchanged: ${count}`);
+      }
+      state.memoryCache.allScenes = scenes;
+      state.memoryCache.timestamp = Date.now();
+      await setCachedScenes(cacheKey, scenes, count);
+      console.log(`[Stash Battle] ✅ Background refresh complete: ${scenes.length} scenes in ${fetchTime}ms`);
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Background refresh failed:", e);
+    }
+  }
+  async function getAllScenesCached() {
+    const cacheKey = "all-scenes";
+    if (state.memoryCache.allScenes) {
+      const cacheAge = Math.round((Date.now() - (state.memoryCache.timestamp ?? 0)) / 1e3);
+      const isStale = Date.now() - (state.memoryCache.timestamp ?? 0) >= CACHE_MAX_AGE_MS;
+      console.log(
+        `[Stash Battle] 💾 Memory cache hit (all scenes): ${state.memoryCache.allScenes.length} scenes, age: ${cacheAge}s${isStale ? " [STALE]" : ""}`
+      );
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS / 1e3}s), triggering background refresh...`);
+        backgroundRefreshAllScenes();
+      }
+      return { scenes: state.memoryCache.allScenes, count: state.memoryCache.allScenes.length };
+    }
+    console.log("[Stash Battle] 🔍 Memory cache miss, checking IndexedDB...");
+    const cached = await getCachedScenes(cacheKey);
+    if (cached) {
+      const cacheAge = Math.round((Date.now() - cached.timestamp) / 1e3);
+      const isStale = Date.now() - cached.timestamp >= CACHE_MAX_AGE_MS;
+      console.log(
+        `[Stash Battle] 💿 IndexedDB cache hit (all scenes): ${cached.scenes.length} scenes, age: ${cacheAge}s${isStale ? " [STALE]" : ""}`
+      );
+      state.memoryCache.allScenes = cached.scenes;
+      state.memoryCache.timestamp = cached.timestamp;
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS / 1e3}s), triggering background refresh...`);
+        backgroundRefreshAllScenes();
+      }
+      return { scenes: cached.scenes, count: cached.count };
+    }
+    console.log("[Stash Battle] 🌐 No cache found, fetching all scenes from network (first load)...");
+    const startTime = Date.now();
+    const result = await graphqlQuery(FIND_SCENES_QUERY, {
+      filter: {
+        per_page: -1,
+        sort: "rating",
+        direction: "DESC"
+      },
+      scene_filter: null
+    });
+    const scenes = result.findScenes.scenes || [];
+    const count = result.findScenes.count || scenes.length;
+    const fetchTime = Date.now() - startTime;
+    state.memoryCache.allScenes = scenes;
+    state.memoryCache.timestamp = Date.now();
+    await setCachedScenes(cacheKey, scenes, count);
+    console.log(`[Stash Battle] ✅ Fetched and cached ${scenes.length} scenes in ${fetchTime}ms`);
+    return { scenes, count };
+  }
+  async function backgroundRefreshFilteredScenes(filters) {
+    const cacheKey = "filtered-scenes";
+    try {
+      console.log("[Stash Battle] 🔄 Background refresh started (filtered scenes)...");
+      const startTime = Date.now();
+      const result = await graphqlQuery(FIND_SCENES_QUERY, {
+        filter: getFindFilter({
+          per_page: -1,
+          sort: "rating",
+          direction: "DESC"
+        }),
+        scene_filter: filters.sceneFilter
+      });
+      const scenes = result.findScenes.scenes || [];
+      const count = result.findScenes.count || scenes.length;
+      const fetchTime = Date.now() - startTime;
+      if (state.memoryCache.filterKey === filters.filterKey) {
+        const oldCount = state.memoryCache.filteredScenes ? state.memoryCache.filteredScenes.length : 0;
+        if (count !== oldCount) {
+          console.log(
+            `[Stash Battle] 📊 Filtered count changed: ${oldCount} → ${count} (${count > oldCount ? "+" : ""}${count - oldCount})`
+          );
+        } else {
+          console.log(`[Stash Battle] 📊 Filtered count unchanged: ${count}`);
+        }
+        state.memoryCache.filteredScenes = scenes;
+        state.memoryCache.timestamp = Date.now();
+        await setCachedScenes(cacheKey, scenes, count, filters.filterKey);
+        console.log(`[Stash Battle] ✅ Background refresh complete: ${scenes.length} filtered scenes in ${fetchTime}ms`);
+      } else {
+        console.log("[Stash Battle] ⚠️ Filter changed during refresh, discarding results");
+      }
+    } catch (e) {
+      console.error("[Stash Battle] ❌ Background refresh (filtered) failed:", e);
+    }
+  }
+  async function getFilteredScenesCached(filters) {
+    const { filterKey, sceneFilter } = filters;
+    const cacheKey = "filtered-scenes";
+    console.log("[Stash Battle] 🔎 Filter active, checking filtered cache...");
+    if (state.memoryCache.filteredScenes && state.memoryCache.filterKey === filterKey) {
+      const cacheAge = Math.round((Date.now() - (state.memoryCache.timestamp ?? 0)) / 1e3);
+      const isStale = Date.now() - (state.memoryCache.timestamp ?? 0) >= CACHE_MAX_AGE_MS;
+      console.log(
+        `[Stash Battle] 💾 Memory cache hit (filtered): ${state.memoryCache.filteredScenes.length} scenes, age: ${cacheAge}s${isStale ? " [STALE]" : ""}`
+      );
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS / 1e3}s), triggering background refresh...`);
+        backgroundRefreshFilteredScenes(filters);
+      }
+      return { scenes: state.memoryCache.filteredScenes, count: state.memoryCache.filteredScenes.length };
+    }
+    console.log("[Stash Battle] 🔍 Memory cache miss (filtered), checking IndexedDB...");
+    const cached = await getCachedScenes(cacheKey);
+    if (cached && cached.filterKey === filterKey) {
+      const cacheAge = Math.round((Date.now() - cached.timestamp) / 1e3);
+      const isStale = Date.now() - cached.timestamp >= CACHE_MAX_AGE_MS;
+      console.log(
+        `[Stash Battle] 💿 IndexedDB cache hit (filtered): ${cached.scenes.length} scenes, age: ${cacheAge}s${isStale ? " [STALE]" : ""}`
+      );
+      state.memoryCache.filteredScenes = cached.scenes;
+      state.memoryCache.filterKey = filterKey;
+      state.memoryCache.timestamp = cached.timestamp;
+      if (isStale) {
+        console.log(`[Stash Battle] ⏰ Cache stale (>${CACHE_MAX_AGE_MS / 1e3}s), triggering background refresh...`);
+        backgroundRefreshFilteredScenes(filters);
+      }
+      return { scenes: cached.scenes, count: cached.count };
+    }
+    if (cached) {
+      console.log("[Stash Battle] 💿 IndexedDB cache exists but filter changed, fetching new data...");
+    } else {
+      console.log("[Stash Battle] 💿 IndexedDB cache miss (filtered)");
+    }
+    console.log("[Stash Battle] 🌐 Fetching filtered scenes from network...");
+    const startTime = Date.now();
+    const result = await graphqlQuery(FIND_SCENES_QUERY, {
+      filter: getFindFilter({
+        per_page: -1,
+        sort: "rating",
+        direction: "DESC"
+      }),
+      scene_filter: sceneFilter
+    });
+    const scenes = result.findScenes.scenes || [];
+    const count = result.findScenes.count || scenes.length;
+    const fetchTime = Date.now() - startTime;
+    state.memoryCache.filteredScenes = scenes;
+    state.memoryCache.filterKey = filterKey;
+    state.memoryCache.timestamp = Date.now();
+    await setCachedScenes(cacheKey, scenes, count, filterKey);
+    console.log(`[Stash Battle] ✅ Fetched and cached ${scenes.length} filtered scenes in ${fetchTime}ms`);
+    return { scenes, count };
+  }
+  function repositionSceneInArray(arr, sceneId, newRating) {
+    const idx = arr.findIndex((s) => s.id === sceneId);
+    if (idx === -1) return false;
+    const scene = arr[idx];
+    scene.rating100 = newRating;
+    arr.splice(idx, 1);
+    const newIdx = arr.findIndex((s) => (s.rating100 || 0) < newRating);
+    if (newIdx === -1) {
+      arr.push(scene);
+    } else {
+      arr.splice(newIdx, 0, scene);
+    }
+    return true;
+  }
+  function clearSceneInCache(sceneId) {
+    if (state.memoryCache.allScenes) {
+      const idx = state.memoryCache.allScenes.findIndex((s) => s.id === sceneId);
+      if (idx !== -1) {
+        const scene = state.memoryCache.allScenes[idx];
+        scene.rating100 = null;
+        state.memoryCache.allScenes.splice(idx, 1);
+        state.memoryCache.allScenes.push(scene);
+        console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} rating in memory cache`);
+      }
+    }
+    if (state.memoryCache.filteredScenes) {
+      const scene = state.memoryCache.filteredScenes.find((s) => s.id === sceneId);
+      if (scene) {
+        scene.rating100 = null;
+      }
+    }
+  }
+  function updateSceneInCache(sceneId, newRating) {
+    if (state.memoryCache.allScenes) {
+      repositionSceneInArray(state.memoryCache.allScenes, sceneId, newRating);
+      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
+    }
+    if (state.memoryCache.filteredScenes) {
+      const scene = state.memoryCache.filteredScenes.find((s) => s.id === sceneId);
+      if (scene) {
+        scene.rating100 = newRating;
+      }
+    }
+  }
+  function removeFromFilteredPool(sceneId) {
+    state.removedSceneIds.add(sceneId);
+    if (state.memoryCache.filteredScenes) {
+      const idx = state.memoryCache.filteredScenes.findIndex((s) => s.id === sceneId);
+      if (idx !== -1) {
+        state.memoryCache.filteredScenes.splice(idx, 1);
+        console.log(
+          `[Stash Battle] 🗑️ Removed scene ${sceneId} from filtered pool (${state.memoryCache.filteredScenes.length} remaining, ${state.removedSceneIds.size} removed this session)`
+        );
+      }
+    }
+    const shuffleIdx = state.shuffledFilteredScenes.findIndex((s) => s.id === sceneId);
+    if (shuffleIdx !== -1) {
+      state.shuffledFilteredScenes.splice(shuffleIdx, 1);
+      if (shuffleIdx < state.shuffleIndex) {
+        state.shuffleIndex--;
+      }
+    }
+  }
+
+  // src/storage.ts
+  function saveState() {
+    const snapshot = {
+      currentPair: state.currentPair,
+      currentRanks: state.currentRanks,
+      currentMode: state.currentMode,
+      gauntletClimber: state.gauntletClimber,
+      gauntletWins: state.gauntletWins,
+      gauntletClimberRank: state.gauntletClimberRank,
+      gauntletDefeated: state.gauntletDefeated,
+      gauntletFalling: state.gauntletFalling,
+      gauntletFallingScene: state.gauntletFallingScene,
+      totalScenesCount: state.totalScenesCount,
+      savedFilterParams: window.location.search
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (e) {
+      console.error("[Stash Battle] Failed to save state:", e);
+    }
+  }
+  function loadState() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        state.currentPair = parsed.currentPair || { left: null, right: null };
+        state.currentRanks = parsed.currentRanks || { left: null, right: null };
+        state.currentMode = parsed.currentMode || "swiss";
+        state.gauntletClimber = parsed.gauntletClimber ?? parsed.gauntletChampion ?? null;
+        state.gauntletWins = parsed.gauntletWins || 0;
+        state.gauntletClimberRank = parsed.gauntletClimberRank ?? parsed.gauntletChampionRank ?? 0;
+        state.gauntletDefeated = parsed.gauntletDefeated || [];
+        state.gauntletFalling = parsed.gauntletFalling || false;
+        state.gauntletFallingScene = parsed.gauntletFallingScene || null;
+        state.totalScenesCount = parsed.totalScenesCount || 0;
+        state.savedFilterParams = parsed.savedFilterParams || "";
+        return true;
+      }
+    } catch (e) {
+      console.error("[Stash Battle] Failed to load state:", e);
+    }
+    return false;
+  }
+
+  // src/elo.ts
+  var MIN_RATING = 1;
+  var MAX_RATING = 100;
+  function getKFactor(playCount) {
+    if (playCount < 3) return 12;
+    if (playCount < 8) return 8;
+    if (playCount < 15) return 6;
+    return 4;
+  }
+  function clampRating(rating) {
+    return Math.min(MAX_RATING, Math.max(MIN_RATING, rating));
+  }
+  function expectedScore(ratingA, ratingB) {
+    const ratingDiff = ratingB - ratingA;
+    return 1 / (1 + Math.pow(10, ratingDiff / 40));
+  }
+  function calculateRatingChanges(input) {
+    const { winner, loser } = input;
+    const expected = expectedScore(winner.rating, loser.rating);
+    const winnerChange = Math.max(1, Math.round(getKFactor(winner.playCount) * (1 - expected)));
+    const loserChange = -Math.max(1, Math.round(getKFactor(loser.playCount) * expected));
+    const winnerNew = clampRating(winner.rating + winnerChange);
+    const loserNew = clampRating(loser.rating + loserChange);
+    return {
+      winner: winnerNew - winner.rating,
+      loser: loserNew - loser.rating
+    };
+  }
+
+  // src/navigation.ts
+  function navigateToUrl(url) {
+    closeModal();
+    const path = url.startsWith("/") ? url : new URL(url).pathname + new URL(url).search;
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+  }
+
+  // src/rating.ts
+  var SCENE_UPDATE_MUTATION = `
+      mutation SceneUpdate($input: SceneUpdateInput!) {
+        sceneUpdate(input: $input) {
+          id
+          rating100
+        }
+      }
+    `;
+  async function updateSceneRating(sceneId, rating100) {
+    const stashRating = rating100 === null ? null : Math.max(1, Math.min(100, rating100));
+    try {
+      await graphqlQuery(SCENE_UPDATE_MUTATION, {
+        input: {
+          id: sceneId,
+          rating100: stashRating
+        }
+      });
+      if (stashRating === null) {
+        console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} rating in Stash`);
+        clearSceneInCache(sceneId);
+      } else {
+        console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${stashRating} in Stash`);
+        updateSceneInCache(sceneId, stashRating);
+      }
+    } catch (e) {
+      const action = stashRating === null ? "clear" : "update";
+      console.error(`[Stash Battle] Failed to ${action} scene ${sceneId} rating:`, e);
+    }
+  }
+
+  // src/pairs.ts
   function shuffleArray(array) {
     const shuffled = [...array];
     for (let i = shuffled.length - 1; i > 0; i--) {
@@ -913,249 +768,152 @@
     }
     return shuffled;
   }
-
-  // Get next scene from shuffled filtered list (prevents duplicates when skipping)
-  // Reshuffles when filter changes or when all scenes have been shown
-  let lastShownSceneId = null; // Track last scene to avoid immediate repeat after reshuffle
-  
-  function getNextFilteredScene(filteredScenes, filterKey) {
-    // If filter changed, clear removed tracking BEFORE filtering
-    if (shuffleFilterKey !== null && filterKey !== shuffleFilterKey) {
+  var lastShownSceneId = null;
+  function getNextFilteredScene(leftPool, filterKey) {
+    if (state.shuffleFilterKey !== null && filterKey !== state.shuffleFilterKey) {
       console.log("[Stash Battle] 🔀 Filter changed, resetting removed scenes tracking");
-      removedSceneIds.clear();
+      state.removedSceneIds.clear();
     }
-    
-    // Filter out scenes that were removed this session (survives background refresh race condition)
-    const availableScenes = filteredScenes.filter(s => !removedSceneIds.has(s.id));
-    
-    // Check if pool is exhausted (all scenes rated)
+    const availableScenes = leftPool.filter((s) => !state.removedSceneIds.has(s.id));
     if (availableScenes.length === 0) {
       console.log("[Stash Battle] 🏁 Filtered pool exhausted - all scenes rated!");
-      return null; // Signal that pool is empty
+      return null;
     }
-    
-    // Reshuffle if filter changed or first load
-    if (filterKey !== shuffleFilterKey || shuffledFilteredScenes.length === 0) {
+    if (filterKey !== state.shuffleFilterKey || state.shuffledFilteredScenes.length === 0) {
       console.log("[Stash Battle] 🔀 Shuffling filtered scenes (filter changed or first load)");
-      shuffledFilteredScenes = shuffleArray(availableScenes);
-      shuffleIndex = 0;
-      shuffleFilterKey = filterKey;
-      lastShownSceneId = null; // Reset on filter change
+      state.shuffledFilteredScenes = shuffleArray(availableScenes);
+      state.shuffleIndex = 0;
+      state.shuffleFilterKey = filterKey;
+      lastShownSceneId = null;
     }
-    
-    // Reshuffle if we've gone through all remaining scenes
-    if (shuffleIndex >= shuffledFilteredScenes.length) {
+    if (state.shuffleIndex >= state.shuffledFilteredScenes.length) {
       console.log("[Stash Battle] 🔀 Reshuffling (completed full cycle)");
-      shuffledFilteredScenes = shuffleArray(availableScenes);
-      shuffleIndex = 0;
-      
-      // Avoid showing the same scene that ended the previous cycle
-      if (lastShownSceneId && shuffledFilteredScenes.length > 1 && 
-          shuffledFilteredScenes[0].id === lastShownSceneId) {
-        // Swap first scene with a random other position
-        const swapIdx = 1 + Math.floor(Math.random() * (shuffledFilteredScenes.length - 1));
-        [shuffledFilteredScenes[0], shuffledFilteredScenes[swapIdx]] = 
-          [shuffledFilteredScenes[swapIdx], shuffledFilteredScenes[0]];
+      state.shuffledFilteredScenes = shuffleArray(availableScenes);
+      state.shuffleIndex = 0;
+      if (lastShownSceneId && state.shuffledFilteredScenes.length > 1 && state.shuffledFilteredScenes[0].id === lastShownSceneId) {
+        const swapIdx = 1 + Math.floor(Math.random() * (state.shuffledFilteredScenes.length - 1));
+        [state.shuffledFilteredScenes[0], state.shuffledFilteredScenes[swapIdx]] = [
+          state.shuffledFilteredScenes[swapIdx],
+          state.shuffledFilteredScenes[0]
+        ];
         console.log("[Stash Battle] 🔄 Swapped first scene to avoid repeat");
       }
     }
-    
-    const scene = shuffledFilteredScenes[shuffleIndex];
-    shuffleIndex++;
-    lastShownSceneId = scene.id; // Remember for next reshuffle
-    console.log(`[Stash Battle] 📍 Picked scene ${scene.id} (${shuffledFilteredScenes.length - shuffleIndex} remaining in pool, ${removedSceneIds.size} removed this session)`);
+    const scene = state.shuffledFilteredScenes[state.shuffleIndex];
+    state.shuffleIndex++;
+    lastShownSceneId = scene.id;
+    console.log(
+      `[Stash Battle] 📍 Picked scene ${scene.id} (${state.shuffledFilteredScenes.length - state.shuffleIndex} remaining in pool, ${state.removedSceneIds.size} removed this session)`
+    );
     return scene;
   }
-
-  async function fetchSceneCount() {
-    const searchParams = getSearchParams();
-    const sceneFilter = getSceneFilter(searchParams);
-    
-    const countQuery = `
-      query FindScenesCount($scene_filter: SceneFilterType) {
-        findScenes(filter: { per_page: 0 }, scene_filter: $scene_filter) {
-          count
-        }
-      }
-    `;
-    const countResult = await graphqlQuery(countQuery, { scene_filter: sceneFilter });
-    return countResult.findScenes.count;
-  }
-
-  async function fetchRandomScenes(count = 2) {
-    const totalScenes = await fetchSceneCount();
-    
-    if (totalScenes < 2) {
-      throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
+  function buildOpponentPool(allScenes, leftPool, filters) {
+    if (state.filterOpponents && filters.filterActive) {
+      return leftPool;
     }
-
-    const searchParams = getSearchParams();
-    const sceneFilter = getSceneFilter(searchParams);
-
-    const scenesQuery = `
-      query FindRandomScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
-        findScenes(filter: $filter, scene_filter: $scene_filter) {
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
-        }
-      }
-    `;
-
-    const result = await graphqlQuery(scenesQuery, {
-      filter: getFindFilter(searchParams, {
-        per_page: Math.min(100, totalScenes),
-        sort: "random"
-      }),
-      scene_filter: sceneFilter
-    });
-
-    const allScenes = result.findScenes.scenes || [];
-    
-    if (allScenes.length < 2) {
-      throw new Error("Not enough scenes returned from query.");
-    }
-
-    const shuffled = allScenes.sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 2);
+    const ratedOnly = allScenes.filter((s) => s.rating100 != null);
+    return ratedOnly.length >= 1 ? ratedOnly : allScenes;
   }
-
-  // Swiss mode: fetch two scenes with similar ratings
-  // Left side (scene1): from filtered pool (scenes to be rated)
-  // Right side (scene2): from full collection (opponents)
-  async function fetchSwissPair(forcedLeftScene = null) {
-    const searchParams = getSearchParams();
-    const sceneFilter = getSceneFilter(searchParams);
-    const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
-
-    let filteredScenes, allScenes;
-    
-    if (hasFilter) {
-      // With filter: need both filtered scenes and all scenes
+  async function resetLeftPool() {
+    await clearFilteredCache();
+    state.shuffledFilteredScenes = [];
+    state.shuffleIndex = 0;
+    state.shuffleFilterKey = null;
+    state.removedSceneIds.clear();
+  }
+  async function loadScenePools(filters) {
+    if (filters.filterActive) {
       console.log("[Stash Battle] 📋 Filter active, fetching filtered + all scenes");
-      const [filteredResult, allResult] = await Promise.all([
-        getFilteredScenesCached(searchParams, sceneFilter),
+      const [filteredResult, allResult2] = await Promise.all([
+        getFilteredScenesCached(filters),
         getAllScenesCached()
       ]);
-      filteredScenes = filteredResult.scenes || [];
-      allScenes = allResult.scenes || [];
-    } else {
-      // No filter: all scenes = filtered scenes, only need one fetch
-      console.log("[Stash Battle] 📋 No filter active, using all scenes");
-      const allResult = await getAllScenesCached();
-      allScenes = allResult.scenes || [];
-      filteredScenes = allScenes;
+      return {
+        leftPool: filteredResult.scenes || [],
+        allScenes: allResult2.scenes || []
+      };
     }
-    
-    // Need at least 2 scenes in full collection for opponents
+    console.log("[Stash Battle] 📋 No filter active, using all scenes");
+    const allResult = await getAllScenesCached();
+    const allScenes = allResult.scenes || [];
+    return { leftPool: allScenes, allScenes };
+  }
+  function pickLeftScene(forcedLeftScene, leftPool, filterKey) {
+    return forcedLeftScene || getNextFilteredScene(leftPool, filterKey);
+  }
+  function hasLeftAvailable(leftPool, forcedLeftScene) {
+    return forcedLeftScene !== null || leftPool.some((s) => !state.removedSceneIds.has(s.id));
+  }
+  async function buildSwissPools(forcedLeftScene) {
+    let filters = readFilters();
+    let { leftPool, allScenes } = await loadScenePools(filters);
     if (allScenes.length < 2) {
       throw new Error("Not enough scenes for comparison.");
     }
-    // Note: filteredScenes can be empty - getNextFilteredScene will return null for poolExhausted
-
-    // Pick left side scene: use forced scene if provided, otherwise shuffled filtered pool
-    let filterKey = buildFilterKey(searchParams, sceneFilter);
-    let scene1 = forcedLeftScene || getNextFilteredScene(filteredScenes, filterKey);
-    
-    // Handle pool exhaustion - auto-refresh and continue
-    if (!scene1) {
+    let rightPool = buildOpponentPool(allScenes, leftPool, filters);
+    const needsLeftRefresh = !hasLeftAvailable(leftPool, forcedLeftScene);
+    const needsOpponentRestart = state.filterOpponents && filters.filterActive && rightPool.length < 2;
+    if (!needsLeftRefresh && !needsOpponentRestart) {
+      return { leftPool, rightPool, filterKey: filters.filterKey };
+    }
+    if (needsLeftRefresh) {
       console.log("[Stash Battle] 🏁 Pool exhausted, fetching fresh from network...");
-      
-      // Clear filtered cache (memory + IndexedDB) to force fresh network fetch
-      // This picks up newly-qualified scenes (e.g., a scene that just hit rating 100)
-      await clearFilteredCache();
-      shuffledFilteredScenes = [];
-      shuffleIndex = 0;
-      shuffleFilterKey = null;
-      removedSceneIds.clear(); // Safe to clear since we're forcing a fresh network fetch
-      
-      // Re-fetch filtered scenes (will hit network since cache is cleared)
-      if (hasFilter) {
-        const freshResult = await getFilteredScenesCached(searchParams, sceneFilter);
-        filteredScenes = freshResult.scenes || [];
-      } else {
-        // For no filter, allScenes is already fresh enough
-        filteredScenes = allScenes;
-      }
-      
-      // Try again with fresh pool (removedSceneIds will filter out already-rated scenes)
-      filterKey = buildFilterKey(searchParams, sceneFilter);
-      scene1 = getNextFilteredScene(filteredScenes, filterKey);
-      
-      // If still empty after fresh fetch, truly no scenes match (or all were already rated)
-      if (!scene1) {
-        throw new Error("No scenes match your filter criteria.");
-      }
-    }
-    
-    // decide which list to draw opponents from; ranking numbers come from same list
-    // Right side should only show rated scenes unless filter applies to both sides
-    let opponentPool;
-    if (filterOpponents && hasFilter) {
-      opponentPool = filteredScenes;
     } else {
-      const ratedOnly = allScenes.filter(s => s.rating100 != null);
-      opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
-    }
-
-    // If filtered opponent pool is too small, restart the cycle (clear removals, refresh cache)
-    if (opponentPool.length < 2 && filterOpponents && hasFilter) {
       console.log("[Stash Battle] 🔄 Filtered opponent pool too small, restarting cycle...");
-      await clearFilteredCache();
-      shuffledFilteredScenes = [];
-      shuffleIndex = 0;
-      shuffleFilterKey = null;
-      removedSceneIds.clear();
-
-      const freshResult = await getFilteredScenesCached(searchParams, sceneFilter);
-      filteredScenes = freshResult.scenes || [];
-      opponentPool = filteredScenes;
-
-      // Re-pick scene1 from the refreshed pool
-      filterKey = buildFilterKey(searchParams, sceneFilter);
-      scene1 = getNextFilteredScene(filteredScenes, filterKey);
-      if (!scene1) {
-        throw new Error("No scenes match your filter criteria.");
-      }
-
-      if (opponentPool.length < 2) {
-        throw new Error("Not enough scenes in your filter for a match. You need at least 2 scenes.");
-      }
     }
-
-    // index of scene1 within the chosen pool
-    const scene1IdxInPool = opponentPool.findIndex(s => s.id === scene1.id);
-    // If scene1 not in opponent pool (unrated), position at end to match against lowest-rated
-    const effectiveScene1Idx = scene1IdxInPool >= 0 ? scene1IdxInPool : opponentPool.length;
+    await resetLeftPool();
+    leftPool = filters.filterActive ? (await getFilteredScenesCached(filters)).scenes || [] : allScenes;
+    filters = readFilters();
+    rightPool = buildOpponentPool(allScenes, leftPool, filters);
+    if (needsOpponentRestart && rightPool.length < 2) {
+      throw new Error("Not enough scenes in your filter for a match. You need at least 2 scenes.");
+    }
+    return {
+      leftPool,
+      rightPool,
+      filterKey: filters.filterKey
+    };
+  }
+  async function fetchSwissPair(forcedLeftScene = null) {
+    const { leftPool, rightPool, filterKey } = await buildSwissPools(forcedLeftScene);
+    const scene1 = pickLeftScene(forcedLeftScene, leftPool, filterKey);
+    if (!scene1) {
+      throw new Error("No scenes match your filter criteria.");
+    }
+    const { scene2, ranks } = pickSwissOpponent(scene1, rightPool);
+    return { scenes: [scene1, scene2], ranks };
+  }
+  function pickSwissOpponent(scene1, rightPool) {
+    const scene1IdxInPool = rightPool.findIndex((s) => s.id === scene1.id);
+    const effectiveScene1Idx = scene1IdxInPool >= 0 ? scene1IdxInPool : rightPool.length;
     const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
-
-    // Collect candidates near scene1 in opponentPool, expanding reach if needed
-    let candidates = [];
-    for (let reach = 10; candidates.length === 0 && reach <= opponentPool.length; reach *= 2) {
+    const candidates = [];
+    for (let reach = SWISS_OPPONENT_REACH_INITIAL; candidates.length === 0 && reach <= rightPool.length; reach *= SWISS_OPPONENT_REACH_MULTIPLIER) {
       for (let i = effectiveScene1Idx - reach; i <= effectiveScene1Idx + reach; i++) {
-        if (i >= 0 && i < opponentPool.length && i !== scene1IdxInPool) {
-          candidates.push({ scene: opponentPool[i], idx: i });
+        if (i >= 0 && i < rightPool.length && i !== scene1IdxInPool) {
+          candidates.push({ scene: rightPool[i], idx: i });
         }
       }
     }
-
     if (candidates.length === 0) {
       throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
     }
-
-    // Pick randomly from candidates
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    const scene2 = pick.scene;
-    const scene2Index = pick.idx;
-
     return {
-      scenes: [scene1, scene2],
-      ranks: [scene1RankInPool, scene2Index + 1]
+      scene2: pick.scene,
+      ranks: [scene1RankInPool, pick.idx + 1]
     };
   }
-
-  // Find the lowest actually rated scene in a descending-sorted array, excluding a specific scene
-  // Returns { scene, index } or fallback to first non-excluded scene if none rated
+  function pickClosestClimbOpponent(remainingOpponents) {
+    const closest = remainingOpponents.slice(-CLIMB_OPPONENT_PICK_WINDOW);
+    return closest[Math.floor(Math.random() * closest.length)];
+  }
+  function getRemainingClimbOpponents(climber, rightPool, climberIndex) {
+    return rightPool.filter((s, idx) => {
+      if (s.id === climber.id || state.gauntletDefeated.includes(s.id)) return false;
+      return idx < climberIndex || (s.rating100 || 0) >= (climber.rating100 || 0);
+    });
+  }
   function findLowestRated(scenes, excludeId) {
     for (let i = scenes.length - 1; i >= 0; i--) {
       const s = scenes[i];
@@ -1163,64 +921,33 @@
         return { scene: s, index: i };
       }
     }
-    // Fallback to any scene if none rated
-    const fallbackIndex = scenes.findIndex(s => s.id !== excludeId);
+    const fallbackIndex = scenes.findIndex((s) => s.id !== excludeId);
     return { scene: scenes[fallbackIndex], index: fallbackIndex };
   }
-
-  // Gauntlet mode: champion vs next challenger
-  // Left side (champion): initially picked from filtered pool (scenes to be rated)
-  // Right side (opponents): from full collection
   async function fetchGauntletPair(forcedLeftScene = null) {
-    const searchParams = getSearchParams();
-    const sceneFilter = getSceneFilter(searchParams);
-    const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
-
-    // Get ALL scenes for opponent pool and ranking - CACHED
-    console.log("[Stash Battle] 📋 Fetching all scenes for gauntlet...");
-    const allResult = await getAllScenesCached();
-    const allScenes = allResult.scenes || [];
-    // compute filtered list once (used for left side and, optionally, for opponents)
-    let filteredScenes = hasFilter
-      ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
-      : allScenes;
-
-    // choose pool for opponents / ranking; use filtered list when flag is on and a filter exists
-    // Right side should only show rated scenes unless filter applies to both sides
-    let opponentPool;
-    if (filterOpponents && hasFilter) {
-      opponentPool = filteredScenes;
-    } else {
-      const ratedOnly = allScenes.filter(s => s.rating100 != null);
-      opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
-    }
-    totalScenesCount = opponentPool.length;
-
+    const filters = readFilters();
+    console.log("[Stash Battle] 📋 Fetching scenes for gauntlet...");
+    const { leftPool, allScenes } = await loadScenePools(filters);
+    let rightPool = buildOpponentPool(allScenes, leftPool, filters);
+    state.totalScenesCount = rightPool.length;
     if (allScenes.length < 2) {
-      return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false, isFalling: false };
+      throw new Error("Not enough scenes for comparison.");
     }
-
-    // Handle falling mode - find next opponent BELOW to test against (from full collection)
-    if (gauntletFalling && gauntletFallingScene) {
-      const fallingIndex = opponentPool.findIndex(s => s.id === gauntletFallingScene.id);
-      
-      // Find opponents below (higher index) that haven't been tested
-      const belowOpponents = opponentPool.filter((s, idx) => {
-        if (s.id === gauntletFallingScene.id) return false;
-        if (gauntletDefeated.includes(s.id)) return false;
-        return idx > fallingIndex; // Below in ranking
+    if (state.gauntletFalling && state.gauntletFallingScene) {
+      const fallingScene = state.gauntletFallingScene;
+      const fallingIndex = rightPool.findIndex((s) => s.id === fallingScene.id);
+      const belowOpponents = rightPool.filter((s, idx) => {
+        if (s.id === fallingScene.id || state.gauntletDefeated.includes(s.id)) return false;
+        return idx > fallingIndex;
       });
-      
       if (belowOpponents.length === 0) {
-        // Hit the bottom - place 1 below the last opponent that beat them
-        const finalRank = opponentPool.length;
-        const lastDefeatedById = gauntletDefeated[gauntletDefeated.length - 1];
-        const lastOpponent = opponentPool.find(s => s.id === lastDefeatedById);
-        const finalRating = Math.max(1, (lastOpponent?.rating100 || 2) - 1);
-        updateSceneRating(gauntletFallingScene.id, finalRating);
-        
+        const finalRank = rightPool.length;
+        const lastDefeatedById = state.gauntletDefeated[state.gauntletDefeated.length - 1];
+        const lastOpponent = rightPool.find((s) => s.id === lastDefeatedById);
+        const finalRating = Math.max(1, (lastOpponent?.rating100 || 1) - 1);
+        updateSceneRating(fallingScene.id, finalRating);
         return {
-          scenes: [gauntletFallingScene],
+          scenes: [fallingScene],
           ranks: [finalRank],
           isVictory: false,
           isFalling: true,
@@ -1229,497 +956,176 @@
           placementRating: finalRating
         };
       } else {
-        // Get next opponent below (first one, closest to falling scene)
         const nextBelow = belowOpponents[0];
-        const nextBelowIndex = opponentPool.findIndex(s => s.id === nextBelow.id);
-        
-        // Update the falling scene's rank for display
-        gauntletChampionRank = fallingIndex + 1;
-        
+        const nextBelowIndex = rightPool.findIndex((s) => s.id === nextBelow.id);
+        state.gauntletClimberRank = fallingIndex + 1;
         return {
-          scenes: [gauntletFallingScene, nextBelow],
+          scenes: [fallingScene, nextBelow],
           ranks: [fallingIndex + 1, nextBelowIndex + 1],
           isVictory: false,
           isFalling: true
         };
       }
     }
-
-    // If no champion yet, pick from filtered pool to start
-    if (!gauntletChampion) {
-      // Reset state
-      gauntletDefeated = [];
-      gauntletFalling = false;
-      gauntletFallingScene = null;
-      
-      // Use forced scene if provided, otherwise pick from shuffled filtered pool
-      const filterKey = buildFilterKey(searchParams, sceneFilter);
-      const challenger = forcedLeftScene || getNextFilteredScene(filteredScenes, filterKey);
-      
+    if (!state.gauntletClimber) {
+      state.gauntletDefeated = [];
+      state.gauntletFalling = false;
+      state.gauntletFallingScene = null;
+      const challenger = forcedLeftScene || getNextFilteredScene(leftPool, filters.filterKey);
       if (!challenger) {
         throw new Error("No scenes match your filter criteria.");
       }
-      
-      // Find challenger's position in ranking source (may be filtered or all)
-      const challengerIndex = opponentPool.findIndex(s => s.id === challenger.id);
-      
-      // Start at the bottom - find lowest actually rated scene in opponentPool
-      const { scene: lowestRated, index: lowestIndex } = findLowestRated(opponentPool, challenger.id);
-      
-      // Challenger's current rank in ranking source
-      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : opponentPool.length;
-      
-      return { 
-        scenes: [challenger, lowestRated], 
-        ranks: [gauntletChampionRank, lowestIndex + 1],
+      const challengerIndex = rightPool.findIndex((s) => s.id === challenger.id);
+      const { scene: lowestRated, index: lowestIndex } = findLowestRated(rightPool, challenger.id);
+      state.gauntletClimberRank = challengerIndex >= 0 ? challengerIndex + 1 : rightPool.length;
+      return {
+        scenes: [challenger, lowestRated],
+        ranks: [state.gauntletClimberRank, lowestIndex + 1],
         isVictory: false,
         isFalling: false
       };
     }
-
-    // Champion exists - find next opponent from the chosen opponent pool
-    const championIndex = opponentPool.findIndex(s => s.id === gauntletChampion.id);
-    
-    // Update champion rank (1-indexed, so +1)
-    gauntletChampionRank = championIndex >= 0 ? championIndex + 1 : 1;
-    
-    // Find opponents above champion that haven't been defeated
-    const remainingOpponents = opponentPool.filter((s, idx) => {
-      if (s.id === gauntletChampion.id) return false;
-      if (gauntletDefeated.includes(s.id)) return false;
-      // Only scenes ranked higher (lower index) or same rating
-      return idx < championIndex || (s.rating100 || 0) >= (gauntletChampion.rating100 || 0);
-    });
-    
-    // If no opponents left, champion has truly won
+    const climber = state.gauntletClimber;
+    const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
+    state.gauntletClimberRank = climberIndex >= 0 ? climberIndex + 1 : 1;
+    const remainingOpponents = getRemainingClimbOpponents(climber, rightPool, climberIndex);
     if (remainingOpponents.length === 0) {
-      gauntletChampionRank = 1;
-      return { 
-        scenes: [gauntletChampion], 
+      state.gauntletClimberRank = 1;
+      return {
+        scenes: [climber],
         ranks: [1],
         isVictory: true,
         isFalling: false
       };
     }
-    
-    // Pick from the closest undefeated opponents above the champion (up to 5)
-    const pickWindow = Math.min(5, remainingOpponents.length);
-    const windowStart = remainingOpponents.length - pickWindow;
-    const nextOpponent = remainingOpponents[windowStart + Math.floor(Math.random() * pickWindow)];
-    const nextOpponentIndex = opponentPool.findIndex(s => s.id === nextOpponent.id);
-    
-    return { 
-      scenes: [gauntletChampion, nextOpponent], 
-      ranks: [championIndex + 1, nextOpponentIndex + 1],
+    const nextOpponent = pickClosestClimbOpponent(remainingOpponents);
+    const nextOpponentIndex = rightPool.findIndex((s) => s.id === nextOpponent.id);
+    return {
+      scenes: [climber, nextOpponent],
+      ranks: [climberIndex + 1, nextOpponentIndex + 1],
       isVictory: false,
       isFalling: false
     };
   }
-
-  // Champion mode: like gauntlet but winner stays on (no falling)
-  // Left side (champion): initially picked from filtered pool (scenes to be rated)
-  // Right side (opponents): from full collection
   async function fetchChampionPair(forcedLeftScene = null) {
-    const searchParams = getSearchParams();
-    const sceneFilter = getSceneFilter(searchParams);
-    const hasFilter = sceneFilter || searchParams.has("c") || searchParams.get("q");
-
-    // Get ALL scenes for opponent pool and ranking - CACHED
-    console.log("[Stash Battle] 📋 Fetching all scenes for champion...");
-    const allResult = await getAllScenesCached();
-    const allScenes = allResult.scenes || [];
-    // precompute filtered list and opponent/rank pools
-    let filteredScenes = hasFilter
-      ? (await getFilteredScenesCached(searchParams, sceneFilter)).scenes || []
-      : allScenes;
-    // Right side should only show rated scenes unless filter applies to both sides
-    let opponentPool;
-    if (filterOpponents && hasFilter) {
-      opponentPool = filteredScenes;
-    } else {
-      const ratedOnly = allScenes.filter(s => s.rating100 != null);
-      opponentPool = ratedOnly.length >= 1 ? ratedOnly : allScenes;
-    }
-    totalScenesCount = opponentPool.length;
-    
+    const filters = readFilters();
+    console.log("[Stash Battle] 📋 Fetching scenes for champion...");
+    const { leftPool, allScenes } = await loadScenePools(filters);
+    let rightPool = buildOpponentPool(allScenes, leftPool, filters);
+    state.totalScenesCount = rightPool.length;
     if (allScenes.length < 2) {
-      return { scenes: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
+      throw new Error("Not enough scenes for comparison.");
     }
-
-    // If no champion yet, pick from filtered pool to start
-    if (!gauntletChampion) {
-      gauntletDefeated = [];
-      
-      if (!forcedLeftScene && filteredScenes.length < 1) {
+    if (!state.gauntletClimber) {
+      state.gauntletDefeated = [];
+      if (!forcedLeftScene && leftPool.length < 1) {
         throw new Error("No scenes match your filter criteria.");
       }
-      
-      // Use forced scene if provided, otherwise pick from shuffled filtered pool
-      const filterKey = buildFilterKey(searchParams, sceneFilter);
-      const challenger = forcedLeftScene || getNextFilteredScene(filteredScenes, filterKey);
-      
+      const challenger = forcedLeftScene || getNextFilteredScene(leftPool, filters.filterKey);
       if (!challenger) {
         throw new Error("No scenes match your filter criteria.");
       }
-      
-      const challengerIndex = opponentPool.findIndex(s => s.id === challenger.id);
-      
-      // Start at the bottom - find lowest actually rated scene
-      const { scene: lowestRated, index: lowestIndex } = findLowestRated(opponentPool, challenger.id);
-      
-      gauntletChampionRank = challengerIndex >= 0 ? challengerIndex + 1 : opponentPool.length;
-      
-      return { 
-        scenes: [challenger, lowestRated], 
-        ranks: [gauntletChampionRank, lowestIndex + 1],
+      const challengerIndex = rightPool.findIndex((s) => s.id === challenger.id);
+      const { scene: lowestRated, index: lowestIndex } = findLowestRated(rightPool, challenger.id);
+      state.gauntletClimberRank = challengerIndex >= 0 ? challengerIndex + 1 : rightPool.length;
+      return {
+        scenes: [challenger, lowestRated],
+        ranks: [state.gauntletClimberRank, lowestIndex + 1],
         isVictory: false
       };
     }
-
-    // Champion exists - find next opponent from the chosen pool
-    const championIndex = opponentPool.findIndex(s => s.id === gauntletChampion.id);
-    
-    gauntletChampionRank = championIndex >= 0 ? championIndex + 1 : 1;
-    
-    // Find opponents above champion that haven't been defeated
-    const remainingOpponents = opponentPool.filter((s, idx) => {
-      if (s.id === gauntletChampion.id) return false;
-      if (gauntletDefeated.includes(s.id)) return false;
-      return idx < championIndex || (s.rating100 || 0) >= (gauntletChampion.rating100 || 0);
-    });
-    
-    // If no opponents left, champion has won!
+    const climber = state.gauntletClimber;
+    const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
+    state.gauntletClimberRank = climberIndex >= 0 ? climberIndex + 1 : 1;
+    const remainingOpponents = getRemainingClimbOpponents(climber, rightPool, climberIndex);
     if (remainingOpponents.length === 0) {
-      gauntletChampionRank = 1;
-      return { 
-        scenes: [gauntletChampion], 
+      state.gauntletClimberRank = 1;
+      return {
+        scenes: [climber],
         ranks: [1],
         isVictory: true
       };
     }
-    
-    // Pick from the closest undefeated opponents above the champion (up to 5)
-    const pickWindow = Math.min(5, remainingOpponents.length);
-    const windowStart = remainingOpponents.length - pickWindow;
-    const nextOpponent = remainingOpponents[windowStart + Math.floor(Math.random() * pickWindow)];
-    const nextOpponentIndex = opponentPool.findIndex(s => s.id === nextOpponent.id);
-    
-    return { 
-      scenes: [gauntletChampion, nextOpponent], 
-      ranks: [championIndex + 1, nextOpponentIndex + 1],
+    const nextOpponent = pickClosestClimbOpponent(remainingOpponents);
+    const nextOpponentIndex = rightPool.findIndex((s) => s.id === nextOpponent.id);
+    return {
+      scenes: [climber, nextOpponent],
+      ranks: [climberIndex + 1, nextOpponentIndex + 1],
       isVictory: false
     };
   }
-  
-  function createVictoryScreen(champion) {
-    const file = champion.files && champion.files[0] ? champion.files[0] : {};
-    let title = champion.title;
-    if (!title && file.path) {
-      const pathParts = file.path.split(/[/\\]/);
-      title = pathParts[pathParts.length - 1].replace(/\.[^/.]+$/, "");
+
+  // src/ui/sceneTitle.ts
+  function resolveSceneTitle(scene) {
+    if (scene.title) return scene.title;
+    const path = scene.files?.[0]?.path;
+    if (path) {
+      const pathParts = path.split(/[/\\]/);
+      return pathParts[pathParts.length - 1].replace(/\.[^/.]+$/, "");
     }
-    if (!title) {
-      title = `Scene #${champion.id}`;
-    }
-    
-    const screenshotPath = champion.paths ? champion.paths.screenshot : null;
-    
-    return `
-      <div class="pwr-victory-screen">
-        <div class="pwr-victory-crown">👑</div>
-        <h2 class="pwr-victory-title">CHAMPION!</h2>
-        <div class="pwr-victory-scene">
-          ${screenshotPath 
-            ? `<img class="pwr-victory-image" src="${screenshotPath}" alt="${title}" />`
-            : `<div class="pwr-victory-image pwr-no-image">No Screenshot</div>`
-          }
-        </div>
-        <h3 class="pwr-victory-name">${title}</h3>
-        <p class="pwr-victory-stats">Conquered all ${totalScenesCount} scenes with a ${gauntletWins} win streak!</p>
-        <button id="pwr-new-gauntlet" class="btn btn-primary">Start New Gauntlet</button>
-      </div>
-    `;
+    return "";
   }
 
-  function showPlacementScreen(scene, rank, finalRating) {
-    const comparisonArea = document.getElementById("pwr-comparison-area");
-    if (!comparisonArea) return;
-    
-    const file = scene.files && scene.files[0] ? scene.files[0] : {};
-    let title = scene.title;
-    if (!title && file.path) {
-      const pathParts = file.path.split(/[/\\]/);
-      title = pathParts[pathParts.length - 1].replace(/\.[^/.]+$/, "");
-    }
-    if (!title) {
-      title = `Scene #${scene.id}`;
-    }
-    
-    const screenshotPath = scene.paths ? scene.paths.screenshot : null;
-    
-    comparisonArea.innerHTML = `
-      <div class="pwr-victory-screen">
-        <div class="pwr-victory-crown">📍</div>
-        <h2 class="pwr-victory-title">PLACED!</h2>
-        <div class="pwr-victory-scene">
-          ${screenshotPath 
-            ? `<img class="pwr-victory-image" src="${screenshotPath}" alt="${title}" />`
-            : `<div class="pwr-victory-image pwr-no-image">No Screenshot</div>`
-          }
-        </div>
-        <h3 class="pwr-victory-name">${title}</h3>
-        <p class="pwr-victory-stats">
-          Rank <strong>#${rank}</strong> of ${totalScenesCount}<br>
-          Rating: <strong>${finalRating}/100</strong>
-        </p>
-        <button id="pwr-new-gauntlet" class="btn btn-primary">Start New Run</button>
-      </div>
-    `;
-    
-    // Hide status and actions
-    const statusEl = document.getElementById("pwr-gauntlet-status");
-    const actionsEl = document.querySelector(".pwr-actions");
-    if (statusEl) statusEl.style.display = "none";
-    if (actionsEl) actionsEl.style.display = "none";
-    
-    resetGauntletState();
-    saveState();
-    
-    // Attach button handler
-    const newBtn = comparisonArea.querySelector("#pwr-new-gauntlet");
-    if (newBtn) {
-      newBtn.addEventListener("click", () => {
-        if (actionsEl) actionsEl.style.display = "";
-        loadNewPair();
-      });
-    }
-  }
-  
-  // Update scene rating in Stash database
-  async function updateSceneRating(sceneId, rating100) {
-    const mutation = `
-      mutation SceneUpdate($input: SceneUpdateInput!) {
-        sceneUpdate(input: $input) {
-          id
-          rating100
-        }
-      }
-    `;
-    
-    const finalRating = Math.max(1, Math.min(100, rating100));
-    
-    try {
-      await graphqlQuery(mutation, {
-        input: {
-          id: sceneId,
-          rating100: finalRating
-        }
-      });
-      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${finalRating} in Stash`);
-
-      
-      // Update the in-memory cache to keep it in sync
-      updateSceneInCache(sceneId, finalRating);
-      
-    } catch (e) {
-      console.error(`[Stash Battle] Failed to update scene ${sceneId} rating:`, e);
-    }
-  }
-
-  // Remove a scene from the filtered pool (called after battle regardless of rating change)
-  function removeFromFilteredPool(sceneId) {
-    // Track removal - survives background refresh race condition
-    removedSceneIds.add(sceneId);
-    
-    // Remove from filtered cache
-    if (memoryCache.filteredScenes) {
-      const idx = memoryCache.filteredScenes.findIndex(s => s.id === sceneId);
-      if (idx !== -1) {
-        memoryCache.filteredScenes.splice(idx, 1);
-        console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from filtered pool (${memoryCache.filteredScenes.length} remaining, ${removedSceneIds.size} removed this session)`);
-      }
-    }
-    
-    // Also remove from shuffled queue
-    const shuffleIdx = shuffledFilteredScenes.findIndex(s => s.id === sceneId);
-    if (shuffleIdx !== -1) {
-      shuffledFilteredScenes.splice(shuffleIdx, 1);
-      if (shuffleIdx < shuffleIndex) {
-        shuffleIndex--;
-      }
-    }
-  }
-
-  // ============================================
-  // RATING LOGIC
-  // ============================================
-
-  // Dynamic K-factor based on play_count (similar to chess ELO for new vs established players)
-  // Scenes with more plays have more "established" ratings and change more slowly
-  function getKFactor(playCount) {
-    const count = playCount || 0;   // Handle null/undefined
-    if (count < 3) return 12;       // New: volatile, find true rating fast
-    if (count < 8) return 8;        // Settling: moderate changes
-    if (count < 15) return 6;       // Established: smaller changes
-    return 4;                       // Very established: stable rating
-  }
-
-  function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, winnerPlayCount = 0, loserPlayCount = 0, loserRank = null) {
-    const winnerRating = winnerCurrentRating || 1;
-    const loserRating = loserCurrentRating || 1;
-    
-    const ratingDiff = loserRating - winnerRating;
-    const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff / 40));
-    
-    let winnerGain = 0, loserLoss = 0;
-    
-    console.log(`[Stash Battle] 📊 ELO Input: mode=${currentMode} winner=${winnerId}(raw=${winnerCurrentRating}, used=${winnerRating}, plays=${winnerPlayCount}) loser=${loserId}(raw=${loserCurrentRating}, used=${loserRating}, plays=${loserPlayCount}) loserRank=${loserRank}`);
-    console.log(`[Stash Battle] 📊 ELO Math: ratingDiff=${ratingDiff} expectedWinner=${expectedWinner.toFixed(4)}`);
-
-    if (currentMode === "gauntlet" || currentMode === "champion") {
-      const isChampionWinner = gauntletChampion && winnerId === gauntletChampion.id;
-      const isFallingWinner = gauntletFalling && gauntletFallingScene && winnerId === gauntletFallingScene.id;
-      const isChampionLoser = gauntletChampion && loserId === gauntletChampion.id;
-      const isFallingLoser = gauntletFalling && gauntletFallingScene && loserId === gauntletFallingScene.id;
-      
-      console.log(`[Stash Battle] 📊 Roles: championId=${gauntletChampion?.id} fallingId=${gauntletFallingScene?.id} isChampionWinner=${isChampionWinner} isFallingWinner=${isFallingWinner} isChampionLoser=${isChampionLoser} isFallingLoser=${isFallingLoser}`);
-
-      if (isChampionWinner || isFallingWinner) {
-        const kFactor = getKFactor(winnerPlayCount);
-        winnerGain = Math.max(1, Math.round(kFactor * (1 - expectedWinner)));
-        console.log(`[Stash Battle] 📊 Winner gain: K=${kFactor} raw=${(kFactor * (1 - expectedWinner)).toFixed(2)} gain=${winnerGain}`);
-      }
-      if (isFallingLoser) {
-        const kFactor = getKFactor(loserPlayCount);
-        loserLoss = Math.max(1, Math.round(kFactor * expectedWinner));
-        console.log(`[Stash Battle] 📊 Falling loser loss: K=${kFactor} raw=${(kFactor * expectedWinner).toFixed(2)} loss=${loserLoss}`);
-      }
-      
-      if (loserRank === 1 && !isChampionLoser && !isFallingLoser) {
-        loserLoss = 1;
-        console.log(`[Stash Battle] 📊 Rank #1 dethrone: loserLoss forced to 1`);
-      }
-    } else {
-      const winnerK = getKFactor(winnerPlayCount);
-      const loserK = getKFactor(loserPlayCount);
-      
-      winnerGain = Math.max(1, Math.round(winnerK * (1 - expectedWinner)));
-      loserLoss = Math.max(1, Math.round(loserK * expectedWinner));
-      console.log(`[Stash Battle] 📊 Swiss ELO: winnerK=${winnerK} loserK=${loserK} winnerGain=${winnerGain} loserLoss=${loserLoss}`);
-    }
-    
-    const newWinnerRating = Math.min(100, Math.max(1, winnerRating + winnerGain));
-    const newLoserRating = Math.min(100, Math.max(1, loserRating - loserLoss));
-    
-    const winnerChange = newWinnerRating - winnerRating;
-    const loserChange = newLoserRating - loserRating;
-    
-    console.log(`[Stash Battle] 📊 ELO Result: winner ${winnerRating}→${newWinnerRating} (${winnerChange >= 0 ? '+' : ''}${winnerChange}) loser ${loserRating}→${newLoserRating} (${loserChange >= 0 ? '+' : ''}${loserChange})`);
-
-    if (winnerChange !== 0) updateSceneRating(winnerId, newWinnerRating);
-    if (loserChange !== 0) updateSceneRating(loserId, newLoserRating);
-    
-    return { newWinnerRating, newLoserRating, winnerChange, loserChange };
-  }
-  
-  // Called when gauntlet champion loses - place them one below the winner
-  function finalizeGauntletLoss(championId, winnerRating) {
-    // Set champion rating to just below the scene that beat them
-    const newRating = Math.max(1, winnerRating - 1);
-    updateSceneRating(championId, newRating);
-    return newRating;
-  }
-
-  // ============================================
-  // UI COMPONENTS
-  // ============================================
-
+  // src/ui/sceneCard.ts
   function formatDuration(seconds) {
     if (!seconds) return "N/A";
     const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
+    const m = Math.floor(seconds % 3600 / 60);
     const s = Math.floor(seconds % 60);
     if (h > 0) {
       return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
     }
     return `${m}:${s.toString().padStart(2, "0")}`;
   }
-
-  function createSceneCard(scene, side, rank = null, streak = null) {
+  function createSceneCard(scene, side, rank = null, statusBadge = null) {
     const file = scene.files && scene.files[0] ? scene.files[0] : {};
     const duration = file.duration;
-    const performers = scene.performers && scene.performers.length > 0 
-      ? scene.performers.map((p) => p.name).join(", ") 
-      : "No performers";
+    const performers = scene.performers && scene.performers.length > 0 ? scene.performers.map((p) => p.name).join(", ") : "No performers";
     const studio = scene.studio ? scene.studio.name : "No studio";
     const tags = scene.tags ? scene.tags.slice(0, 5).map((t) => t.name) : [];
-    
-    // Title fallback: title -> filename from path -> Scene ID
-    let title = scene.title;
-    if (!title && file.path) {
-      const pathParts = file.path.split(/[/\\]/);
-      title = pathParts[pathParts.length - 1].replace(/\.[^/.]+$/, "");
-    }
-    if (!title) {
-      title = `Scene #${scene.id}`;
-    }
-    
+    const title = resolveSceneTitle(scene);
     const screenshotPath = scene.paths ? scene.paths.screenshot : null;
     const previewPath = scene.paths ? scene.paths.preview : null;
     const stashRating = scene.rating100 ? `${scene.rating100}/100` : "Unrated";
-    
-    // Handle numeric ranks and string ranks
-    let rankDisplay = '';
-    if (rank !== null && rank !== undefined) {
-      if (typeof rank === 'number') {
-        rankDisplay = `<span class="pwr-scene-rank">#${rank}</span>`;
-      } else {
-        rankDisplay = `<span class="pwr-scene-rank">${rank}</span>`;
-      }
+    let rankDisplay = "";
+    if (rank !== null && rank !== void 0) {
+      rankDisplay = `<span class="sb-scene-rank">#${rank}</span>`;
     }
-    
-    // Status badge (streak or falling)
-    let streakDisplay = '';
-    if (typeof streak === 'string') {
-      streakDisplay = `<div class="pwr-streak-badge">${streak}</div>`;
-    } else if (streak !== null && streak > 0) {
-      streakDisplay = `<div class="pwr-streak-badge">🔥 ${streak} win${streak > 1 ? 's' : ''}</div>`;
+    let statusBadgeHtml = "";
+    if (typeof statusBadge === "string") {
+      statusBadgeHtml = `<div class="sb-streak-badge">${statusBadge}</div>`;
+    } else if (statusBadge !== null && statusBadge > 0) {
+      statusBadgeHtml = `<div class="sb-streak-badge">🔥 ${statusBadge} win${statusBadge > 1 ? "s" : ""}</div>`;
     }
-
-    // Preserve URL search params when opening scene
     const currentParams = window.location.search;
     const sceneUrl = `/scenes/${scene.id}${currentParams}`;
-
     return `
-      <div class="pwr-scene-card" data-side="${side}">
-        <div class="pwr-scene-image-container" data-scene-url="${sceneUrl}">
-          ${screenshotPath 
-            ? `<img class="pwr-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />`
-            : `<div class="pwr-scene-image pwr-no-image">No Screenshot</div>`
-          }
-          ${previewPath ? `<video class="pwr-hover-preview" src="${previewPath}" loop playsinline></video>` : ''}
-          <div class="pwr-scene-duration">${formatDuration(duration)}</div>
-          ${streakDisplay}
-          <div class="pwr-click-hint">Click to open scene</div>
+      <div class="sb-scene-card" data-side="${side}">
+        <div class="sb-scene-image-container" data-scene-url="${sceneUrl}">
+          ${screenshotPath ? `<img class="sb-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />` : `<div class="sb-scene-image sb-no-image">No Screenshot</div>`}
+          ${previewPath ? `<video class="sb-hover-preview" src="${previewPath}" loop playsinline></video>` : ""}
+          <div class="sb-scene-duration">${formatDuration(duration)}</div>
+          ${statusBadgeHtml}
+          <div class="sb-click-hint">Click to open scene</div>
         </div>
-        
-        <div class="pwr-scene-body" data-winner="${scene.id}">
-          <div class="pwr-scene-info">
-            <div class="pwr-scene-title-row">
-              <h3 class="pwr-scene-title">${title}</h3>
+
+        <div class="sb-scene-body" data-winner="${scene.id}">
+          <div class="sb-scene-info">
+            <div class="sb-scene-title-row">
+              <h3 class="sb-scene-title">${title}</h3>
               ${rankDisplay}
             </div>
-            
-            <div class="pwr-scene-meta">
-              <div class="pwr-meta-item"><strong>Studio:</strong> ${studio}</div>
-              <div class="pwr-meta-item"><strong>Performers:</strong> ${performers}</div>
-              <div class="pwr-meta-item"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="pwr-meta-item"><strong>Rating:</strong> ${stashRating}</div>
-              <div class="pwr-meta-item pwr-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="pwr-tag">${tag}</span>`).join("") : '<span class="pwr-none">None</span>'}</div>
+
+            <div class="sb-scene-meta">
+              <div class="sb-meta-item"><strong>Studio:</strong> ${studio}</div>
+              <div class="sb-meta-item"><strong>Performers:</strong> ${performers}</div>
+              <div class="sb-meta-item"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
+              <div class="sb-meta-item"><strong>Rating:</strong> ${stashRating}</div>
+              <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
           </div>
-          
-          <div class="pwr-choose-btn">
+
+          <div class="sb-choose-btn">
             ✓ Choose This Scene
           </div>
         </div>
@@ -1727,55 +1133,112 @@
     `;
   }
 
+  // src/ui/screens.ts
+  function buildEndScreenHtml(scene, crown, headline, statsHtml, buttonLabel) {
+    const title = resolveSceneTitle(scene);
+    const screenshotPath = scene.paths?.screenshot ?? null;
+    return `
+      <div class="sb-end-screen">
+        <div class="sb-end-screen-icon">${crown}</div>
+        <h2 class="sb-end-screen-headline">${headline}</h2>
+        <div class="sb-end-screen-scene">
+          ${screenshotPath ? `<img class="sb-end-screen-image" src="${screenshotPath}" alt="${title}" />` : `<div class="sb-end-screen-image sb-no-image">No Screenshot</div>`}
+        </div>
+        <h3 class="sb-end-screen-name">${title}</h3>
+        <p class="sb-end-screen-stats">${statsHtml}</p>
+        <button id="sb-new-gauntlet" class="btn btn-primary">${buttonLabel}</button>
+      </div>
+    `;
+  }
+  function showEndScreen(html) {
+    const comparisonArea = document.getElementById("sb-comparison-area");
+    if (!comparisonArea) return;
+    comparisonArea.innerHTML = html;
+    const actionsEl = document.querySelector(".sb-actions");
+    if (actionsEl) actionsEl.style.display = "none";
+    comparisonArea.querySelector("#sb-new-gauntlet")?.addEventListener("click", () => {
+      if (actionsEl) actionsEl.style.display = "";
+      loadNewPair();
+    });
+  }
+  function finishRunShowEndScreen(html) {
+    resetGauntletState();
+    saveState();
+    showEndScreen(html);
+  }
+  function showVictoryScreen(champion) {
+    const totalScenes = state.totalScenesCount;
+    const winStreak = state.gauntletWins;
+    const html = buildEndScreenHtml(
+      champion,
+      "👑",
+      "CHAMPION!",
+      `Conquered all ${totalScenes} scenes with a ${winStreak} win streak!`,
+      "Start New Gauntlet"
+    );
+    finishRunShowEndScreen(html);
+  }
+  function showPlacementScreen(scene, rank, finalRating) {
+    const html = buildEndScreenHtml(
+      scene,
+      "📍",
+      "PLACED!",
+      `Rank <strong>#${rank}</strong> of ${state.totalScenesCount}<br>Rating: <strong>${finalRating}/100</strong>`,
+      "Start New Run"
+    );
+    finishRunShowEndScreen(html);
+  }
+
+  // src/ui/mainUI.ts
   function createMainUI() {
     return `
-      <div id="stash-battle-container" class="pwr-container">
-        <div class="pwr-header">
-          <h1 class="pwr-title">⚔️ Stash Battle</h1>
-          <p class="pwr-subtitle">Compare scenes head-to-head to build your rankings</p>
-          
-          <div class="pwr-mode-toggle">
-            <button class="pwr-mode-btn ${currentMode === 'swiss' ? 'active' : ''}" data-mode="swiss">
-              <span class="pwr-mode-icon">⚖️</span>
-              <span class="pwr-mode-title">Swiss</span>
-              <span class="pwr-mode-desc">Fair matchups</span>
+      <div id="stash-battle-container" class="sb-container">
+        <div class="sb-header">
+          <h1 class="sb-title">⚔️ Stash Battle</h1>
+          <p class="sb-subtitle">Compare scenes head-to-head to build your rankings</p>
+
+          <div class="sb-mode-toggle">
+            <button class="sb-mode-btn ${state.currentMode === "swiss" ? "active" : ""}" data-mode="swiss">
+              <span class="sb-mode-icon">⚖️</span>
+              <span class="sb-mode-title">Swiss</span>
+              <span class="sb-mode-desc">Fair matchups</span>
             </button>
-            <button class="pwr-mode-btn ${currentMode === 'gauntlet' ? 'active' : ''}" data-mode="gauntlet">
-              <span class="pwr-mode-icon">🎯</span>
-              <span class="pwr-mode-title">Gauntlet</span>
-              <span class="pwr-mode-desc">Place a scene</span>
+            <button class="sb-mode-btn ${state.currentMode === "gauntlet" ? "active" : ""}" data-mode="gauntlet">
+              <span class="sb-mode-icon">🎯</span>
+              <span class="sb-mode-title">Gauntlet</span>
+              <span class="sb-mode-desc">Place a scene</span>
             </button>
-            <button class="pwr-mode-btn ${currentMode === 'champion' ? 'active' : ''}" data-mode="champion">
-              <span class="pwr-mode-icon">🏆</span>
-              <span class="pwr-mode-title">Champion</span>
-              <span class="pwr-mode-desc">Winner stays on</span>
+            <button class="sb-mode-btn ${state.currentMode === "champion" ? "active" : ""}" data-mode="champion">
+              <span class="sb-mode-icon">🏆</span>
+              <span class="sb-mode-title">Champion</span>
+              <span class="sb-mode-desc">Winner stays on</span>
             </button>
           </div>
 
-          <div class="pwr-opponents-toggle" style="margin-top:8px;">
+          <div class="sb-opponents-toggle" style="margin-top:8px;">
             <label>
-              <input type="checkbox" id="pwr-filter-opponents-checkbox" ${filterOpponents ? "checked" : ""}>
+              <input type="checkbox" id="sb-filter-opponents-checkbox" ${state.filterOpponents ? "checked" : ""}>
                Use filtered scenes for both sides
             </label>
             <label style="margin-left:16px;">
-              <input type="checkbox" id="pwr-mute-previews-checkbox" ${mutePreviews ? "checked" : ""}>
+              <input type="checkbox" id="sb-mute-previews-checkbox" ${state.mutePreviews ? "checked" : ""}>
                Mute hover previews
             </label>
           </div>
         </div>
 
-        <div class="pwr-content">
-          <div id="pwr-comparison-area" class="pwr-comparison-area">
-            <div class="pwr-loading">Loading scenes...</div>
+        <div class="sb-content">
+          <div id="sb-comparison-area" class="sb-comparison-area">
+            <div class="sb-loading">Loading scenes...</div>
           </div>
-          <div class="pwr-actions">
-            <div class="pwr-action-buttons">
-              <button id="pwr-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
-              <button id="pwr-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh Cache</button>
+          <div class="sb-actions">
+            <div class="sb-action-buttons">
+              <button id="sb-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
+              <button id="sb-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh Cache</button>
             </div>
-            <div class="pwr-keyboard-hint">
-              <span>← Left Arrow</span> to choose left · 
-              <span>→ Right Arrow</span> to choose right · 
+            <div class="sb-keyboard-hint">
+              <span>← Left Arrow</span> to choose left ·
+              <span>→ Right Arrow</span> to choose right ·
               <span>Space</span> to skip
             </div>
           </div>
@@ -1783,104 +1246,104 @@
       </div>
     `;
   }
-
-  // ============================================
-  // EVENT HANDLERS
-  // ============================================
-
-  // Shared rendering logic for displaying a pair of scenes
-  function renderPair(scenes, ranks) {
-    const comparisonArea = document.getElementById("pwr-comparison-area");
-    if (!comparisonArea) return;
-
-    // Determine badge for each card (gauntlet and champion modes)
-    let leftStreak = null;
-    let rightStreak = null;
-    if (currentMode === "gauntlet" || currentMode === "champion") {
-      if (gauntletFalling && gauntletFallingScene) {
-        if (scenes[0].id === gauntletFallingScene.id) {
-          leftStreak = "📍 Finding final placement...";
-        } else if (scenes[1].id === gauntletFallingScene.id) {
-          rightStreak = "📍 Finding final placement...";
-        }
-      }
-      if (gauntletChampion && scenes[0].id === gauntletChampion.id) {
-        leftStreak = gauntletWins;
-      } else if (gauntletChampion && scenes[1].id === gauntletChampion.id) {
-        rightStreak = gauntletWins;
-      }
+  function climbStatusBadge(scene) {
+    if (state.currentMode !== "gauntlet" && state.currentMode !== "champion") return null;
+    if (state.gauntletFalling && state.gauntletFallingScene?.id === scene.id) {
+      return "📍 Finding final placement...";
     }
-
+    if (state.gauntletClimber?.id === scene.id) {
+      return state.gauntletWins;
+    }
+    return null;
+  }
+  function bindSceneChoice(body, choice) {
+    body.addEventListener("click", () => handleSceneChoice(choice));
+  }
+  function renderPair(scenes, ranks) {
+    const comparisonArea = document.getElementById("sb-comparison-area");
+    if (!comparisonArea) return;
+    const statusBadges = scenes.map(climbStatusBadge);
     comparisonArea.innerHTML = `
-      <div class="pwr-vs-container">
-        ${createSceneCard(scenes[0], "left", ranks[0], leftStreak)}
-        <div class="pwr-vs-divider">
-          <span class="pwr-vs-text">VS</span>
+      <div class="sb-vs-container">
+        ${createSceneCard(scenes[0], "left", ranks[0], statusBadges[0])}
+        <div class="sb-vs-divider">
+          <span class="sb-vs-text">VS</span>
         </div>
-        ${createSceneCard(scenes[1], "right", ranks[1], rightStreak)}
+        ${createSceneCard(scenes[1], "right", ranks[1], statusBadges[1])}
       </div>
     `;
-
-    // Attach event listeners to scene body (for choosing)
-    comparisonArea.querySelectorAll(".pwr-scene-body").forEach((body) => {
-      body.addEventListener("click", handleChooseScene);
-    });
-
-    // Attach click-to-open (for thumbnail only) - use React Router navigation
-    comparisonArea.querySelectorAll(".pwr-scene-image-container").forEach((container) => {
+    const left = scenes[0];
+    const right = scenes[1];
+    const leftCard = comparisonArea.querySelector('.sb-scene-card[data-side="left"]');
+    const rightCard = comparisonArea.querySelector('.sb-scene-card[data-side="right"]');
+    const leftBody = leftCard?.querySelector(".sb-scene-body");
+    const rightBody = rightCard?.querySelector(".sb-scene-body");
+    if (left && right && leftCard && rightCard && leftBody && rightBody) {
+      bindSceneChoice(leftBody, {
+        winner: left,
+        loser: right,
+        left,
+        right,
+        winnerCard: leftCard,
+        loserCard: rightCard,
+        winnerRank: ranks[0],
+        loserRank: ranks[1]
+      });
+      bindSceneChoice(rightBody, {
+        winner: right,
+        loser: left,
+        left,
+        right,
+        winnerCard: rightCard,
+        loserCard: leftCard,
+        winnerRank: ranks[1],
+        loserRank: ranks[0]
+      });
+    }
+    comparisonArea.querySelectorAll(".sb-scene-image-container").forEach((container) => {
       const sceneUrl = container.dataset.sceneUrl;
-      
       container.addEventListener("click", () => {
         if (sceneUrl) {
           navigateToUrl(sceneUrl);
         }
       });
     });
-
-    // Attach hover preview to entire card
-    comparisonArea.querySelectorAll(".pwr-scene-card").forEach((card) => {
-      const video = card.querySelector(".pwr-hover-preview");
+    comparisonArea.querySelectorAll(".sb-scene-card").forEach((card) => {
+      const video = card.querySelector(".sb-hover-preview");
       if (!video) return;
-      
       card.addEventListener("mouseenter", () => {
         video.currentTime = 0;
-        video.muted = mutePreviews;
+        video.muted = state.mutePreviews;
         video.volume = 0.5;
-        video.play().catch(() => {});
+        video.play().catch(() => {
+        });
       });
-      
       card.addEventListener("mouseleave", () => {
         video.pause();
         video.currentTime = 0;
       });
     });
-    
-    // Update skip button state
-    const skipBtn = document.querySelector("#pwr-skip-btn");
+    const skipBtn = document.querySelector("#sb-skip-btn");
     if (skipBtn) {
-      const disableSkip = (currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion;
+      const disableSkip = (state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber !== null;
       skipBtn.disabled = disableSkip;
       skipBtn.style.opacity = disableSkip ? "0.5" : "1";
       skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
     }
   }
-
   async function loadNewPair(forcedLeftSceneId = null) {
-    disableChoice = false;
-    const comparisonArea = document.getElementById("pwr-comparison-area");
+    state.disableChoice = false;
+    const comparisonArea = document.getElementById("sb-comparison-area");
     if (!comparisonArea) return;
-
-    console.log(`[Stash Battle] 🎮 Loading new pair (mode: ${currentMode})${forcedLeftSceneId ? ` with forced scene ${forcedLeftSceneId}` : ''}...`);
+    console.log(
+      `[Stash Battle] 🎮 Loading new pair (mode: ${state.currentMode})${forcedLeftSceneId ? ` with forced scene ${forcedLeftSceneId}` : ""}...`
+    );
     const startTime = Date.now();
-
-    // Only show loading on first load (when empty or already showing loading)
-    if (!comparisonArea.querySelector('.pwr-vs-container')) {
-      const hasCache = memoryCache.allScenes !== null;
-      comparisonArea.innerHTML = `<div class="pwr-loading">${hasCache ? 'Loading scenes...' : 'Loading and caching scenes (first load may take a moment)...'}</div>`;
+    if (!comparisonArea.querySelector(".sb-vs-container")) {
+      const hasCache = state.memoryCache.allScenes !== null;
+      comparisonArea.innerHTML = `<div class="sb-loading">${hasCache ? "Loading scenes..." : "Loading and caching scenes (first load may take a moment)..."}</div>`;
     }
-
     try {
-      // Fetch forced scene data if a scene ID was provided
       let forcedLeftScene = null;
       if (forcedLeftSceneId) {
         forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
@@ -1888,407 +1351,571 @@
           console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
         }
       }
-
-      let scenes;
+      let scenes = [];
       let ranks = [null, null];
-      
-      if (currentMode === "gauntlet") {
+      if (state.currentMode === "gauntlet") {
         const gauntletResult = await fetchGauntletPair(forcedLeftScene);
-        
-        // Check for victory (champion reached #1)
         if (gauntletResult.isVictory) {
-          comparisonArea.innerHTML = createVictoryScreen(gauntletResult.scenes[0]);
-          
-          // Hide the status banner and skip button
-          const statusEl = document.getElementById("pwr-gauntlet-status");
-          const actionsEl = document.querySelector(".pwr-actions");
-          if (statusEl) statusEl.style.display = "none";
-          if (actionsEl) actionsEl.style.display = "none";
-          
-          // Attach new gauntlet button
-          const newGauntletBtn = comparisonArea.querySelector("#pwr-new-gauntlet");
-          if (newGauntletBtn) {
-            newGauntletBtn.addEventListener("click", () => {
-              resetGauntletState();
-              saveState();
-              // Show the actions again
-              if (actionsEl) actionsEl.style.display = "";
-              loadNewPair();
-            });
-          }
-          
+          showVictoryScreen(gauntletResult.scenes[0]);
           return;
         }
-        
-        // Check for placement (falling scene hit bottom)
         if (gauntletResult.isPlacement) {
-          showPlacementScreen(gauntletResult.scenes[0], gauntletResult.placementRank, gauntletResult.placementRating);
+          showPlacementScreen(
+            gauntletResult.scenes[0],
+            gauntletResult.placementRank,
+            gauntletResult.placementRating
+          );
           return;
         }
-        
         scenes = gauntletResult.scenes;
         ranks = gauntletResult.ranks;
-      } else if (currentMode === "champion") {
+      } else if (state.currentMode === "champion") {
         const championResult = await fetchChampionPair(forcedLeftScene);
-        
-        // Check for victory (champion beat everyone)
         if (championResult.isVictory) {
-          comparisonArea.innerHTML = createVictoryScreen(championResult.scenes[0]);
-          
-          // Hide the skip button
-          const actionsEl = document.querySelector(".pwr-actions");
-          if (actionsEl) actionsEl.style.display = "none";
-          
-          // Attach new run button
-          const newGauntletBtn = comparisonArea.querySelector("#pwr-new-gauntlet");
-          if (newGauntletBtn) {
-            newGauntletBtn.addEventListener("click", () => {
-              resetGauntletState();
-              saveState();
-              if (actionsEl) actionsEl.style.display = "";
-              loadNewPair();
-            });
-          }
-          
+          showVictoryScreen(championResult.scenes[0]);
           return;
         }
-        
         scenes = championResult.scenes;
         ranks = championResult.ranks;
       } else {
         const swissResult = await fetchSwissPair(forcedLeftScene);
-        
         scenes = swissResult.scenes;
         ranks = swissResult.ranks;
       }
-      
       if (scenes.length < 2) {
-        comparisonArea.innerHTML =
-          '<div class="pwr-error">Not enough scenes available for comparison.</div>';
+        comparisonArea.innerHTML = '<div class="sb-error">Not enough scenes available for comparison.</div>';
         return;
       }
-
-      currentPair.left = scenes[0];
-      currentPair.right = scenes[1];
-      currentRanks.left = ranks[0];
-      currentRanks.right = ranks[1];
-
+      state.currentPair.left = scenes[0];
+      state.currentPair.right = scenes[1];
+      state.currentRanks.left = ranks[0];
+      state.currentRanks.right = ranks[1];
       const loadTime = Date.now() - startTime;
-      console.log(`[Stash Battle] ✅ Pair loaded in ${loadTime}ms: Scene ${scenes[0].id} (rank #${ranks[0]}) vs Scene ${scenes[1].id} (rank #${ranks[1]})`);
-
+      console.log(
+        `[Stash Battle] ✅ Pair loaded in ${loadTime}ms: Scene ${scenes[0].id} (rank #${ranks[0]}) vs Scene ${scenes[1].id} (rank #${ranks[1]})`
+      );
       renderPair(scenes, ranks);
       saveState();
     } catch (error) {
       console.error("[Stash Battle] Error loading scenes:", error);
-      const isNoScenes = error.message.includes("No scenes") || error.message.includes("Not enough");
+      const message = error instanceof Error ? error.message : String(error);
+      const isNoScenes = message.includes("No scenes") || message.includes("Not enough");
       comparisonArea.innerHTML = `
-        <div class="pwr-error-screen">
-          <div class="pwr-error-icon">⚠️</div>
-          <p class="pwr-error-message">${error.message}</p>
-          <button id="pwr-error-retry" class="btn btn-primary">Retry</button>
+        <div class="sb-error-screen">
+          <div class="sb-error-icon">⚠️</div>
+          <p class="sb-error-message">${message}</p>
+          <button id="sb-error-retry" class="btn btn-primary">Retry</button>
         </div>
       `;
-      
-      // Attach retry handler
-      const retryBtn = document.getElementById("pwr-error-retry");
+      const retryBtn = document.getElementById("sb-error-retry");
       if (retryBtn) {
         retryBtn.addEventListener("click", async () => {
           retryBtn.disabled = true;
           retryBtn.textContent = "Loading...";
-          
           if (isNoScenes) {
-            // "No scenes" error: clear everything and start fresh
             await clearFilteredCache();
-            shuffledFilteredScenes = [];
-            shuffleIndex = 0;
-            shuffleFilterKey = null;
-            removedSceneIds.clear();
+            state.shuffledFilteredScenes = [];
+            state.shuffleIndex = 0;
+            state.shuffleFilterKey = null;
+            state.removedSceneIds.clear();
           }
-          // Network/other errors: just retry without clearing session state
-          
           await loadNewPair();
         });
       }
     }
   }
-
   function restoreCurrentPair() {
-    disableChoice = false;
+    state.disableChoice = false;
     console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
-
-    // Pre-warm the cache in background for when user makes a choice
-    if (!memoryCache.allScenes) {
+    if (!state.memoryCache.allScenes) {
       console.log("[Stash Battle] 🔥 Pre-warming cache in background...");
-      getAllScenesCached(); // Don't await - runs in background
+      getAllScenesCached();
     }
-
     renderPair(
-      [currentPair.left, currentPair.right],
-      [currentRanks.left, currentRanks.right]
+      [state.currentPair.left, state.currentPair.right],
+      [state.currentRanks.left, state.currentRanks.right]
     );
   }
-
-  function handleChooseScene(event) {
-    if(disableChoice) return;
-    disableChoice = true;
-    const body = event.currentTarget;
-    const winnerId = body.dataset.winner;
-    const winnerCard = body.closest(".pwr-scene-card");
-    const loserId = winnerId === currentPair.left.id ? currentPair.right.id : currentPair.left.id;
-    
-    const winnerScene = winnerId === currentPair.left.id ? currentPair.left : currentPair.right;
-    const loserScene = loserId === currentPair.left.id ? currentPair.left : currentPair.right;
+  function activeClimberId() {
+    if (state.gauntletFalling && state.gauntletFallingScene) {
+      return state.gauntletFallingScene.id;
+    }
+    return state.gauntletClimber?.id ?? null;
+  }
+  function battleRoleFor(sceneId, mode) {
+    if (mode === "swiss") return "combatant";
+    const climberId = activeClimberId();
+    return climberId !== null && sceneId === climberId ? "climber" : "benchmark";
+  }
+  function applyModePolicy(winner, loser, mode, raw) {
+    if (mode === "swiss") return raw;
+    let winnerDelta = 0;
+    let loserDelta = 0;
+    if (battleRoleFor(winner.id, mode) === "climber") {
+      winnerDelta = raw.winner;
+    }
+    const loserRating = loser.rating100 || 1;
+    if (battleRoleFor(loser.id, mode) === "benchmark" && loserRating === 100) {
+      loserDelta = -1;
+    }
+    return { winner: winnerDelta, loser: loserDelta };
+  }
+  function resolveComparison(winner, loser) {
+    const mode = state.currentMode;
+    const winnerRating = winner.rating100 || 1;
+    const loserRating = loser.rating100 || 1;
+    const raw = calculateRatingChanges({
+      winner: { rating: winnerRating, playCount: winner.play_count ?? 0 },
+      loser: { rating: loserRating, playCount: loser.play_count ?? 0 }
+    });
+    const deltas = applyModePolicy(winner, loser, mode, raw);
+    if (deltas.winner !== 0) updateSceneRating(winner.id, winnerRating + deltas.winner);
+    if (deltas.loser !== 0) updateSceneRating(loser.id, loserRating + deltas.loser);
+    return deltas;
+  }
+  async function handleGauntletClimbChoice(choice) {
+    const {
+      winner: winnerScene,
+      loser: loserScene,
+      left,
+      winnerCard,
+      loserCard
+    } = choice;
+    const winnerId = winnerScene.id;
+    const loserId = loserScene.id;
+    const isFirstBattle = !state.gauntletClimber;
+    if (isFirstBattle && left.rating100 != null) {
+      console.log(
+        `[Stash Battle] 📊 Gauntlet: clearing rating ${left.rating100} for scene ${left.id} on first choice`
+      );
+      await updateSceneRating(left.id, null);
+      left.rating100 = null;
+    }
+    if (isFirstBattle) {
+      state.gauntletClimber = left;
+    }
+    const climber = state.gauntletClimber;
+    const winnerRating = winnerScene.rating100 || 1;
+    const loserDisplayRating = loserScene.rating100 || 0;
+    const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
+    const newWinnerRating = winnerRating + winnerDelta;
+    const newLoserRating = loserDisplayRating + loserDelta;
+    if (winnerId === climber.id) {
+      state.gauntletDefeated.push(loserId);
+      state.gauntletWins++;
+      climber.rating100 = newWinnerRating;
+      console.log(
+        `[Stash Battle] 📊 Gauntlet: climber ${winnerId} won (streak=${state.gauntletWins}), rating → ${newWinnerRating}`
+      );
+    } else if (isFirstBattle) {
+      const finalRank = state.totalScenesCount;
+      const finalRating = Math.max(1, (winnerScene.rating100 || 1) - 1);
+      console.log(
+        `[Stash Battle] 📊 Gauntlet: first battle, challenger ${loserId} lost to floor → rank #${finalRank}, rating ${finalRating}`
+      );
+      updateSceneRating(loserScene.id, finalRating);
+      winnerCard.classList.add("sb-winner");
+      if (loserCard) loserCard.classList.add("sb-loser");
+      setTimeout(() => {
+        showPlacementScreen(loserScene, finalRank, finalRating);
+      }, 800);
+      return;
+    } else {
+      console.log(
+        `[Stash Battle] 📊 Gauntlet: climber ${climber.id}(rating=${climber.rating100}) LOST to ${winnerId}(rating=${newWinnerRating}), entering falling mode`
+      );
+      state.gauntletFalling = true;
+      state.gauntletFallingScene = loserScene;
+      state.gauntletDefeated = [winnerId];
+    }
+    saveState();
+    winnerCard.classList.add("sb-winner");
+    if (loserCard) loserCard.classList.add("sb-loser");
+    showRatingAnimation(winnerCard, winnerRating, newWinnerRating, true);
+    if (loserCard) {
+      const loserDisplayNew = loserDelta !== 0 ? newLoserRating : loserDisplayRating;
+      showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, false);
+    }
+    setTimeout(() => {
+      loadNewPair();
+    }, 1500);
+  }
+  function handleSceneChoice(choice) {
+    if (state.disableChoice) return;
+    state.disableChoice = true;
+    const {
+      winner: winnerScene,
+      loser: loserScene,
+      left,
+      right,
+      winnerCard,
+      loserCard,
+      loserRank
+    } = choice;
+    const winnerId = winnerScene.id;
+    const loserId = loserScene.id;
     const winnerRating = winnerScene.rating100 || 1;
     const loserRating = loserScene.rating100 || 1;
     const loserDisplayRating = loserScene.rating100 || 0;
-    const loserSide = winnerId === currentPair.left.id ? "right" : "left";
-    const loserCard = document.querySelector(`.pwr-scene-card[data-side="${loserSide}"]`);
-    
-    // Get the loser's rank for #1 dethrone logic
-    const loserRank = loserId === currentPair.left.id ? currentRanks.left : currentRanks.right;
-
-    // Handle gauntlet mode (champion tracking)
-    if (currentMode === "gauntlet") {
-      
-      // Check if we're in falling mode (finding floor after a loss)
-      if (gauntletFalling && gauntletFallingScene) {
-        console.log(`[Stash Battle] 📊 Falling mode: fallingScene=${gauntletFallingScene.id} winnerId=${winnerId} loserId=${loserId} loserRating=${loserRating}`);
-        if (winnerId === gauntletFallingScene.id) {
-          // Falling scene won - found their floor!
-          // Set their rating to just above the scene they beat
+    if (state.currentMode === "gauntlet") {
+      if (state.gauntletFalling && state.gauntletFallingScene) {
+        const fallingScene = state.gauntletFallingScene;
+        console.log(
+          `[Stash Battle] 📊 Falling mode: fallingScene=${fallingScene.id} winnerId=${winnerId} loserId=${loserId} loserRating=${loserRating}`
+        );
+        if (winnerId === fallingScene.id) {
           const finalRating = Math.min(100, loserRating + 1);
-          console.log(`[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`);
-          updateSceneRating(gauntletFallingScene.id, finalRating);
-          
-          // Final rank is one above the opponent (we beat them, so we're above them)
-          const opponentRank = loserId === currentPair.left.id ? currentRanks.left : currentRanks.right;
-          const finalRank = Math.max(1, (opponentRank || 1) - 1);
-          
-          // Visual feedback
-          winnerCard.classList.add("pwr-winner");
-          if (loserCard) loserCard.classList.add("pwr-loser");
-          
-          // Show placement screen after brief delay
+          console.log(
+            `[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`
+          );
+          updateSceneRating(fallingScene.id, finalRating);
+          const finalRank = Math.max(1, (loserRank ?? 1) - 1);
+          winnerCard.classList.add("sb-winner");
+          if (loserCard) loserCard.classList.add("sb-loser");
           setTimeout(() => {
-            showPlacementScreen(gauntletFallingScene, finalRank, finalRating);
-            saveState();
+            showPlacementScreen(fallingScene, finalRank, finalRating);
           }, 800);
           return;
         } else {
-          // Falling scene lost again - keep falling
-          gauntletDefeated.push(winnerId);
+          state.gauntletDefeated.push(winnerId);
           saveState();
-          
-          // Visual feedback
-          winnerCard.classList.add("pwr-winner");
-          if (loserCard) loserCard.classList.add("pwr-loser");
-          
+          winnerCard.classList.add("sb-winner");
+          if (loserCard) loserCard.classList.add("sb-loser");
           setTimeout(() => {
             loadNewPair();
           }, 800);
           return;
         }
       }
-      
-      // First battle: set champion so handleComparison recognizes the active scene
-      const isFirstBattle = !gauntletChampion;
+      void handleGauntletClimbChoice(choice);
+      return;
+    }
+    if (state.currentMode === "champion") {
+      const isFirstBattle = !state.gauntletClimber;
       if (isFirstBattle) {
-        gauntletChampion = currentPair.left;
+        state.gauntletClimber = left;
       }
-
-      // Normal climbing - calculate rating changes (pass loserRank for #1 dethrone)
-      const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
-        winnerId, loserId, winnerRating, loserRating,
-        winnerScene.play_count, loserScene.play_count, loserRank
-      );
-      
-      if (winnerId === gauntletChampion.id) {
-        gauntletDefeated.push(loserId);
-        gauntletWins++;
-        gauntletChampion.rating100 = newWinnerRating;
-        console.log(`[Stash Battle] 📊 Gauntlet: champion ${winnerId} won (streak=${gauntletWins}), rating → ${newWinnerRating}`);
-      } else if (isFirstBattle) {
-        gauntletChampion = winnerScene;
-        gauntletChampion.rating100 = newWinnerRating;
-        gauntletDefeated = [loserId];
-        gauntletWins = 1;
-        console.log(`[Stash Battle] 📊 Gauntlet: first battle, ${winnerId} becomes champion with rating ${newWinnerRating}`);
+      const climber = state.gauntletClimber;
+      const { winner: winnerDelta2, loser: loserDelta2 } = resolveComparison(winnerScene, loserScene);
+      const newWinnerRating2 = winnerRating + winnerDelta2;
+      const newLoserRating2 = loserDisplayRating + loserDelta2;
+      if (winnerId === climber.id) {
+        state.gauntletDefeated.push(loserId);
+        state.gauntletWins++;
+        climber.rating100 = newWinnerRating2;
       } else {
-        console.log(`[Stash Battle] 📊 Gauntlet: champion ${gauntletChampion.id}(rating=${gauntletChampion.rating100}) LOST to ${winnerId}(rating=${newWinnerRating}), entering falling mode`);
-        gauntletFalling = true;
-        gauntletFallingScene = loserScene;
-        gauntletDefeated = [winnerId];
-        
-        gauntletChampion = winnerScene;
-        gauntletChampion.rating100 = newWinnerRating;
-        gauntletWins = 1;
+        state.gauntletClimber = winnerScene;
+        winnerScene.rating100 = newWinnerRating2;
+        state.gauntletDefeated = [loserId];
+        state.gauntletWins = 1;
       }
-      
       saveState();
-      
-      // Visual feedback with animations
-      winnerCard.classList.add("pwr-winner");
-      if (loserCard) loserCard.classList.add("pwr-loser");
-      
-      showRatingAnimation(winnerCard, winnerRating, newWinnerRating, winnerChange, true);
+      winnerCard.classList.add("sb-winner");
+      if (loserCard) loserCard.classList.add("sb-loser");
+      showRatingAnimation(winnerCard, winnerRating, newWinnerRating2, true);
       if (loserCard) {
-        const loserDisplayNew = loserChange !== 0 ? newLoserRating : loserDisplayRating;
-        showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, loserChange, false);
+        const loserDisplayNew = loserDelta2 !== 0 ? newLoserRating2 : loserDisplayRating;
+        showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, false);
       }
-      
-      // Load new pair after animation
       setTimeout(() => {
         loadNewPair();
       }, 1500);
       return;
     }
-
-    // Handle champion mode (like gauntlet but winner always takes over)
-    if (currentMode === "champion") {
-      
-      // First battle: set champion so handleComparison recognizes the active scene
-      const isFirstBattle = !gauntletChampion;
-      if (isFirstBattle) {
-        gauntletChampion = currentPair.left;
-      }
-
-      // Calculate rating changes (pass loserRank for #1 dethrone)
-      const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
-        winnerId, loserId, winnerRating, loserRating,
-        winnerScene.play_count, loserScene.play_count, loserRank
-      );
-      
-      if (winnerId === gauntletChampion.id) {
-        // Champion won - continue climbing
-        gauntletDefeated.push(loserId);
-        gauntletWins++;
-        gauntletChampion.rating100 = newWinnerRating;
-      } else {
-        // Champion lost or first pick - winner becomes new champion
-        gauntletChampion = winnerScene;
-        gauntletChampion.rating100 = newWinnerRating;
-        gauntletDefeated = [loserId];
-        gauntletWins = 1;
-      }
-      
-      saveState();
-      
-      // Visual feedback with animations
-      winnerCard.classList.add("pwr-winner");
-      if (loserCard) loserCard.classList.add("pwr-loser");
-      
-      showRatingAnimation(winnerCard, winnerRating, newWinnerRating, winnerChange, true);
-      if (loserCard) {
-        const loserDisplayNew = loserChange !== 0 ? newLoserRating : loserDisplayRating;
-        showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, loserChange, false);
-      }
-      
-      // Load new pair after animation
-      setTimeout(() => {
-        loadNewPair();
-      }, 1500);
-      return;
-    }
-
-    // For Swiss: Calculate and show rating changes
-    const { newWinnerRating, newLoserRating, winnerChange, loserChange } = handleComparison(
-      winnerId, loserId, winnerRating, loserRating,
-      winnerScene.play_count, loserScene.play_count
-    );
-    
-    // Remove both scenes from filtered pool (they've been processed)
-    // This prevents the loser from reappearing if it no longer matches the filter
-    removeFromFilteredPool(currentPair.left.id);
-    removeFromFilteredPool(currentPair.right.id);
-
+    const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
+    const newWinnerRating = winnerRating + winnerDelta;
+    const newLoserRating = loserDisplayRating + loserDelta;
+    removeFromFilteredPool(left.id);
+    removeFromFilteredPool(right.id);
     saveState();
-
-    // Visual feedback
-    winnerCard.classList.add("pwr-winner");
-    if (loserCard) loserCard.classList.add("pwr-loser");
-
-    // Show rating change animation
-    showRatingAnimation(winnerCard, winnerRating, newWinnerRating, winnerChange, true);
+    winnerCard.classList.add("sb-winner");
+    if (loserCard) loserCard.classList.add("sb-loser");
+    showRatingAnimation(winnerCard, winnerRating, newWinnerRating, true);
     if (loserCard) {
-      const loserDisplayNew = loserChange !== 0 ? newLoserRating : loserDisplayRating;
-      showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, loserChange, false);
+      const loserDisplayNew = loserDelta !== 0 ? newLoserRating : loserDisplayRating;
+      showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, false);
     }
-
-    // Load new pair after animation
     setTimeout(() => {
       loadNewPair();
     }, 1500);
   }
-
-  function showRatingAnimation(card, oldRating, newRating, change, isWinner) {
-    // Create overlay
+  function showRatingAnimation(card, oldRating, newRating, isWinner) {
+    const change = newRating - oldRating;
     const overlay = document.createElement("div");
-    overlay.className = `pwr-rating-overlay ${isWinner ? 'pwr-rating-winner' : 'pwr-rating-loser'}`;
-    
+    overlay.className = `sb-rating-overlay ${isWinner ? "sb-rating-winner" : "sb-rating-loser"}`;
     const ratingDisplay = document.createElement("div");
-    ratingDisplay.className = "pwr-rating-display";
-    ratingDisplay.textContent = oldRating;
-    
+    ratingDisplay.className = "sb-rating-display";
+    ratingDisplay.textContent = String(oldRating);
     const changeDisplay = document.createElement("div");
-    changeDisplay.className = "pwr-rating-change";
+    changeDisplay.className = "sb-rating-change";
     changeDisplay.textContent = isWinner ? `+${change}` : `${change}`;
-    
     overlay.appendChild(ratingDisplay);
     overlay.appendChild(changeDisplay);
     card.appendChild(overlay);
-
-    // Animate the rating counting
     let currentDisplay = oldRating;
     const step = isWinner ? 1 : -1;
     const totalSteps = Math.abs(change);
     let stepCount = 0;
-    
     const interval = setInterval(() => {
       stepCount++;
       currentDisplay += step;
-      ratingDisplay.textContent = currentDisplay;
-      
+      ratingDisplay.textContent = String(currentDisplay);
       if (stepCount >= totalSteps) {
         clearInterval(interval);
-        ratingDisplay.textContent = newRating;
+        ratingDisplay.textContent = String(newRating);
       }
     }, 50);
-
-    // Remove overlay after animation
     setTimeout(() => {
       overlay.remove();
     }, 1400);
   }
 
-  // ============================================
-  // MODAL & NAVIGATION
-  // ============================================
-
-  function shouldShowButton() {
-    const path = window.location.pathname;
-    // Show on /scenes list and individual scene pages (/scenes/12345)
-    return path === '/scenes' || path === '/scenes/' || path.startsWith('/scenes/');
+  // src/ui/modal.ts
+  var modalKeyHandler = null;
+  function openModal() {
+    console.log("[Stash Battle] 🎯 Opening modal...");
+    document.querySelectorAll("video, audio").forEach((v) => v.pause());
+    const hasState = loadState();
+    console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? "found" : "none"}`);
+    const currentFilterParams = window.location.search;
+    const filtersChanged = hasState && state.savedFilterParams !== currentFilterParams;
+    if (filtersChanged) {
+      console.log("[Stash Battle] Filter params changed, resetting gauntlet state and filtered cache");
+      state.currentPair = { left: null, right: null };
+      state.currentRanks = { left: null, right: null };
+      resetGauntletState();
+      state.savedFilterParams = currentFilterParams;
+      state.memoryCache.filteredScenes = null;
+      state.memoryCache.filterKey = null;
+      state.shuffledFilteredScenes = [];
+      state.shuffleIndex = 0;
+      state.shuffleFilterKey = null;
+    }
+    const scenePageId = getSceneIdFromUrl();
+    const sceneAlreadyInPair = scenePageId && state.currentPair.left && state.currentPair.right && (String(state.currentPair.left.id) === scenePageId || String(state.currentPair.right.id) === scenePageId);
+    const forceSceneBattle = scenePageId && !sceneAlreadyInPair;
+    if (forceSceneBattle) {
+      console.log(`[Stash Battle] 🎯 Opened from scene page ${scenePageId}, starting new battle with this scene`);
+      resetGauntletState();
+      state.currentPair = { left: null, right: null };
+      state.currentRanks = { left: null, right: null };
+    }
+    const existingModal = document.getElementById("sb-modal");
+    if (existingModal && existingModal.classList.contains("sb-modal-hidden")) {
+      console.log("[Stash Battle] ♻️ Reusing existing modal");
+      existingModal.classList.remove("sb-modal-hidden", "sb-modal-closing");
+      if (modalKeyHandler) {
+        document.removeEventListener("keydown", modalKeyHandler, true);
+      }
+      if (modalKeyHandler) document.addEventListener("keydown", modalKeyHandler, true);
+      const modalContent2 = existingModal.querySelector(".sb-modal-content");
+      if (modalContent2) modalContent2.focus();
+      if (forceSceneBattle) {
+        loadNewPair(scenePageId);
+      } else if (filtersChanged || !state.currentPair.left || !state.currentPair.right) {
+        loadNewPair();
+      }
+      return;
+    }
+    if (existingModal) existingModal.remove();
+    if (!state.savedFilterParams) {
+      state.savedFilterParams = currentFilterParams;
+    }
+    const modal = document.createElement("div");
+    modal.id = "sb-modal";
+    modal.innerHTML = `
+      <div class="sb-modal-backdrop"></div>
+      <div class="sb-modal-content">
+        <button class="sb-modal-close">✕</button>
+        ${createMainUI()}
+      </div>
+    `;
+    document.body.appendChild(modal);
+    const modalContent = modal.querySelector(".sb-modal-content");
+    if (modalContent) {
+      modalContent.setAttribute("tabindex", "-1");
+      modalContent.style.outline = "none";
+      modalContent.focus();
+    }
+    modal.querySelectorAll(".sb-mode-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const newMode = btn.dataset.mode;
+        if (newMode !== state.currentMode) {
+          state.currentMode = newMode;
+          resetGauntletState();
+          state.shuffleIndex = 0;
+          modal.querySelectorAll(".sb-mode-btn").forEach((b) => {
+            b.classList.toggle("active", b.dataset.mode === state.currentMode);
+          });
+          const actionsEl = document.querySelector(".sb-actions");
+          if (actionsEl) actionsEl.style.display = "";
+          loadNewPair(getSceneIdFromUrl());
+          saveState();
+        }
+      });
+    });
+    const oppCheckbox = modal.querySelector("#sb-filter-opponents-checkbox");
+    if (oppCheckbox) {
+      oppCheckbox.addEventListener("change", (e) => {
+        state.filterOpponents = e.target.checked;
+        try {
+          localStorage.setItem(FILTER_OPPONENTS_KEY, state.filterOpponents ? "1" : "0");
+        } catch {
+        }
+        if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
+          resetGauntletState();
+        }
+        saveState();
+        loadNewPair();
+      });
+    }
+    const muteCheckbox = modal.querySelector("#sb-mute-previews-checkbox");
+    if (muteCheckbox) {
+      muteCheckbox.addEventListener("change", (e) => {
+        state.mutePreviews = e.target.checked;
+        try {
+          localStorage.setItem(MUTE_PREVIEWS_KEY, state.mutePreviews ? "1" : "0");
+        } catch {
+        }
+        document.querySelectorAll(".sb-hover-preview").forEach((v) => {
+          v.muted = state.mutePreviews;
+        });
+      });
+    }
+    const skipBtn = modal.querySelector("#sb-skip-btn");
+    if (skipBtn) {
+      skipBtn.addEventListener("click", () => {
+        if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber) {
+          return;
+        }
+        if (state.disableChoice) return;
+        state.disableChoice = true;
+        if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
+          resetGauntletState();
+          saveState();
+        }
+        loadNewPair();
+      });
+    }
+    const refreshCacheBtn = modal.querySelector("#sb-refresh-cache-btn");
+    if (refreshCacheBtn) {
+      refreshCacheBtn.addEventListener("click", async () => {
+        if (state.disableChoice) return;
+        refreshCacheBtn.disabled = true;
+        refreshCacheBtn.textContent = "🔄 Refreshing...";
+        try {
+          await clearSceneCache();
+          state.shuffledFilteredScenes = [];
+          state.shuffleIndex = 0;
+          state.shuffleFilterKey = null;
+          state.removedSceneIds.clear();
+          resetGauntletState();
+          saveState();
+          const actionsEl = document.querySelector(".sb-actions");
+          if (actionsEl) actionsEl.style.display = "";
+          await loadNewPair();
+        } catch (e) {
+          console.error("[Stash Battle] Refresh failed:", e);
+        } finally {
+          refreshCacheBtn.disabled = false;
+          refreshCacheBtn.textContent = "🔄 Refresh Cache";
+        }
+      });
+    }
+    if (forceSceneBattle) {
+      console.log(`[Stash Battle] 🎯 Starting battle with scene ${scenePageId} from scene page`);
+      loadNewPair(scenePageId);
+    } else if (hasState && state.currentPair.left && state.currentPair.right && !filtersChanged) {
+      console.log(
+        `[Stash Battle] 📂 Restoring saved pair from localStorage (Scene ${state.currentPair.left.id} vs Scene ${state.currentPair.right.id})`
+      );
+      restoreCurrentPair();
+    } else {
+      console.log("[Stash Battle] 🆕 No saved pair or filters changed, loading new pair...");
+      loadNewPair();
+    }
+    modal.querySelector(".sb-modal-backdrop")?.addEventListener("click", closeModal);
+    modal.querySelector(".sb-modal-close")?.addEventListener("click", closeModal);
+    if (modalKeyHandler) {
+      document.removeEventListener("keydown", modalKeyHandler, true);
+    }
+    modalKeyHandler = function(e) {
+      const activeModal = document.getElementById("sb-modal");
+      if (!activeModal) {
+        if (modalKeyHandler) document.removeEventListener("keydown", modalKeyHandler, true);
+        modalKeyHandler = null;
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeModal();
+        return;
+      }
+      if (e.key === "ArrowLeft" && state.currentPair.left) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const leftBody = activeModal.querySelector('.sb-scene-card[data-side="left"] .sb-scene-body');
+        if (leftBody) leftBody.click();
+      }
+      if (e.key === "ArrowRight" && state.currentPair.right) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const rightBody = activeModal.querySelector('.sb-scene-card[data-side="right"] .sb-scene-body');
+        if (rightBody) rightBody.click();
+      }
+      if (e.key === " " || e.code === "Space") {
+        const tag = document.activeElement?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") {
+          return;
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber) {
+          return;
+        }
+        if (state.disableChoice) return;
+        state.disableChoice = true;
+        if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
+          resetGauntletState();
+          saveState();
+        }
+        loadNewPair();
+      }
+    };
+    document.addEventListener("keydown", modalKeyHandler, true);
+  }
+  function closeModal() {
+    const modal = document.getElementById("sb-modal");
+    if (!modal || modal.classList.contains("sb-modal-hidden")) return;
+    modal.classList.add("sb-modal-closing");
+    setTimeout(() => {
+      modal.classList.add("sb-modal-hidden");
+      modal.classList.remove("sb-modal-closing");
+    }, 200);
+    if (modalKeyHandler) {
+      document.removeEventListener("keydown", modalKeyHandler, true);
+    }
   }
 
-  function addFloatingButton() {
-    const buttonId = "plugin_pwr";
-    
-    // Remove button if we're not on the scenes page
-    if (!shouldShowButton()) {
-        const existing = document.getElementById(buttonId);
-        if (existing) {
-            existing.closest(".nav-link")?.remove();
-        }
-        return;
+  // src/ui/navButton.ts
+  function shouldShowNavButton() {
+    const path = window.location.pathname;
+    return path === "/" || path === "/scenes" || path === "/scenes/" || path.startsWith("/scenes/");
+  }
+  function injectNavButton() {
+    const buttonId = "plugin_sb";
+    if (!shouldShowNavButton()) {
+      const existing = document.getElementById(buttonId);
+      if (existing) {
+        existing.closest(".nav-link")?.remove();
+      }
+      return;
     }
-    
-    // Prevent duplicates
     if (document.getElementById(buttonId)) return;
-
     const navItem = document.createElement("div");
     navItem.className = "col-4 col-sm-3 col-md-2 col-lg-auto nav-link";
     navItem.id = buttonId;
-
     navItem.innerHTML = `
         <a href="#" class="minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center btn btn-primary">
             <svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">
@@ -2309,356 +1936,31 @@
             <span>Battle</span>
         </a>
     `;
-
-    // Prevent default link behavior and attach click handler
     const link = navItem.querySelector("a");
-    link.addEventListener("click", (e) => {
+    if (link) {
+      link.addEventListener("click", (e) => {
         e.preventDefault();
-        openRankingModal();
-    });
-
-    // Append to navbar
+        openModal();
+      });
+    }
     const navTarget = document.querySelector(".navbar-nav");
     if (navTarget) {
-        navTarget.appendChild(navItem);
+      navTarget.appendChild(navItem);
     }
   }
 
-
-  function openRankingModal() {
-    console.log("[Stash Battle] 🎯 Opening modal...");
-    
-    // Pause all media playing in stash when battle modal is opened to prevent audio overlap with hover previews
-    document.querySelectorAll('video, audio').forEach(v => v.pause());
-    
-    // Try to load saved state
-    const hasState = loadState();
-    console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? 'found' : 'none'}`);
-    
-    // Check if URL filter params have changed - if so, reset state
-    const currentFilterParams = window.location.search;
-    const filtersChanged = hasState && savedFilterParams !== currentFilterParams;
-    
-    if (filtersChanged) {
-      console.log("[Stash Battle] Filter params changed, resetting gauntlet state and filtered cache");
-      currentPair = { left: null, right: null };
-      currentRanks = { left: null, right: null };
-      resetGauntletState();
-      savedFilterParams = currentFilterParams;
-      
-      // Clear filtered scenes cache (but keep all scenes cache)
-      memoryCache.filteredScenes = null;
-      memoryCache.filterKey = null;
-      
-      // Reset shuffle for new filter
-      shuffledFilteredScenes = [];
-      shuffleIndex = 0;
-      shuffleFilterKey = null;
-    }
-    
-    // Detect if opened from an individual scene page (e.g. /scenes/123)
-    const scenePageId = getSceneIdFromUrl();
-    const sceneAlreadyInPair = scenePageId && currentPair.left && currentPair.right &&
-      (String(currentPair.left.id) === scenePageId || String(currentPair.right.id) === scenePageId);
-    const forceSceneBattle = scenePageId && !sceneAlreadyInPair;
-    
-    if (forceSceneBattle) {
-      console.log(`[Stash Battle] 🎯 Opened from scene page ${scenePageId}, starting new battle with this scene`);
-      resetGauntletState();
-      currentPair = { left: null, right: null };
-      currentRanks = { left: null, right: null };
-    }
-    
-    // Check for existing hidden modal - reuse it
-    const existingModal = document.getElementById("pwr-modal");
-    if (existingModal && existingModal.classList.contains("pwr-modal-hidden")) {
-      console.log("[Stash Battle] ♻️ Reusing existing modal");
-      existingModal.classList.remove("pwr-modal-hidden", "pwr-modal-closing");
-      
-      // Re-register keyboard handler
-      if (modalKeyHandler) {
-        document.removeEventListener("keydown", modalKeyHandler, true);
-      }
-      document.addEventListener("keydown", modalKeyHandler, true);
-      
-      // Focus modal content
-      const modalContent = existingModal.querySelector(".pwr-modal-content");
-      if (modalContent) modalContent.focus();
-      
-      // If filters changed, no pair, or forced scene, load new content
-      if (forceSceneBattle) {
-        loadNewPair(scenePageId);
-      } else if (filtersChanged || !currentPair.left || !currentPair.right) {
-        loadNewPair();
-      }
-      // Otherwise the existing content is still valid
-      
-      return;
-    }
-    
-    // Remove any non-hidden existing modal (shouldn't happen, but safety)
-    if (existingModal) existingModal.remove();
-    
-    // Initialize filter params tracking
-    if (!savedFilterParams) {
-      savedFilterParams = currentFilterParams;
-    }
-
-    const modal = document.createElement("div");
-    modal.id = "pwr-modal";
-    modal.innerHTML = `
-      <div class="pwr-modal-backdrop"></div>
-      <div class="pwr-modal-content">
-        <button class="pwr-modal-close">✕</button>
-        ${createMainUI()}
-      </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    // Focus the modal content so keyboard shortcuts work immediately
-    const modalContent = modal.querySelector(".pwr-modal-content");
-    if (modalContent) {
-      modalContent.setAttribute("tabindex", "-1");
-      modalContent.style.outline = "none";
-      modalContent.focus();
-    }
-
-    // Mode toggle buttons
-    modal.querySelectorAll(".pwr-mode-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const newMode = btn.dataset.mode;
-        if (newMode !== currentMode) {
-          currentMode = newMode;
-          
-          resetGauntletState();
-          
-          // Reset shuffle to start fresh with new mode
-          shuffleIndex = 0;
-          
-          // Update button states
-          modal.querySelectorAll(".pwr-mode-btn").forEach((b) => {
-            b.classList.toggle("active", b.dataset.mode === currentMode);
-          });
-          
-          // Re-show actions (skip button) in case it was hidden
-          const actionsEl = document.querySelector(".pwr-actions");
-          if (actionsEl) actionsEl.style.display = "";
-          
-          // Load new pair in new mode, preserving scene page context
-          loadNewPair(getSceneIdFromUrl());
-          saveState();
-        }
-      });
-    });
-
-    // Opponents filter checkbox
-    const oppCheckbox = modal.querySelector("#pwr-filter-opponents-checkbox");
-    if (oppCheckbox) {
-      oppCheckbox.addEventListener("change", (e) => {
-        filterOpponents = e.target.checked;
-        try {
-          localStorage.setItem("pwr_filterOpponents", filterOpponents ? "1" : "0");
-        } catch {}
-        // switching the toggle counts as changing filters: reset gauntlet/champion run
-        if (currentMode === "gauntlet" || currentMode === "champion") {
-          resetGauntletState();
-        }
-        saveState();
-        loadNewPair();
-      });
-    }
-
-    // Mute hover previews checkbox
-    const muteCheckbox = modal.querySelector("#pwr-mute-previews-checkbox");
-    if (muteCheckbox) {
-      muteCheckbox.addEventListener("change", (e) => {
-        mutePreviews = e.target.checked;
-        try {
-          localStorage.setItem("pwr_mutePreviews", mutePreviews ? "1" : "0");
-        } catch {}
-        // apply immediately to any preview videos currently rendered
-        document.querySelectorAll(".pwr-hover-preview").forEach((v) => {
-          v.muted = mutePreviews;
-        });
-      });
-    }
-
-    // Skip button
-    const skipBtn = modal.querySelector("#pwr-skip-btn");
-    if (skipBtn) {
-      skipBtn.addEventListener("click", () => {
-        // In gauntlet/champion mode with active run, skip is disabled
-        if ((currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion) {
-          return;
-        }
-        if(disableChoice) return
-        disableChoice = true;
-        // Reset state on skip
-        if (currentMode === "gauntlet" || currentMode === "champion") {
-          resetGauntletState();
-          saveState();
-        }
-        loadNewPair();
-      });
-    }
-
-    // Refresh cache button
-    const refreshCacheBtn = modal.querySelector("#pwr-refresh-cache-btn");
-    if (refreshCacheBtn) {
-      refreshCacheBtn.addEventListener("click", async () => {
-        if (disableChoice) return;
-        
-        refreshCacheBtn.disabled = true;
-        refreshCacheBtn.textContent = "🔄 Refreshing...";
-        
-        try {
-          await clearSceneCache();
-          
-          // Reset shuffle state since scene list is being refreshed
-          shuffledFilteredScenes = [];
-          shuffleIndex = 0;
-          shuffleFilterKey = null;
-          removedSceneIds.clear(); // Reset removed tracking for fresh data
-          
-          // Reset gauntlet state since rankings may have changed
-          resetGauntletState();
-          saveState();
-          
-          // Re-show actions in case hidden
-          const actionsEl = document.querySelector(".pwr-actions");
-          if (actionsEl) actionsEl.style.display = "";
-          
-          await loadNewPair();
-        } catch (e) {
-          console.error("[Stash Battle] Refresh failed:", e);
-        } finally {
-          refreshCacheBtn.disabled = false;
-          refreshCacheBtn.textContent = "🔄 Refresh Cache";
-        }
-      });
-    }
-
-    // Load initial comparison or restore saved pair
-    if (forceSceneBattle) {
-      console.log(`[Stash Battle] 🎯 Starting battle with scene ${scenePageId} from scene page`);
-      loadNewPair(scenePageId);
-    } else if (hasState && currentPair.left && currentPair.right && !filtersChanged) {
-      console.log(`[Stash Battle] 📂 Restoring saved pair from localStorage (Scene ${currentPair.left.id} vs Scene ${currentPair.right.id})`);
-      restoreCurrentPair();
-    } else {
-      console.log(`[Stash Battle] 🆕 No saved pair or filters changed, loading new pair...`);
-      loadNewPair();
-    }
-
-    // Close handlers
-    modal.querySelector(".pwr-modal-backdrop").addEventListener("click", closeRankingModal);
-    modal.querySelector(".pwr-modal-close").addEventListener("click", closeRankingModal);
-    
-    // Remove any existing keyboard handlers before adding new ones
-    if (modalKeyHandler) {
-      document.removeEventListener("keydown", modalKeyHandler, true);
-    }
-    
-    // Single keyboard handler for all modal shortcuts
-    modalKeyHandler = function(e) {
-      const modal = document.getElementById("pwr-modal");
-      if (!modal) {
-        document.removeEventListener("keydown", modalKeyHandler, true);
-        modalKeyHandler = null;
-        return;
-      }
-
-      // Escape to close
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        closeRankingModal();
-        return;
-      }
-
-      // Arrow keys to choose (stop propagation to prevent Stash scene navigation)
-      if (e.key === "ArrowLeft" && currentPair.left) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        const leftBody = modal.querySelector('.pwr-scene-card[data-side="left"] .pwr-scene-body');
-        if (leftBody) leftBody.click();
-      }
-      if (e.key === "ArrowRight" && currentPair.right) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        const rightBody = modal.querySelector('.pwr-scene-card[data-side="right"] .pwr-scene-body');
-        if (rightBody) rightBody.click();
-      }
-      
-      // Spacebar to skip
-      if (e.key === " " || e.code === "Space") {
-        const activeElement = document.activeElement;
-        // Skip if focused on input/textarea, or if a button is focused (let button's click handle it)
-        if (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.tagName === "BUTTON") {
-          return;
-        }
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        // Don't skip during active gauntlet/champion run
-        if ((currentMode === "gauntlet" || currentMode === "champion") && gauntletChampion) {
-          return;
-        }
-        if(disableChoice) return;
-        disableChoice = true;
-        if (currentMode === "gauntlet" || currentMode === "champion") {
-          resetGauntletState();
-          saveState();
-        }
-        loadNewPair();
-      }
-    };
-    
-    document.addEventListener("keydown", modalKeyHandler, true);
-  }
-
-  // Track keyboard handler so we can remove it on close
-  let modalKeyHandler = null;
-
-  function closeRankingModal() {
-    const modal = document.getElementById("pwr-modal");
-    if (!modal || modal.classList.contains("pwr-modal-hidden")) return;
-    
-    // Add closing class to trigger fade-out animation
-    modal.classList.add("pwr-modal-closing");
-    
-    // After animation completes, hide the modal (keep in DOM for reuse)
-    setTimeout(() => {
-      modal.classList.add("pwr-modal-hidden");
-      modal.classList.remove("pwr-modal-closing");
-    }, 200); // Match CSS animation duration
-    
-    // Clean up keyboard handler
-    if (modalKeyHandler) {
-      document.removeEventListener("keydown", modalKeyHandler, true);
-    }
-  }
-
-  // ============================================
-  // INITIALIZATION
-  // ============================================
-
+  // src/main.ts
   function init() {
     console.log("[Stash Battle] Initialized");
-
-    addFloatingButton();
-
-    // Watch for SPA navigation
+    injectNavButton();
     const observer = new MutationObserver(() => {
-      addFloatingButton();
+      injectNavButton();
     });
-
     observer.observe(document.body, {
       childList: true,
-      subtree: true,
+      subtree: true
     });
   }
-
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {

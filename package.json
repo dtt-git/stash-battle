@@ -1,0 +1,17 @@
+{
+  "name": "stash-battle",
+  "version": "2.6.7",
+  "private": true,
+  "description": "An ELO based ranking system for Stash scenes",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}
