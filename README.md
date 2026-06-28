@@ -17,14 +17,14 @@ Stash Battle presents you with two scenes side-by-side and asks you to pick the 
   - **Gauntlet** 🎯 – Place a random scene in your rankings. It climbs from the bottom, challenging each scene above it until it loses, then settles into its final position.
   - **Champion** 🏆 – Winner stays on. The winning scene keeps battling until it's dethroned.
 
-- **Filter Support:** Apply filters on the Scenes page before opening Battle to rate specific scenes against your full collection.
+- **Filtering**: Apply any filters on the scenes page before opening Battle. What you see on the scenes page is what you get in Stash Battle. By default, filtered scenes appear on the left (scenes to rate) and opponents come from your full library on the right.
 
 
 ## Installation
 
-⚠️ Install at your own risk, nearly entirely vibe coded for myself using Claude, I have barely reviewed the code at all.
+⚠️ Install at your own risk, nearly entirely vibe coded for myself but I review code and test as thoroughly as I can.
 
-Recommend saving a backup of your database beforehand (Settings → Interface → Editing)
+Recommend saving a backup of your database beforehand (Settings → Interface → Editing) just in case. 
 
 ### Source Index: 
 
@@ -44,6 +44,9 @@ Optional Step: Change Rating System Type to "Decimal" (Settings → Interface �
 5. Click on a scene (or use arrow keys) to pick the winner
 6. Watch your rankings evolve over time!
 
+As well you can open battle on a scene page which puts that scene into battle right away. 
+
+
 ## How It Works
 
 The plugin uses an ELO-inspired algorithm where:
@@ -59,10 +62,7 @@ The plugin uses an ELO-inspired algorithm where:
 | 8-14 | 6 | Established scenes change more slowly |
 | 15+ | 4 | Very stable ratings that resist large swings |
 
-Filtering:
-- The filtered scenes will appear on the left side to be rated, while opponents are drawn from your entire library.
-
-
+In Gauntlet and Champion mode, only the active climber’s rating changes during a run (opponents are benchmarks). Climber wins use a high K-factor so placements move quickly.
 
 ## Development
 
