@@ -200,9 +200,9 @@ function pickSwissOpponent(
   // Prefer similar-strength matchups (±reach ranks). If the band is empty (edges, unrated left
   // scene, tiny pool), double reach until we find candidates or cover the whole pool.
   for (
-    let reach = SWISS_OPPONENT_REACH_INITIAL;
+    let reach = Math.min(SWISS_OPPONENT_REACH_INITIAL, rightPool.length);
     candidates.length === 0 && reach <= rightPool.length;
-    reach *= SWISS_OPPONENT_REACH_MULTIPLIER
+    reach = Math.min(reach * SWISS_OPPONENT_REACH_MULTIPLIER, rightPool.length)
   ) {
     for (let i = effectiveScene1Idx - reach; i <= effectiveScene1Idx + reach; i++) {
       if (i >= 0 && i < rightPool.length && i !== scene1IdxInPool) {
