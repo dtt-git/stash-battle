@@ -60,12 +60,16 @@ function finishRunShowEndScreen(html: string): void {
 export function showVictoryScreen(champion: Scene): void {
   const totalScenes = state.totalScenesCount;
   const winStreak = state.gauntletWins;
+  const ratingLine =
+    champion.rating100 != null
+      ? `<br>Rating: <strong>${champion.rating100}/100</strong>`
+      : "";
 
   const html = buildEndScreenHtml(
     champion,
     "👑",
     "CHAMPION!",
-    `Conquered all ${totalScenes} scenes with a ${winStreak} win streak!`,
+    `Conquered all ${totalScenes} scenes with a ${winStreak} win streak!${ratingLine}`,
     "Start New Gauntlet",
   );
 

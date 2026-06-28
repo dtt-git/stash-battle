@@ -2,13 +2,11 @@
 
 import { clearFilteredCache, getAllScenesCached, removeFromFilteredPool } from "../cache";
 import { calculateRatingChanges } from "../elo";
+import { CLIMB_K_PLAY_COUNT, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
+import { readFilters } from "../filters";
 import { fetchSceneById } from "../graphql";
 import { navigateToUrl } from "../navigation";
-import {
-  fetchChampionPair,
-  fetchGauntletPair,
-  fetchSwissPair,
-} from "../pairs";
+import { applyClimbWinRating, fetchChampionPair, fetchGauntletPair, fetchSwissPair } from "../pairs";
 import { updateSceneRating } from "../rating";
 import { state } from "../state";
 import { saveState } from "../storage";
@@ -51,6 +49,10 @@ export function createMainUI(): string {
                Mute hover previews
             </label>
           </div>
+          <p id="sb-climb-pool-warning" class="sb-climb-warning" hidden>
+            Gauntlet and Champion can behave oddly with small filtered pools when both sides use the filter
+            (fewer than ${CLIMB_SMALL_POOL_WARN_AT} scenes). Prefer a larger filter or turn off filter opponents.
+          </p>
         </div>
 
         <div class="sb-content">
@@ -272,6 +274,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     );
 
     renderPair(scenes, ranks);
+    updateClimbPoolWarning();
     saveState();
   } catch (error) {
     console.error("[Stash Battle] Error loading scenes:", error);
@@ -367,8 +370,15 @@ function resolveComparison(winner: Scene, loser: Scene): ComparisonDeltas {
   const mode = state.currentMode;
   const winnerRating = winner.rating100 || 1;
   const loserRating = loser.rating100 || 1;
+
+  const climberId = activeClimberId();
+  const winnerPlayCount =
+    mode !== "swiss" && climberId === winner.id
+      ? CLIMB_K_PLAY_COUNT
+      : (winner.play_count ?? 0);
+
   const raw = calculateRatingChanges({
-    winner: { rating: winnerRating, playCount: winner.play_count ?? 0 },
+    winner: { rating: winnerRating, playCount: winnerPlayCount },
     loser: { rating: loserRating, playCount: loser.play_count ?? 0 },
   });
   const deltas = applyModePolicy(winner, loser, mode, raw);
@@ -377,6 +387,24 @@ function resolveComparison(winner: Scene, loser: Scene): ComparisonDeltas {
   if (deltas.loser !== 0) updateSceneRating(loser.id, loserRating + deltas.loser);
 
   return deltas;
+}
+
+/** Show when gauntlet/champion + filter opponents + small filtered pool. */
+export function updateClimbPoolWarning(): void {
+  const warning = document.getElementById("sb-climb-pool-warning");
+  if (!warning) return;
+
+  const isClimb = state.currentMode === "gauntlet" || state.currentMode === "champion";
+  const filters = readFilters();
+  const smallPool =
+    state.totalScenesCount > 0 && state.totalScenesCount < CLIMB_SMALL_POOL_WARN_AT;
+
+  warning.hidden = !(
+    isClimb &&
+    state.filterOpponents &&
+    filters.filterActive &&
+    smallPool
+  );
 }
 
 /** Gauntlet climb / first-battle path (after falling-mode branch). */
@@ -409,27 +437,29 @@ async function handleGauntletClimbChoice(choice: SceneChoice): Promise<void> {
   const climber = state.gauntletClimber as Scene;
 
   const winnerRating = winnerScene.rating100 || 1;
-  const loserDisplayRating = loserScene.rating100 || 0;
+  const winnerAnimStart = winnerScene.rating100 ?? 0;
+  const loserDisplayRating = loserScene.rating100 ?? 0;
 
   const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
   const newWinnerRating = winnerRating + winnerDelta;
   const newLoserRating = loserDisplayRating + loserDelta;
 
+  let winnerDisplayRating = newWinnerRating;
+
   if (winnerId === climber.id) {
     state.gauntletDefeated.push(loserId);
     state.gauntletWins++;
-    climber.rating100 = newWinnerRating;
+    winnerDisplayRating = await applyClimbWinRating(climber, loserScene, newWinnerRating);
     console.log(
-      `[Stash Battle] 📊 Gauntlet: climber ${winnerId} won (streak=${state.gauntletWins}), rating → ${newWinnerRating}`,
+      `[Stash Battle] 📊 Gauntlet: climber ${winnerId} won (streak=${state.gauntletWins}), rating → ${winnerDisplayRating}`,
     );
   } else if (isFirstBattle) {
-    // Challenger lost the floor test — placed one below the floor benchmark
     const finalRank = state.totalScenesCount;
     const finalRating = Math.max(1, (winnerScene.rating100 || 1) - 1);
     console.log(
       `[Stash Battle] 📊 Gauntlet: first battle, challenger ${loserId} lost to floor → rank #${finalRank}, rating ${finalRating}`,
     );
-    updateSceneRating(loserScene.id, finalRating);
+    void updateSceneRating(loserScene.id, finalRating);
 
     winnerCard.classList.add("sb-winner");
     if (loserCard) loserCard.classList.add("sb-loser");
@@ -452,15 +482,72 @@ async function handleGauntletClimbChoice(choice: SceneChoice): Promise<void> {
   winnerCard.classList.add("sb-winner");
   if (loserCard) loserCard.classList.add("sb-loser");
 
-  showRatingAnimation(winnerCard, winnerRating, newWinnerRating, true);
+  showRatingAnimation(winnerCard, winnerAnimStart, winnerDisplayRating, true);
   if (loserCard) {
-    const loserDisplayNew = loserDelta !== 0 ? newLoserRating : loserDisplayRating;
-    showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, false);
+    showRatingAnimation(
+      loserCard,
+      loserDisplayRating,
+      loserDelta !== 0 ? newLoserRating : loserDisplayRating,
+      false,
+    );
+  }
+  scheduleNextPairAfterAnimations();
+}
+
+/** Champion mode climb path. */
+async function handleChampionChoice(choice: SceneChoice): Promise<void> {
+  const {
+    winner: winnerScene,
+    loser: loserScene,
+    left,
+    winnerCard,
+    loserCard,
+  } = choice;
+
+  const winnerId = winnerScene.id;
+  const loserId = loserScene.id;
+  const winnerRating = winnerScene.rating100 || 1;
+  const winnerAnimStart = winnerScene.rating100 ?? 0;
+  const loserDisplayRating = loserScene.rating100 ?? 0;
+
+  const isFirstBattle = !state.gauntletClimber;
+  if (isFirstBattle) {
+    state.gauntletClimber = left;
+  }
+  const climber = state.gauntletClimber as Scene;
+
+  const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
+  const newWinnerRating = winnerRating + winnerDelta;
+  const newLoserRating = loserDisplayRating + loserDelta;
+
+  let winnerDisplayRating = newWinnerRating;
+
+  if (winnerId === climber.id) {
+    state.gauntletDefeated.push(loserId);
+    state.gauntletWins++;
+    winnerDisplayRating = await applyClimbWinRating(climber, loserScene, newWinnerRating);
+  } else {
+    state.gauntletClimber = winnerScene;
+    winnerScene.rating100 = newWinnerRating;
+    state.gauntletDefeated = [loserId];
+    state.gauntletWins = 1;
   }
 
-  setTimeout(() => {
-    loadNewPair();
-  }, 1500);
+  saveState();
+
+  winnerCard.classList.add("sb-winner");
+  if (loserCard) loserCard.classList.add("sb-loser");
+
+  showRatingAnimation(winnerCard, winnerAnimStart, winnerDisplayRating, true);
+  if (loserCard) {
+    showRatingAnimation(
+      loserCard,
+      loserDisplayRating,
+      loserDelta !== 0 ? newLoserRating : loserDisplayRating,
+      false,
+    );
+  }
+  scheduleNextPairAfterAnimations();
 }
 
 function handleSceneChoice(choice: SceneChoice): void {
@@ -494,10 +581,12 @@ function handleSceneChoice(choice: SceneChoice): void {
       if (winnerId === fallingScene.id) {
         // Falling scene won - found their floor!
         const finalRating = Math.min(100, loserRating + 1);
+        const fallingAnimStart = fallingScene.rating100 ?? 0;
         console.log(
           `[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`,
         );
-        updateSceneRating(fallingScene.id, finalRating);
+        void updateSceneRating(fallingScene.id, finalRating);
+        fallingScene.rating100 = finalRating;
 
         // Final rank is one above the opponent (we beat them, so we're above them)
         const finalRank = Math.max(1, (loserRank ?? 1) - 1);
@@ -505,9 +594,11 @@ function handleSceneChoice(choice: SceneChoice): void {
         winnerCard.classList.add("sb-winner");
         if (loserCard) loserCard.classList.add("sb-loser");
 
+        showRatingAnimation(winnerCard, fallingAnimStart, finalRating, true);
+
         setTimeout(() => {
           showPlacementScreen(fallingScene, finalRank, finalRating);
-        }, 800);
+        }, 1500);
         return;
       } else {
         // Falling scene lost again - keep falling
@@ -531,43 +622,7 @@ function handleSceneChoice(choice: SceneChoice): void {
 
   // Handle champion mode (like gauntlet but winner always takes over)
   if (state.currentMode === "champion") {
-    const isFirstBattle = !state.gauntletClimber;
-    if (isFirstBattle) {
-      state.gauntletClimber = left;
-    }
-    const climber = state.gauntletClimber as Scene;
-
-    const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
-    const newWinnerRating = winnerRating + winnerDelta;
-    const newLoserRating = loserDisplayRating + loserDelta;
-
-    if (winnerId === climber.id) {
-      // Climber won - continue climbing
-      state.gauntletDefeated.push(loserId);
-      state.gauntletWins++;
-      climber.rating100 = newWinnerRating;
-    } else {
-      // Climber lost or first pick - winner becomes new climber
-      state.gauntletClimber = winnerScene;
-      winnerScene.rating100 = newWinnerRating;
-      state.gauntletDefeated = [loserId];
-      state.gauntletWins = 1;
-    }
-
-    saveState();
-
-    winnerCard.classList.add("sb-winner");
-    if (loserCard) loserCard.classList.add("sb-loser");
-
-    showRatingAnimation(winnerCard, winnerRating, newWinnerRating, true);
-    if (loserCard) {
-      const loserDisplayNew = loserDelta !== 0 ? newLoserRating : loserDisplayRating;
-      showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, false);
-    }
-
-    setTimeout(() => {
-      loadNewPair();
-    }, 1500);
+    void handleChampionChoice(choice);
     return;
   }
 
@@ -587,15 +642,27 @@ function handleSceneChoice(choice: SceneChoice): void {
 
   showRatingAnimation(winnerCard, winnerRating, newWinnerRating, true);
   if (loserCard) {
-    const loserDisplayNew = loserDelta !== 0 ? newLoserRating : loserDisplayRating;
-    showRatingAnimation(loserCard, loserDisplayRating, loserDisplayNew, false);
+    showRatingAnimation(
+      loserCard,
+      loserDisplayRating,
+      loserDelta !== 0 ? newLoserRating : loserDisplayRating,
+      false,
+    );
   }
-
-  setTimeout(() => {
-    loadNewPair();
-  }, 1500);
+  scheduleNextPairAfterAnimations();
 }
 
+const RATING_ANIM_MAX_TOTAL_MS = 1400;
+const RATING_ANIM_HOLD_MS = 300;
+const RATING_ANIM_COUNT_BUDGET_MS = RATING_ANIM_MAX_TOTAL_MS - RATING_ANIM_HOLD_MS;
+const RATING_ANIM_DEFAULT_STEP_MS = 50;
+const RATING_ANIM_MIN_STEP_MS = 8;
+
+function scheduleNextPairAfterAnimations(): void {
+  setTimeout(() => loadNewPair(), 1500);
+}
+
+/** Count-up/down overlay; large jumps speed up so the full count fits within 1400ms. */
 function showRatingAnimation(
   card: HTMLElement,
   oldRating: number,
@@ -613,16 +680,26 @@ function showRatingAnimation(
 
   const changeDisplay = document.createElement("div");
   changeDisplay.className = "sb-rating-change";
-  changeDisplay.textContent = isWinner ? `+${change}` : `${change}`;
+  changeDisplay.textContent = change > 0 ? `+${change}` : String(change);
 
   overlay.appendChild(ratingDisplay);
   overlay.appendChild(changeDisplay);
   card.appendChild(overlay);
 
-  // Animate the rating counting
-  let currentDisplay = oldRating;
-  const step = isWinner ? 1 : -1;
   const totalSteps = Math.abs(change);
+  if (totalSteps === 0) {
+    ratingDisplay.textContent = String(newRating);
+    setTimeout(() => overlay.remove(), RATING_ANIM_MAX_TOTAL_MS);
+    return;
+  }
+
+  const stepMs = Math.min(
+    RATING_ANIM_DEFAULT_STEP_MS,
+    Math.max(RATING_ANIM_MIN_STEP_MS, Math.round(RATING_ANIM_COUNT_BUDGET_MS / totalSteps)),
+  );
+
+  let currentDisplay = oldRating;
+  const step = change > 0 ? 1 : -1;
   let stepCount = 0;
 
   const interval = setInterval(() => {
@@ -634,10 +711,7 @@ function showRatingAnimation(
       clearInterval(interval);
       ratingDisplay.textContent = String(newRating);
     }
-  }, 50);
+  }, stepMs);
 
-  // Remove overlay after animation
-  setTimeout(() => {
-    overlay.remove();
-  }, 1400);
+  setTimeout(() => overlay.remove(), RATING_ANIM_MAX_TOTAL_MS);
 }

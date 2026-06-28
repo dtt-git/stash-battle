@@ -20,3 +20,9 @@ export const SWISS_OPPONENT_REACH_MULTIPLIER = 2;
 
 // Gauntlet/champion: random pick among the N closest undefeated opponents above the climber.
 export const CLIMB_OPPONENT_PICK_WINDOW = 5;
+
+/** Show a UI warning when the climb opponent pool is smaller than this (filter opponents on). */
+export const CLIMB_SMALL_POOL_WARN_AT = 10;
+
+/** play_count stand-in when the climber wins in gauntlet/champion (0 → K=12). */
+export const CLIMB_K_PLAY_COUNT = 0;

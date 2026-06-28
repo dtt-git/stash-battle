@@ -240,6 +240,36 @@ function getRemainingClimbOpponents(
   });
 }
 
+async function getClimbOpponentPool(): Promise<Scene[]> {
+  const filters = readFilters();
+  const { leftPool, allScenes } = await loadScenePools(filters);
+  return buildOpponentPool(allScenes, leftPool, filters);
+}
+
+/** Apply ELO from a climber win; bump above the beaten opponent when the pool is cleared. */
+export async function applyClimbWinRating(
+  climber: Scene,
+  beatenOpponent: Scene,
+  eloRating: number,
+): Promise<number> {
+  climber.rating100 = eloRating;
+
+  const rightPool = await getClimbOpponentPool();
+  const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
+  // If the climber has remaining opponents return ELO rating as normal
+  if (getRemainingClimbOpponents(climber, rightPool, climberIndex).length > 0) {
+    return eloRating;
+  }
+
+  // If the climber has no remaining opponents, ensure their rating is above the opponent they just beat
+  const minWinnerRating = Math.min(100, (beatenOpponent.rating100 ?? 0) + 1);
+  if (eloRating < minWinnerRating) {
+    await updateSceneRating(climber.id, minWinnerRating);
+    climber.rating100 = minWinnerRating;
+  }
+  return climber.rating100 ?? eloRating;
+}
+
 // Find the lowest actually rated scene in a descending-sorted array, excluding a specific scene
 // Returns { scene, index } or fallback to first non-excluded scene if none rated
 function findLowestRated(scenes: Scene[], excludeId: string): { scene: Scene; index: number } {

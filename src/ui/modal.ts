@@ -6,7 +6,7 @@ import { getSceneIdFromUrl } from "../graphql";
 import { resetGauntletState, state } from "../state";
 import { loadState, saveState } from "../storage";
 import type { Mode } from "../types";
-import { createMainUI, loadNewPair, restoreCurrentPair } from "./mainUI";
+import { createMainUI, loadNewPair, restoreCurrentPair, updateClimbPoolWarning } from "./mainUI";
 
 // Track keyboard handler so we can remove it on close
 let modalKeyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -137,6 +137,7 @@ export function openModal(): void {
 
         // Load new pair in new mode, preserving scene page context
         loadNewPair(getSceneIdFromUrl());
+        updateClimbPoolWarning();
         saveState();
       }
     });
@@ -158,6 +159,7 @@ export function openModal(): void {
       }
       saveState();
       loadNewPair();
+      updateClimbPoolWarning();
     });
   }
 

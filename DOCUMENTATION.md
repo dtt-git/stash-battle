@@ -68,19 +68,19 @@ Key fields:
 | Module | Responsibility |
 |---|---|
 | `types.ts` | Shared types: `Scene` (mirrors `SCENE_FRAGMENT`), `Mode`, `Pair`, `Ranks`, GraphQL response shapes, pair-result shapes |
-| `constants.ts` | `STORAGE_KEY`, `CACHE_DB_*`, `DEFAULT_FILTER_OPPONENTS`, `SWISS_OPPONENT_REACH_*`, `CLIMB_OPPONENT_PICK_WINDOW`, localStorage pref keys |
+| `constants.ts` | `STORAGE_KEY`, `CACHE_DB_*`, `DEFAULT_FILTER_OPPONENTS`, `SWISS_OPPONENT_REACH_*`, `CLIMB_OPPONENT_PICK_WINDOW`, `CLIMB_SMALL_POOL_WARN_AT`, `CLIMB_K_PLAY_COUNT`, localStorage pref keys |
 | `state.ts` | Central mutable `state` object + `resetGauntletState()` |
 | `graphql.ts` | `graphqlQuery`, `SCENE_FRAGMENT`, `FIND_SCENES_QUERY`, `fetchSceneById`, `getSceneIdFromUrl` |
 | `cache.ts` | IndexedDB + memory cache, stale-while-revalidate, `updateSceneInCache`, `removeFromFilteredPool`, `repositionSceneInArray` |
 | `storage.ts` | `saveState` / `loadState` / `clearState` (localStorage) |
 | `filters.ts` | URL filter parsing (`getSceneFilter`, `translateJSON`), `getFindFilter`, `readFilters`, `buildFilterKey`, `checkForFilters` |
 | `navigation.ts` | `navigateToUrl` (History API + popstate for React Router) |
-| `pairs.ts` | Matchmaking: `fetchSwissPair`, `fetchGauntletPair`, `fetchChampionPair`, `findLowestRated`, filtered-pool shuffle (`getNextFilteredScene`, internal) |
+| `pairs.ts` | Matchmaking: `fetchSwissPair`, `fetchGauntletPair`, `fetchChampionPair`, `applyClimbWinRating`, `findLowestRated`, filtered-pool shuffle (`getNextFilteredScene`, internal) |
 | `elo.ts` | `getKFactor`, `calculateRatingChanges` (pure ELO math) |
-| `rating.ts` | `updateSceneRating` (Stash mutation) |
+| `rating.ts` | `updateSceneRating` |
 | `ui/sceneCard.ts` | `createSceneCard`, `formatDuration` |
 | `ui/screens.ts` | `showVictoryScreen`, `showPlacementScreen` |
-| `ui/mainUI.ts` | `createMainUI`, `renderPair`, `loadNewPair`, `restoreCurrentPair`, scene choice handling, rating animation |
+| `ui/mainUI.ts` | `createMainUI`, `renderPair`, `loadNewPair`, `restoreCurrentPair`, `updateClimbPoolWarning`, scene choice handling, rating animation |
 | `ui/navButton.ts` | `shouldShowNavButton`, `injectNavButton` |
 | `ui/modal.ts` | `openModal`, `closeModal`, keyboard handler |
 | `main.ts` | Entry point: `init()` + `DOMContentLoaded` bootstrap |
@@ -217,6 +217,8 @@ Based on `play_count` — scenes with more plays have more stable ratings:
 | < 15 | 6 | Established — smaller changes |
 | ≥ 15 | 4 | Very established — stable |
 
+**Gauntlet/Champion climber wins**: When the active climber (or falling scene) wins, K uses `CLIMB_K_PLAY_COUNT` (0 → K=12) instead of the scene's real `play_count`. Swiss and non-climber sides still use actual play count.
+
 ### Mode-Specific Rating Behavior
 
 **Swiss mode**: True ELO — both sides get rating changes based on their respective K-factors.
@@ -237,56 +239,62 @@ The default mode. Pairs scenes with similar ratings for meaningful comparisons.
 1. Pick the next scene from the shuffled filtered pool (left side)
 2. Find its position in the opponent pool (sorted by rating DESC)
 3. If the scene isn't in the opponent pool (unrated), position it at the end (lowest ranked)
-4. Collect candidates within ±10 of that position
-5. If no candidates found, **expand the search** (double the reach) until candidates exist
-6. Pick randomly from candidates
+4. Collect candidates within ±N of that position (starts at `SWISS_OPPONENT_REACH_INITIAL`, doubles until candidates exist — important for tiny pools where the initial reach may exceed pool size)
+5. Pick randomly from candidates
 
 **After battle**: Both scenes are removed from the filtered pool. Both get ELO updates.
+
+### Filter opponents + Gauntlet/Champion
+
+When **`filterOpponents` is on** and a **URL filter is active**, left and right draw from the same filtered list. Gauntlet and champion still use the **same ELO-relative climb rules** as the full-library case (index-based remaining opponents, falling mode on mid-run loss, global floor on first pair).
+
+**Small pools**: With fewer than `CLIMB_SMALL_POOL_WARN_AT` (10) scenes in the filter, results can feel odd — e.g. starting near the top of the list may end the run after only a few fights without facing every scene. The UI shows a warning when this combination applies.
+
+When filter opponents is off, the opponent pool is the full rated library.
 
 ### Gauntlet Mode
 
 A climb-the-ladder mode where a challenger fights their way up from the bottom.
 
 **Initial pairing**:
-1. Pick a scene from the filtered pool as the challenger (left side)
-2. Find the **lowest actually rated** scene in the opponent pool (`findLowestRated` — explicitly skips unrated)
-3. Display: challenger vs lowest rated (a rated challenger still shows its current rating/rank until you pick a side)
+1. Pick the next scene from the shuffled filtered pool as challenger (left side)
+2. Find the **lowest actually rated** scene in the opponent pool (`findLowestRated`)
+3. Display: challenger vs that floor benchmark
 
-**Rated challenger — re-verify on first choice**:
+**Rated challenger — re-verify on first choice** (gauntlet only):
 - If the challenger already has a rating, it is **cleared** (`rating100 → null`) when you make your **first choice** in the run — not when the pair loads
-- From that point the run treats the scene as unrated: floor test, per-battle ELO, climb from the bottom
 
-**First battle special handling**:
-- `gauntletClimber` is set to the left-side scene **before** ELO runs, so the first battle assigns the climber role correctly
-- If the **left/challenger wins**: normal climb begins
-- If the **challenger loses** to the floor benchmark (lowest rated opponent): they are **placed at the bottom** immediately — rank `#totalScenesCount`, rating `max(1, floorOpponent.rating - 1)` (just below this collection's floor, not scale minimum 1). No falling mode and the run does not transfer to the right-side benchmark
+**First battle — challenger loses**:
+- `gauntletClimber` is set to the left-side scene **before** ELO runs
+- Placement rating: `max(1, winner.rating - 1)`
+- Placement rank: `#totalScenesCount`
+- Run ends — no falling mode
 
 **Climbing**:
 - Climber wins → opponent added to `gauntletDefeated`, streak increments, climber's rating increases via ELO
-- Next opponent: picked randomly from up to 5 of the closest undefeated scenes ranked above the climber (`remainingOpponents` filtered by `idx < climberIndex` or `rating >= climber's rating`). This selection window prevents every climb from fighting the exact same sequence of opponents.
-- As the climber wins and their rating increases, `repositionSceneInArray` moves them up in the sorted pool. They can leapfrog multiple opponents if their ELO gain is large enough — skipped opponents are excluded from future matchups since they now rank below the climber
+- Next opponent: picked randomly from up to `CLIMB_OPPONENT_PICK_WINDOW` of the closest undefeated opponents above the climber (by index or rating)
+- `repositionSceneInArray` moves the climber in `allScenes` after rating changes
 
-**Climber loses → Falling mode**:
-- The old climber becomes `gauntletFallingScene` and stays in `gauntletClimber` until the run ends (for skip/persist); pairing and ELO use the faller via `gauntletFalling` + `activeClimberId()`
-- `gauntletDefeated` is reset to the fight winner (tracks who beat them for bottom placement)
+**Climber loses (mid-run)** → **Falling mode**:
+- The old climber becomes `gauntletFallingScene`; pairing/ELO use the faller via `gauntletFalling` + `activeClimberId()`
+- `gauntletDefeated` is reset to `[winnerId]` (tracks who beat them for bottom placement)
 - Falling scene faces opponents **below** it in the ranking to find its floor
 
 **Falling mode outcomes**:
-- Falling scene **wins**: Found their floor. Rating set to `loserRating + 1`. Placement screen shown.
+- Falling scene **wins**: Found their floor. Rating set to `loserRating + 1`. Rating animation, then placement screen.
 - Falling scene **loses**: Keep falling. Winner added to `gauntletDefeated`.
-- **Hits the bottom** (no opponents below): Rating set to `max(1, lastOpponent.rating - 1)` — one below whatever beat them last.
+- **Hits the bottom** (no opponents below): Rating set to `max(1, lastOpponent.rating - 1)`.
 
-**Victory**: When `remainingOpponents` is empty, the climber has conquered all scenes. Victory screen shown (this is when we call them the **champion** in the UI).
+**Victory**: When `remainingOpponents` is empty, the climber has conquered the opponent pool. On the winning choice (after ELO), if the pool is cleared their rating is bumped above the last beaten opponent when needed (`applyClimbWinRating` in `pairs.ts`).
 
 ### Champion Mode
 
 Like gauntlet but simpler — winner always takes over, no falling.
 
 **Key differences from Gauntlet**:
-- When the climber loses, they keep their earned rating (no ELO penalty)
-- Winner becomes the new `gauntletClimber` immediately
-- No falling mode — the old climber just gets replaced
-- Otherwise identical pairing and climbing logic
+- **No re-verify**: rated challengers are **not** cleared on first choice
+- When the climber loses, they keep their earned rating — the **winner becomes the new climber** and the run continues
+- **No falling mode**
 
 ---
 
@@ -304,14 +312,15 @@ Each card shows: screenshot (with hover video preview), title, duration, rank, s
 ### Rating Animations
 
 After each battle, an overlay animates the rating change:
-- Green with `+X` for the winner
-- Red with `-X` for the loser
-- Count-up/count-down animation over ~500ms
-- Overlay removed after 1400ms, then new pair loads
+- Green overlay with `+X` for positive changes; red for negative (CSS class still follows winner/loser card)
+- **Direction follows the numeric change**, not winner/loser role — a losing placement that raises rating (e.g. 0 → 89) counts **up**
+- Step speed scales with |change| so large jumps (e.g. final victory bump) finish within the window; small changes use ~50ms per point
+- Overlay removed after **1400ms**; next pair loads after **1500ms**
+- Final climb win animates to the full victory-bump rating, not just the last battle's ELO delta
 
 ### Victory / Placement Screens
 
-- **Victory**: Crown icon, "CHAMPION!", scene info, streak stats
+- **Victory**: Crown icon, "CHAMPION!", scene info, streak stats, **final rating**
 - **Placement**: Pin icon, "PLACED!", final rank and rating
 - Both show a "Start New Run" button that resets gauntlet state
 
@@ -378,20 +387,26 @@ All data comes from Stash's GraphQL API:
 
 1. **First gauntlet battle ELO**: `gauntletClimber` must be set *before* `calculateRatingChanges` runs (via `resolveComparison` in `mainUI`), otherwise the climber role is unassigned and no ELO change occurs.
 
-2. **First battle challenger loss**: Fight 1 is always challenger vs the lowest-rated opponent. If the challenger loses, they are placed at the bottom and the run ends. Rated challengers are cleared to unrated on **first choice** (not pair load), then fight 1 proceeds like an unrated scene.
+2. **First battle loss**: Placement rating is always `max(1, winner.rating - 1)`. Rank is `#totalScenesCount`. Animation uses `rating100 ?? 0` as the start value.
 
-3. **Unrated in opponent pool**: Without the rated-only filter, unrated scenes cluster at the bottom of the DESC-sorted list. Swiss mode's ±10 reach around an unrated left-side scene would pick other unrated scenes as opponents — defeating the purpose.
+3. **Small filtered pool + filter opponents**: Gauntlet/champion use ELO-relative win logic even when both sides draw from a small filter. The UI warns when the pool has fewer than `CLIMB_SMALL_POOL_WARN_AT` scenes.
 
-4. **Falling scene at the bottom**: If the falling scene was already the lowest-rated scene (e.g., it was picked as the initial gauntlet opponent and later became the climber), `belowOpponents` is immediately empty. The rating is set to 1 below the last opponent's rating rather than hardcoded to 1.
+4. **Unrated in opponent pool**: Without the rated-only filter, unrated scenes cluster at the bottom of the DESC-sorted list. Swiss mode's ±reach around an unrated left-side scene would pick other unrated scenes as opponents — defeating the purpose.
 
-5. **Climber loss in champion mode**: The climber keeps their rating when they lose — no ELO penalty. Falling-mode ELO is bypassed entirely in champion mode.
+5. **Tiny Swiss pool + filter opponents**: Opponent reach starts at `min(SWISS_OPPONENT_REACH_INITIAL, pool.length)` and doubles until candidates exist — required for 2–3 scene filtered pools.
 
-6. **`repositionSceneInArray`**: After a rating change, the scene is physically moved in the sorted array to maintain correct rankings. This means `findIndex` lookups against the opponent pool always reflect the latest ratings.
+6. **Falling scene at the bottom**: If the falling scene was already the lowest-rated scene, `belowOpponents` is immediately empty. The rating is set to 1 below the last opponent's rating rather than hardcoded to 1.
 
-7. **Background refresh race condition**: `removedSceneIds` persists across background cache refreshes. Without it, a background refresh could re-add scenes to the filtered pool that were already processed this session.
+7. **Climber loss in champion mode**: The climber keeps their rating when they lose — no ELO penalty. Falling mode does not apply; the winner takes over.
 
-8. **Pool size for rank display**: `totalScenesCount` is set from `opponentPool.length`, not `allScenes.length`. This ensures "Rank #X of Y" is consistent when unrated scenes are excluded from the pool.
+8. **`repositionSceneInArray`**: After a rating change, the scene is moved in `allScenes` to maintain global rankings.
 
-9. **Scene page battle with active gauntlet**: Opening battle from a scene page always resets gauntlet state if the scene isn't already in the pair. This prevents a forced scene from being injected mid-gauntlet-run, which would corrupt climber/defeated tracking.
+9. **Background refresh race condition**: `removedSceneIds` persists across background cache refreshes. Without it, a background refresh could re-add scenes to the filtered pool that were already processed this session.
 
-10. **Scene page ID matching**: Scene IDs from the URL and from GraphQL are compared as strings via `String()`. The `getSceneIdFromUrl()` regex requires a pure numeric path segment (`/scenes/(\d+)$`) — tab paths like `/scenes/123/markers` won't match.
+10. **Pool size for rank display**: `totalScenesCount` is set from `opponentPool.length`, not `allScenes.length`. This ensures "Rank #X of Y" is consistent when unrated scenes are excluded from the pool.
+
+11. **Scene page battle with active gauntlet**: Opening battle from a scene page always resets gauntlet state if the scene isn't already in the pair. This prevents a forced scene from being injected mid-gauntlet-run, which would corrupt climber/defeated tracking.
+
+12. **Scene page ID matching**: Scene IDs from the URL and from GraphQL are compared as strings via `String()`. The `getSceneIdFromUrl()` regex requires a pure numeric path segment (`/scenes/(\d+)$`) — tab paths like `/scenes/123/markers` won't match.
+
+14. **Gauntlet skip before first choice**: Resets gauntlet run state but advances the shared-ladder shuffle — does not repeat the same challenger/opponent pair.

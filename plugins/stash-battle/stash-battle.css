@@ -29,6 +29,18 @@
   margin-bottom: 20px;
 }
 
+.sb-climb-warning {
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  color: #ccc;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  border-radius: 6px;
+  line-height: 1.4;
+  text-align: left;
+}
+
 /* Mode Toggle */
 .sb-mode-toggle {
   display: flex;
