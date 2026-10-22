@@ -33,6 +33,14 @@ Stash Battle presents you with two scenes side-by-side and asks you to pick the 
 
 - **SFW Switch support**: thumbnails and previews blur when the [SFW Switch](https://github.com/stashapp/CommunityScripts) plugin's SFW mode is on.
 
+## Screenshots
+
+| Placement mode | Champion mode |
+|----------------|---------------|
+| <img width="480" alt="Placement mode: the scene being placed shows the range of ranks it could land in" src="docs/screenshots/placement.png" /> | <img width="480" alt="Champion mode: the winning scene stays on with a win streak badge" src="docs/screenshots/champion.png" /> |
+
+<img width="800" alt="Settings tab: battle and scene options saved to Stash" src="docs/screenshots/settings.png" />
+
 
 ## Installation
 
