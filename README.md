@@ -1,10 +1,12 @@
-<img width="1696" height="1135" alt="image" src="https://github.com/user-attachments/assets/4983d20c-2141-4000-afd5-cc1a669d4ddd" />
+<img width="1000" height="702" alt="Stash Battle: two scenes side by side with the Battle and Settings tabs, mode buttons and preview volume" src="docs/screenshots/battle.jpg" />
 
 NSFW Demo Video on the Stash forum post: https://discourse.stashapp.cc/t/stash-battle/5180
 
 # ⚔️ Stash Battle
 
 A head-to-head scene comparison plugin for [Stash](https://stashapp.cc/) that uses an ELO-style rating system to help you rank your scenes.
+
+**What's new:** see the [changelog](CHANGELOG.md) (v2.7.0 adds Placement mode, a Settings tab, fun mode, Clean mode and a phone-friendly layout).
 
 ## Overview
 
@@ -14,22 +16,22 @@ Stash Battle presents you with two scenes side-by-side and asks you to pick the 
 
 - **Four Comparison Modes:**
   - **Swiss** ⚖️ – Fair matchups between similarly-rated scenes. Both scenes' ratings adjust based on the outcome. Scenes stay in the pool, so you can keep battling a small filter indefinitely.
-  - **Placement** 📍 – Find a scene's spot fast. Each battle halves the range it could belong in (rated scenes start near their current rank and take bigger jumps while they keep winning or losing), so an unrated scene lands in about 10 clicks even in a library of 500+ rated scenes, without skipping anyone in the final range.
+  - **Placement** 📍 – Place a scene fast. Each pick narrows the range of ranks it could land in (shown on its card). A rated scene starts near its current rank and takes bigger jumps while it keeps winning or losing, then bounces back with smaller steps once it overshoots, so it never skips scenes it belongs among. An unrated scene lands in about 10 picks even in a library of 500+ rated scenes.
   - **Gauntlet** 🎯 – Climb the ladder. A scene climbs from the bottom, challenging scenes above it until it loses, then falls to find its floor.
   - **Champion** 🏆 – Winner stays on. The winning scene keeps battling until it's dethroned.
 
 - **Filtering**: Apply any filters on the scenes page before opening Battle. What you see on the scenes page is what you get in Stash Battle, in every mode; a line above the cards shows whether you're rating your filter or your whole library, and how many scenes that is. By default, filtered scenes appear on the left (scenes to rate) and opponents come from your full library on the right.
 
 - **Settings tab** (next to the Battle tab, or Stash's Settings → Plugins). Saved to Stash, so they follow you across devices:
-  - **Fun mode** – battle without changing any ratings
-  - **Autoplay previews** – both loop silently; hover a card to hear it
+  - **Fun mode** – battle without changing any ratings; every mode still plays out normally, nothing is saved
+  - **Autoplay previews** – both loop silently; hover a card to hear it (on by default)
   - **Pause playing video when Battle opens** – on by default; turn it off to keep a scene playing behind the battle
   - **Open scenes in a new tab** when clicking a thumbnail
-  - **Unrated scene rating** – what unrated scenes count as in Swiss (0 = start at the bottom, 50 = classic ELO start)
+  - **Unrated scene rating** – what unrated scenes count as in Swiss (50 by default, a classic ELO start; 0 starts them at the bottom)
   - **Use filtered scenes for both sides**
   - **Clean mode** – a 🗑 button on each card opens Stash's own delete dialog (same options and defaults as deleting in Stash), so you can clean up without leaving the battle
 
-- **Preview volume** slider on the tab bar; click the speaker to mute or unmute.
+- **Preview volume** slider on the tab bar (it follows perceived loudness); click the speaker to mute or unmute.
 
 - **Works on phones and tablets**: the cards stay side by side on tablets, stack compactly on phones, and Skip stays pinned at the bottom. On touch screens, tap a thumbnail to play its preview, use ↗ to open the scene, and tap ⓘ next to the modes for an explanation of the current mode (on desktop, hover a mode).
 
@@ -54,13 +56,13 @@ Recommend saving a backup of your database beforehand (Settings → Interface �
 
 Optional Step: Change Rating System Type to "Decimal" (Settings → Interface → Editing)
 1. Navigate to the **Scenes** page in Stash
-2. (Optional) Apply any filters or search to narrow down which scenes you want to rate
+2. (Optional) Apply any filters or search to narrow down which scenes you want to rate (the line above the cards confirms what you're rating)
 3. Click the **Battle** button in the navbar
-4. Choose your preferred comparison mode
-5. Click on a scene (or use arrow keys) to pick the winner
+4. Choose a mode (hover a mode, or tap ⓘ on a phone, for a short explanation)
+5. Click a scene (or press ← / →) to pick the winner; Space skips the pair
 6. Watch your rankings evolve over time!
 
-As well you can open battle on a scene page which puts that scene into battle right away. 
+You can also open Battle on a scene page, which puts that scene into a battle right away. Settings live in the **Settings** tab next to **Battle**.
 
 
 ## How It Works
