@@ -143,16 +143,12 @@ export async function confirmDeleteScene(scene: Scene): Promise<boolean> {
     pendingResult = resolve;
   });
 
+  // Stash renders the navbar after plugins load, so the bridge is mounted well before anyone can
+  // click a delete button; if it somehow isn't, say so rather than faking a navigation
   if (!requestDialog(findScene)) {
-    // Plugins load after Stash's first render, so the navbar may not have re-rendered with the
-    // bridge yet. Re-navigating to the current URL re-renders it without changing the page.
-    rerenderNavbar();
-    await new Promise((r) => setTimeout(r, 150));
-    if (!requestDialog(findScene)) {
-      console.warn("[Stash Battle] Stash's delete dialog bridge isn't mounted");
-      settle(false);
-      window.alert("Couldn't open Stash's delete dialog. Reload the page and try again.");
-    }
+    console.warn("[Stash Battle] Stash's delete dialog bridge isn't mounted");
+    settle(false);
+    window.alert("Couldn't open Stash's delete dialog. Reload the page and try again.");
   }
   return result;
 }
@@ -161,10 +157,4 @@ export async function confirmDeleteScene(scene: Scene): Promise<boolean> {
 function requestDialog(scene: DeletableScene): boolean {
   const request = new CustomEvent(OPEN_EVENT, { detail: scene, cancelable: true });
   return !window.dispatchEvent(request);
-}
-
-/** Make React Router re-render (same URL, same state), which re-renders the patched navbar. */
-function rerenderNavbar(): void {
-  window.history.replaceState(window.history.state, "", window.location.href);
-  window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
 }

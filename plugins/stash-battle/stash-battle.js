@@ -146,23 +146,15 @@
       pendingResult = resolve;
     });
     if (!requestDialog(findScene)) {
-      rerenderNavbar();
-      await new Promise((r) => setTimeout(r, 150));
-      if (!requestDialog(findScene)) {
-        console.warn("[Stash Battle] Stash's delete dialog bridge isn't mounted");
-        settle(false);
-        window.alert("Couldn't open Stash's delete dialog. Reload the page and try again.");
-      }
+      console.warn("[Stash Battle] Stash's delete dialog bridge isn't mounted");
+      settle(false);
+      window.alert("Couldn't open Stash's delete dialog. Reload the page and try again.");
     }
     return result;
   }
   function requestDialog(scene) {
     const request = new CustomEvent(OPEN_EVENT, { detail: scene, cancelable: true });
     return !window.dispatchEvent(request);
-  }
-  function rerenderNavbar() {
-    window.history.replaceState(window.history.state, "", window.location.href);
-    window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
   }
 
   // src/constants.ts
@@ -463,7 +455,7 @@
       return null;
     }
   }
-  async function setCachedScenes(cacheKey, scenes, count, filterKey) {
+  async function setCachedScenes(cacheKey, scenes, count, filterKey, timestamp = Date.now()) {
     try {
       const db = await openCacheDB();
       return new Promise((resolve, reject) => {
@@ -473,7 +465,7 @@
           cacheKey,
           scenes,
           count,
-          timestamp: Date.now(),
+          timestamp,
           ...filterKey !== void 0 && { filterKey }
         };
         const request = store.put(data);
@@ -756,10 +748,34 @@
       const cached = await getCachedScenes(cacheKey);
       if (cached && cached.scenes.some((s) => s.id === sceneId)) {
         const scenes = cached.scenes.filter((s) => s.id !== sceneId);
-        await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey);
+        await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey, cached.timestamp);
       }
     }
     console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from caches`);
+  }
+  var funSandbox = /* @__PURE__ */ new Map();
+  function sandboxScene(scene) {
+    let copy = funSandbox.get(scene.id);
+    if (!copy) {
+      copy = { ...scene };
+      funSandbox.set(scene.id, copy);
+    }
+    return copy;
+  }
+  function sandboxPool(pool) {
+    return pool.map(sandboxScene).sort((a, b) => (b.rating100 ?? 0) - (a.rating100 ?? 0));
+  }
+  function setSandboxRating(sceneId, rating100) {
+    const real = funSandbox.has(sceneId) ? null : state.memoryCache.allScenes?.find((s) => s.id === sceneId);
+    const copy = funSandbox.get(sceneId) ?? (real ? sandboxScene(real) : null);
+    if (copy) copy.rating100 = rating100;
+  }
+  function resetSandbox() {
+    funSandbox.clear();
+  }
+  function savedRating(scene) {
+    const real = state.memoryCache.allScenes?.find((s) => s.id === scene.id);
+    return real ? real.rating100 : scene.rating100;
   }
 
   // src/sceneActions.ts
@@ -786,11 +802,12 @@
       }
     `;
   async function updateSceneRating(sceneId, rating100) {
+    const stashRating = rating100 === null ? null : Math.max(1, Math.min(100, rating100));
     if (!ratingsEnabled()) {
-      console.log(`[Stash Battle] 🎈 Fun mode: not saving rating for scene ${sceneId}`);
+      console.log(`[Stash Battle] 🎈 Fun mode: scene ${sceneId} rating ${stashRating} kept in memory only`);
+      setSandboxRating(sceneId, stashRating);
       return;
     }
-    const stashRating = rating100 === null ? null : Math.max(1, Math.min(100, rating100));
     try {
       await graphqlQuery(SCENE_UPDATE_MUTATION, {
         input: {
@@ -977,31 +994,33 @@
   function isShuffleCycleComplete(filterKey) {
     return state.shuffleFilterKey === filterKey && state.shuffledFilteredScenes.length > 0 && state.shuffleIndex >= state.shuffledFilteredScenes.length;
   }
+  function startNewPass(leftPool) {
+    console.log("[Stash Battle] 🔀 Reshuffling (completed full cycle)");
+    state.shuffledFilteredScenes = shuffleArray(leftPool);
+    state.shuffleIndex = 0;
+    if (lastShownSceneId && state.shuffledFilteredScenes.length > 1 && state.shuffledFilteredScenes[0].id === lastShownSceneId) {
+      const swapIdx = 1 + Math.floor(Math.random() * (state.shuffledFilteredScenes.length - 1));
+      [state.shuffledFilteredScenes[0], state.shuffledFilteredScenes[swapIdx]] = [
+        state.shuffledFilteredScenes[swapIdx],
+        state.shuffledFilteredScenes[0]
+      ];
+      console.log("[Stash Battle] 🔄 Swapped first scene to avoid repeat");
+    }
+  }
   function getNextFilteredScene(leftPool, filterKey) {
-    const availableScenes = leftPool;
-    if (availableScenes.length === 0) {
+    if (leftPool.length === 0) {
       console.log("[Stash Battle] 🏁 Filtered pool is empty");
       return null;
     }
     if (filterKey !== state.shuffleFilterKey || state.shuffledFilteredScenes.length === 0) {
       console.log("[Stash Battle] 🔀 Shuffling filtered scenes (filter changed or first load)");
-      state.shuffledFilteredScenes = shuffleArray(availableScenes);
+      state.shuffledFilteredScenes = shuffleArray(leftPool);
       state.shuffleIndex = 0;
       state.shuffleFilterKey = filterKey;
       lastShownSceneId = null;
     }
     if (state.shuffleIndex >= state.shuffledFilteredScenes.length) {
-      console.log("[Stash Battle] 🔀 Reshuffling (completed full cycle)");
-      state.shuffledFilteredScenes = shuffleArray(availableScenes);
-      state.shuffleIndex = 0;
-      if (lastShownSceneId && state.shuffledFilteredScenes.length > 1 && state.shuffledFilteredScenes[0].id === lastShownSceneId) {
-        const swapIdx = 1 + Math.floor(Math.random() * (state.shuffledFilteredScenes.length - 1));
-        [state.shuffledFilteredScenes[0], state.shuffledFilteredScenes[swapIdx]] = [
-          state.shuffledFilteredScenes[swapIdx],
-          state.shuffledFilteredScenes[0]
-        ];
-        console.log("[Stash Battle] 🔄 Swapped first scene to avoid repeat");
-      }
+      startNewPass(leftPool);
     }
     const scene = state.shuffledFilteredScenes[state.shuffleIndex];
     state.shuffleIndex++;
@@ -1019,28 +1038,32 @@
     return ratedOnly.length >= 1 ? ratedOnly : allScenes;
   }
   async function loadScenePools(filters) {
+    let leftPool;
+    let allScenes;
     if (filters.filterActive) {
-      if (isShuffleCycleComplete(filters.filterKey)) {
+      const passComplete = isShuffleCycleComplete(filters.filterKey);
+      if (passComplete) {
         console.log("[Stash Battle] 🔁 Pass complete, re-fetching filtered scenes");
         await clearFilteredCache();
       }
       console.log("[Stash Battle] 📋 Filter active, fetching filtered + all scenes");
-      const [filteredResult, allResult2] = await Promise.all([
+      const [filteredResult, allResult] = await Promise.all([
         getFilteredScenesCached(filters),
         getAllScenesCached()
       ]);
-      const leftPool = filteredResult.scenes || [];
-      state.leftPoolSize = leftPool.length;
-      return { leftPool, allScenes: allResult2.scenes || [] };
+      leftPool = filteredResult.scenes || [];
+      allScenes = allResult.scenes || [];
+      if (passComplete) startNewPass(leftPool);
+    } else {
+      console.log("[Stash Battle] 📋 No filter active, using all scenes");
+      allScenes = (await getAllScenesCached()).scenes || [];
+      leftPool = allScenes;
     }
-    console.log("[Stash Battle] 📋 No filter active, using all scenes");
-    const allResult = await getAllScenesCached();
-    const allScenes = allResult.scenes || [];
-    state.leftPoolSize = allScenes.length;
-    return { leftPool: allScenes, allScenes };
-  }
-  function pickLeftScene(forcedLeftScene, leftPool, filterKey) {
-    return forcedLeftScene || getNextFilteredScene(leftPool, filterKey);
+    state.leftPoolSize = leftPool.length;
+    if (state.settings.funMode) {
+      return { leftPool: sandboxPool(leftPool), allScenes: sandboxPool(allScenes) };
+    }
+    return { leftPool, allScenes };
   }
   async function loadPoolSize() {
     await loadScenePools(readFilters());
@@ -1063,7 +1086,7 @@
   }
   async function fetchSwissPair(forcedLeftScene = null) {
     const { leftPool, rightPool, filterKey } = await buildSwissPools();
-    const scene1 = pickLeftScene(forcedLeftScene, leftPool, filterKey);
+    const scene1 = forcedLeftScene || getNextFilteredScene(leftPool, filterKey);
     if (!scene1) {
       throw new Error("No scenes match your filter criteria.");
     }
@@ -1095,9 +1118,6 @@
     const closest = remainingOpponents.slice(-CLIMB_OPPONENT_PICK_WINDOW);
     return closest[Math.floor(Math.random() * closest.length)];
   }
-  function climberPoolIndex(climber, rightPool) {
-    return climber.rating100 == null ? -1 : rightPool.findIndex((s) => s.id === climber.id);
-  }
   function getRemainingClimbOpponents(climber, rightPool, climberIndex) {
     return rightPool.filter((s, idx) => {
       if (s.id === climber.id || state.gauntletDefeated.includes(s.id)) return false;
@@ -1110,7 +1130,6 @@
     return buildOpponentPool(allScenes, leftPool, filters);
   }
   async function applyClimbWinRating(climber, beatenOpponent, eloRating) {
-    if (!ratingsEnabled()) return climber.rating100 ?? eloRating;
     climber.rating100 = eloRating;
     const rightPool = await getClimbOpponentPool();
     const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
@@ -1145,8 +1164,7 @@
     }
     if (state.gauntletFalling && state.gauntletFallingScene) {
       const fallingScene = state.gauntletFallingScene;
-      const fallingIndex = fallingScene.rating100 == null ? rightPool.findIndex((s) => s.id === state.gauntletDefeated[0]) : rightPool.findIndex((s) => s.id === fallingScene.id);
-      const fallingRank = fallingScene.rating100 == null ? fallingIndex + 2 : fallingIndex + 1;
+      const fallingIndex = rightPool.findIndex((s) => s.id === fallingScene.id);
       const belowOpponents = rightPool.filter((s, idx) => {
         if (s.id === fallingScene.id || state.gauntletDefeated.includes(s.id)) return false;
         return idx > fallingIndex;
@@ -1169,10 +1187,10 @@
       } else {
         const nextBelow = belowOpponents[0];
         const nextBelowIndex = rightPool.findIndex((s) => s.id === nextBelow.id);
-        state.gauntletClimberRank = fallingRank;
+        state.gauntletClimberRank = fallingIndex + 1;
         return {
           scenes: [fallingScene, nextBelow],
-          ranks: [fallingRank, nextBelowIndex + 1],
+          ranks: [fallingIndex + 1, nextBelowIndex + 1],
           isVictory: false,
           isFalling: true
         };
@@ -1197,7 +1215,7 @@
       };
     }
     const climber = state.gauntletClimber;
-    const climberIndex = climberPoolIndex(climber, rightPool);
+    const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
     state.gauntletClimberRank = climberIndex >= 0 ? climberIndex + 1 : 1;
     const remainingOpponents = getRemainingClimbOpponents(climber, rightPool, climberIndex);
     if (remainingOpponents.length === 0) {
@@ -1360,7 +1378,7 @@
         `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${slot + 1} after ${run.battles} battles, rating ${rating}`
       );
       await updateSceneRating(run.scene.id, rating);
-      if (ratingsEnabled()) run.scene.rating100 = rating;
+      run.scene.rating100 = rating;
       return { done: true, scene: run.scene, rank: slot + 1, rating };
     }
     const target = Math.max(lo, Math.min(hi - 1, nextPlacementIndex(run, pool, lo, hi)));
@@ -1401,7 +1419,8 @@
     const previewPath = scene.paths ? scene.paths.preview : null;
     const { unratedRating, openInNewTab, cleanMode } = state.settings;
     const unratedLabel = state.currentMode === "swiss" && unratedRating > 1 ? `Unrated (counts as ${unratedRating})` : "Unrated";
-    const stashRating = scene.rating100 ? `${scene.rating100}/100` : unratedLabel;
+    const shownRating = state.settings.funMode ? savedRating(scene) : scene.rating100;
+    const stashRating = shownRating ? `${shownRating}/100` : unratedLabel;
     let rankDisplay = "";
     if (rank !== null && rank !== void 0) {
       rankDisplay = `<span class="sb-scene-rank">#${rank}</span>`;
@@ -1931,6 +1950,7 @@
       let forcedLeftScene = null;
       if (forcedLeftSceneId) {
         forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+        if (forcedLeftScene && !ratingsEnabled()) forcedLeftScene = sandboxScene(forcedLeftScene);
         if (!forcedLeftScene) {
           console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
         }
@@ -2104,7 +2124,6 @@
     return { winner: winnerDelta, loser: loserDelta };
   }
   function resolveComparison(winner, loser) {
-    if (!ratingsEnabled()) return { winner: 0, loser: 0 };
     const mode = state.currentMode;
     const winnerRating = battleRating(winner);
     const loserRating = battleRating(loser);
@@ -2151,7 +2170,7 @@
     const winnerId = winnerScene.id;
     const loserId = loserScene.id;
     const isFirstBattle = !state.gauntletClimber;
-    if (isFirstBattle && left.rating100 != null && ratingsEnabled()) {
+    if (isFirstBattle && left.rating100 != null) {
       console.log(
         `[Stash Battle] 📊 Gauntlet: clearing rating ${left.rating100} for scene ${left.id} on first choice`
       );
@@ -2159,7 +2178,7 @@
       left.rating100 = null;
     }
     if (isFirstBattle) {
-      state.gauntletClimber = ratingsEnabled() ? left : { ...left, rating100: null };
+      state.gauntletClimber = left;
     }
     const climber = state.gauntletClimber;
     const winnerRating = winnerScene.rating100 || 1;
@@ -2194,7 +2213,7 @@
         `[Stash Battle] 📊 Gauntlet: climber ${climber.id}(rating=${climber.rating100}) LOST to ${winnerId}(rating=${newWinnerRating}), entering falling mode`
       );
       state.gauntletFalling = true;
-      state.gauntletFallingScene = climber;
+      state.gauntletFallingScene = loserScene;
       state.gauntletDefeated = [winnerId];
     }
     saveState();
@@ -2239,7 +2258,7 @@
       winnerDisplayRating = await applyClimbWinRating(climber, loserScene, newWinnerRating);
     } else {
       state.gauntletClimber = winnerScene;
-      if (ratingsEnabled()) winnerScene.rating100 = newWinnerRating;
+      winnerScene.rating100 = newWinnerRating;
       state.gauntletDefeated = [loserId];
       state.gauntletWins = 1;
     }
@@ -2287,7 +2306,7 @@
             `[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`
           );
           void updateSceneRating(fallingScene.id, finalRating);
-          if (ratingsEnabled()) fallingScene.rating100 = finalRating;
+          fallingScene.rating100 = finalRating;
           const finalRank = Math.max(1, (loserRank ?? 1) - 1);
           winnerCard.classList.add("sb-winner");
           if (loserCard) loserCard.classList.add("sb-loser");
@@ -2393,7 +2412,12 @@
         updateClimbPoolWarning();
         break;
       case "funMode":
+        resetSandbox();
+        resetShuffle();
+        resetRunState();
+        saveState();
         updateFunBadge();
+        loadNewPair();
         break;
       case "previewVolume":
       case "autoplayPreviews":
@@ -2524,6 +2548,7 @@
         refreshCacheBtn.textContent = "🔄 Refreshing...";
         try {
           await clearSceneCache();
+          resetSandbox();
           resetShuffle();
           resetRunState();
           saveState();

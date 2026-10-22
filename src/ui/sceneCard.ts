@@ -1,5 +1,6 @@
 // Renders an individual scene card (returns an HTML string).
 
+import { savedRating } from "../cache";
 import { state } from "../state";
 import { isStashDeleteDialogAvailable } from "./deleteDialog";
 import type { Rank, Scene } from "../types";
@@ -38,7 +39,9 @@ export function createSceneCard(
   const { unratedRating, openInNewTab, cleanMode } = state.settings;
   const unratedLabel =
     state.currentMode === "swiss" && unratedRating > 1 ? `Unrated (counts as ${unratedRating})` : "Unrated";
-  const stashRating = scene.rating100 ? `${scene.rating100}/100` : unratedLabel;
+  // Fun mode battles sandbox copies whose ratings move in memory; cards keep showing the saved one
+  const shownRating = state.settings.funMode ? savedRating(scene) : scene.rating100;
+  const stashRating = shownRating ? `${shownRating}/100` : unratedLabel;
 
   // Numeric rank badge (#N), omitted when null
   let rankDisplay = "";

@@ -1,6 +1,6 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
-import { clearFilteredCache, removeSceneEverywhere } from "../cache";
+import { clearFilteredCache, removeSceneEverywhere, sandboxScene } from "../cache";
 import { calculateRatingChanges, effectiveRating } from "../elo";
 import { CLIMB_K_PLAY_COUNT, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
 import { readFilters } from "../filters";
@@ -362,6 +362,8 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     let forcedLeftScene: Scene | null = null;
     if (forcedLeftSceneId) {
       forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+      // Fun mode battles only ever touch sandbox copies (see cache.ts)
+      if (forcedLeftScene && !ratingsEnabled()) forcedLeftScene = sandboxScene(forcedLeftScene);
       if (!forcedLeftScene) {
         console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
       }
@@ -602,10 +604,8 @@ function applyModePolicy(
   return { winner: winnerDelta, loser: loserDelta };
 }
 
-/** Run pure ELO math and persist any rating changes to Stash. Fun mode changes nothing. */
+/** Run pure ELO math and write any rating changes (to Stash, or in fun mode to the in-memory sandbox). */
 function resolveComparison(winner: Scene, loser: Scene): ComparisonDeltas {
-  if (!ratingsEnabled()) return { winner: 0, loser: 0 };
-
   const mode = state.currentMode;
   const winnerRating = battleRating(winner);
   const loserRating = battleRating(loser);
@@ -679,7 +679,7 @@ async function handleGauntletClimbChoice(choice: SceneChoice): Promise<void> {
   const isFirstBattle = !state.gauntletClimber;
 
   // Re-verify from the bottom: clear existing rating on first choice, not on pair load
-  if (isFirstBattle && left.rating100 != null && ratingsEnabled()) {
+  if (isFirstBattle && left.rating100 != null) {
     console.log(
       `[Stash Battle] 📊 Gauntlet: clearing rating ${left.rating100} for scene ${left.id} on first choice`,
     );
@@ -688,9 +688,7 @@ async function handleGauntletClimbChoice(choice: SceneChoice): Promise<void> {
   }
 
   if (isFirstBattle) {
-    // Fun mode can't clear the rating, so the climber is an unrated copy kept only in memory:
-    // it climbs from the bottom like a real run while the cached scene object stays untouched
-    state.gauntletClimber = ratingsEnabled() ? left : { ...left, rating100: null };
+    state.gauntletClimber = left;
   }
   const climber = state.gauntletClimber as Scene;
 
@@ -731,8 +729,7 @@ async function handleGauntletClimbChoice(choice: SceneChoice): Promise<void> {
       `[Stash Battle] 📊 Gauntlet: climber ${climber.id}(rating=${climber.rating100}) LOST to ${winnerId}(rating=${newWinnerRating}), entering falling mode`,
     );
     state.gauntletFalling = true;
-    // The climber itself (same object as the loser, except in fun mode where it's the unrated copy)
-    state.gauntletFallingScene = climber;
+    state.gauntletFallingScene = loserScene;
     state.gauntletDefeated = [winnerId];
   }
 
@@ -787,7 +784,7 @@ async function handleChampionChoice(choice: SceneChoice): Promise<void> {
     winnerDisplayRating = await applyClimbWinRating(climber, loserScene, newWinnerRating);
   } else {
     state.gauntletClimber = winnerScene;
-    if (ratingsEnabled()) winnerScene.rating100 = newWinnerRating;
+    winnerScene.rating100 = newWinnerRating;
     state.gauntletDefeated = [loserId];
     state.gauntletWins = 1;
   }
@@ -846,7 +843,7 @@ function handleSceneChoice(choice: SceneChoice): void {
           `[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`,
         );
         void updateSceneRating(fallingScene.id, finalRating);
-        if (ratingsEnabled()) fallingScene.rating100 = finalRating;
+        fallingScene.rating100 = finalRating;
 
         // Final rank is one above the opponent (we beat them, so we're above them)
         const finalRank = Math.max(1, (loserRank ?? 1) - 1);

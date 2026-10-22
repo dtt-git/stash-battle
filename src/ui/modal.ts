@@ -1,6 +1,6 @@
 // The battle modal: opens/closes, wires controls and keyboard shortcuts.
 
-import { clearSceneCache } from "../cache";
+import { clearSceneCache, resetSandbox } from "../cache";
 import { getSceneIdFromUrl } from "../graphql";
 import { SCENE_MISSING_EVENT } from "../rating";
 import { loadSettings } from "../settings";
@@ -49,7 +49,13 @@ function onSettingChanged(key: keyof Settings): void {
       updateClimbPoolWarning();
       break;
     case "funMode":
+      // Switching between real and sandbox ratings mid-run would mix the two: start fresh
+      resetSandbox();
+      resetShuffle();
+      resetRunState();
+      saveState();
       updateFunBadge();
+      loadNewPair();
       break;
     case "previewVolume":
     case "autoplayPreviews":
@@ -241,6 +247,7 @@ export async function openModal(): Promise<void> {
 
       try {
         await clearSceneCache();
+        resetSandbox();
 
         // Reset shuffle state since scene list is being refreshed
         resetShuffle();

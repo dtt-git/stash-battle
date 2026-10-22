@@ -181,7 +181,7 @@ Filtered scenes are shuffled (Fisher-Yates) and traversed sequentially via `shuf
 
 Since 2.7, battled scenes are **not** removed from the filtered pool — every scene stays available on both sides, and the shuffle simply starts a new pass when it reaches the end.
 
-At the end of each full pass (`isShuffleCycleComplete` in `pairs.ts`), `loadScenePools` clears the filtered cache and **re-queries the filter from Stash** before reshuffling. Filters whose membership depends on rating (e.g. "rating is null") therefore still shrink naturally as scenes get rated — just once per pass instead of after every battle.
+At the end of each full pass (`isShuffleCycleComplete` in `pairs.ts`), `loadScenePools` clears the filtered cache and **re-queries the filter from Stash** before reshuffling. Filters whose membership depends on rating (e.g. "rating is null") therefore still shrink naturally as scenes get rated — just once per pass instead of after every battle. The next pass is started (`startNewPass`) right after that re-query, so loads that don't pick a new left scene (later picks of a Gauntlet/Champion/Placement run, `loadPoolSize`) don't see the pass as complete again and re-download the filter every time.
 
 `updateSceneInCache` repositions the scene in **both** `allScenes` and `filteredScenes`, because the filtered list doubles as the (rating-sorted) opponent pool when filter-opponents is on.
 
@@ -231,9 +231,14 @@ Based on `play_count` — scenes with more plays have more stable ratings:
 
 **Placement mode**: No per-battle ELO. One rating is written at the end, between the final neighbours (see Placement Mode).
 
-**Fun mode** (setting): `ratingsEnabled()` is false → `updateSceneRating` is a no-op, `resolveComparison` returns zero deltas, and handlers skip their **local** `rating100` mutations too (climber bumps, champion takeover, falling floor, placement result, gauntlet's first-choice clear). Rating overlays are hidden and end screens note the rating wasn't saved. Local mutations matter because scene objects are shared with the cache — changing them would reorder ranks without a matching Stash write.
+**Fun mode** (setting) is a single in-memory rating layer, not a set of "don't save" checks. Every mode runs its normal logic unchanged:
+- `loadScenePools` serves both pools as **sandbox copies** (`sandboxPool` in `cache.ts`): one copy per scene id, re-sorted by the copies' ratings. Forced scene-page scenes are swapped for their copy too (`sandboxScene` in `loadNewPair`).
+- `updateSceneRating` writes to the copy (`setSandboxRating`) instead of Stash and the cache. Handlers' local `scene.rating100` updates also only ever touch copies.
+- So Gauntlet clears and climbs, Champion takes over, Swiss/Placement adjust — all in memory, with positions following the in-memory ratings — and nothing reaches Stash or the real cache.
+- UI: rating overlays are hidden, end screens note the rating wasn't saved, and cards show the **saved** rating (`savedRating`), so fun mode still looks like "ratings don't change".
+- Toggling fun mode resets the sandbox, the shuffle and any run, then loads a fresh pair (mixing real and sandbox objects mid-run would be wrong). Refresh also resets the sandbox. `ratingsEnabled()` remains only for those UI bits and for routing the write.
 
-**Fun mode in Gauntlet**: a real run clears a rated challenger's rating so it climbs from the bottom. Fun mode can't, so on the first choice `gauntletClimber` becomes an in-memory **copy** with `rating100: null` (the cached object is untouched). `climberPoolIndex()` treats a rating-less climber as unplaced (-1), so it climbs from the bottom through every undefeated scene. On a loss the copy becomes `gauntletFallingScene`, and since its rating never rose, falling starts just below the scene that beat it (`gauntletDefeated[0]`) instead of at its untouched real rank. Swiss, Placement and Champion need nothing special: they just don't write.
+
 
 ---
 
@@ -418,14 +423,14 @@ With `cleanMode` on, each card has a 🗑 button that opens **Stash's own `Delet
 How the bridge works (`ui/deleteDialog.ts`):
 - The dialog needs Stash's React context (intl, configuration, Apollo, toasts), so it can't be rendered standalone. `registerDeleteDialogBridge()` (called from `main.ts`) patches a tiny `DeleteBridge` component into `MainNavBar.UtilityItems` via `PluginApi.patch.after`; react-bootstrap portals the modal to `<body>`.
 - `PluginApi.loadableComponents.DeleteScenesDialog` is a loader that resolves to the **module** — loading it does *not* add it to `PluginApi.components`. The bridge takes `mod.DeleteScenesDialog` from the module (preloaded at startup; `confirmDeleteScene` awaits it).
-- `confirmDeleteScene(scene)` fetches the fields the dialog reads (`id title interactive files { path }`) and dispatches a cancelable `stash-battle:open-delete-dialog` event; the first mounted bridge `preventDefault`s it. Plugins load **after** Stash's first render, so on a fresh page the bridge may not be mounted yet: if nobody handles the event, Battle re-navigates to the current URL (`replaceState` + `popstate`, same URL) to re-render the navbar, then retries once.
+- `confirmDeleteScene(scene)` fetches the fields the dialog reads (`id title interactive files { path }`) and dispatches a cancelable `stash-battle:open-delete-dialog` event; the first mounted bridge `preventDefault`s it. Stash renders the navbar after plugin scripts load, so the bridge is mounted within ~200ms of any page load (scene pages included) — long before a 🗑 can be clicked. If nobody handles the event anyway, Battle shows an error instead of faking a navigation.
 - The dialog calls `onClose(true)` after a successful delete, `false` on cancel or error (Stash toasts errors itself). On `true` Battle runs `handleSceneGone(id)`.
 - While Battle is open, `body.sb-battle-open` lifts Stash's `.modal` / `.modal-backdrop` above the battle modal (z-index 10060 / 10050).
 - If this Stash doesn't expose `DeleteScenesDialog` to plugins, the bridge isn't registered and the 🗑 button is hidden.
 
 After a delete, `handleSceneGone(id)`:
 
-1. `removeSceneEverywhere` drops it from `allScenes`, `filteredScenes`, both IndexedDB entries and the shuffle (adjusting `shuffleIndex`) — no Refresh needed.
+1. `removeSceneEverywhere` drops it from `allScenes`, `filteredScenes`, both IndexedDB entries (keeping their original timestamps, so stale-while-revalidate still refreshes on time) and the shuffle (adjusting `shuffleIndex`) — no Refresh needed.
 2. If it was the **left** scene or the run's scene (placement scene, climber, falling scene) → `resetRunState()` and a fresh pair.
 3. Otherwise (an opponent) → drop it from `gauntletDefeated` and placement bounds, and `loadNewPair(leftId)`. Swiss and pre-run climbs keep the left scene via the forced-scene path; active runs ignore the forced id and simply re-run their current step.
 
@@ -517,10 +522,8 @@ All data comes from Stash's GraphQL API:
 
 17. **Placement ties**: with integer ratings, scenes inside a tie group are interchangeable as opponents, but the final slot can still land inside the group (the user may prefer one tied scene over another). The rating then equals the group's rating.
 
-18. **Fun mode and shared scene objects**: scene objects in `currentPair`/runs are often the same objects as in the cache. Any new code that sets `scene.rating100` locally must check `ratingsEnabled()` first.
+18. **Fun mode and shared scene objects**: in normal mode, scene objects in `currentPair`/runs are often the same objects as in the cache; in fun mode they are sandbox copies. New code must get scenes from `loadScenePools` (or `sandboxScene` for scenes fetched another way) and write ratings through `updateSceneRating` — then it needs no fun-mode checks.
 
 19. **Stash's `.nav-tabs` margins**: Stash centers `.nav-tabs` with auto margins; `.sb-tabs.nav-tabs { margin: 0 }` keeps Battle's tabs left-aligned next to the volume control.
 
 20. **Stash's modals ignore Escape**: Stash's `ModalComponent` sets `keyboard: false` and no backdrop `onHide`, so its delete dialog closes only via Cancel/Delete. Battle matches that rather than force-closing it.
-
-21. **Climber copies**: in fun-mode Gauntlet, `gauntletClimber`/`gauntletFallingScene` are copies of the scene, not the cached object, and the scene's real entry stays in the pool at its old rank. Compare by `id`, never by object identity, and get the climber's position from `climberPoolIndex()`.
