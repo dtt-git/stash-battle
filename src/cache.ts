@@ -67,6 +67,7 @@ async function setCachedScenes(
   scenes: Scene[],
   count: number,
   filterKey?: string,
+  timestamp: number = Date.now(),
 ): Promise<void> {
   try {
     const db = await openCacheDB();
@@ -78,7 +79,7 @@ async function setCachedScenes(
         cacheKey,
         scenes,
         count,
-        timestamp: Date.now(),
+        timestamp,
         ...(filterKey !== undefined && { filterKey }),
       };
 
@@ -424,35 +425,75 @@ export function updateSceneInCache(sceneId: string, newRating: number): void {
     console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
   }
 
-  // Also update rating in filteredScenes if present (removal from the left-side pool is separate)
+  // Also reposition in filteredScenes (it doubles as the opponent pool when filtering both sides)
   if (state.memoryCache.filteredScenes) {
-    const scene = state.memoryCache.filteredScenes.find((s) => s.id === sceneId);
-    if (scene) {
-      scene.rating100 = newRating;
-    }
+    repositionSceneInArray(state.memoryCache.filteredScenes, sceneId, newRating);
   }
 }
 
-// Remove a scene from the filtered pool (called after battle regardless of rating change)
-export function removeFromFilteredPool(sceneId: string): void {
-  // Track removal - survives background refresh race condition
-  state.removedSceneIds.add(sceneId);
+// Drop a deleted scene from every cache tier and the left-side shuffle
+export async function removeSceneEverywhere(sceneId: string): Promise<void> {
+  const without = (scenes: Scene[] | null): Scene[] | null =>
+    scenes ? scenes.filter((s) => s.id !== sceneId) : scenes;
 
-  if (state.memoryCache.filteredScenes) {
-    const idx = state.memoryCache.filteredScenes.findIndex((s) => s.id === sceneId);
-    if (idx !== -1) {
-      state.memoryCache.filteredScenes.splice(idx, 1);
-      console.log(
-        `[Stash Battle] 🗑️ Removed scene ${sceneId} from filtered pool (${state.memoryCache.filteredScenes.length} remaining, ${state.removedSceneIds.size} removed this session)`,
-      );
-    }
-  }
+  state.memoryCache.allScenes = without(state.memoryCache.allScenes);
+  state.memoryCache.filteredScenes = without(state.memoryCache.filteredScenes);
 
   const shuffleIdx = state.shuffledFilteredScenes.findIndex((s) => s.id === sceneId);
   if (shuffleIdx !== -1) {
     state.shuffledFilteredScenes.splice(shuffleIdx, 1);
-    if (shuffleIdx < state.shuffleIndex) {
-      state.shuffleIndex--;
+    if (shuffleIdx < state.shuffleIndex) state.shuffleIndex--;
+  }
+
+  for (const cacheKey of ["all-scenes", "filtered-scenes"]) {
+    const cached = await getCachedScenes(cacheKey);
+    if (cached && cached.scenes.some((s) => s.id === sceneId)) {
+      const scenes = cached.scenes.filter((s) => s.id !== sceneId);
+      // Keep the original timestamp: removing one scene doesn't make the rest any fresher
+      await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey, cached.timestamp);
     }
   }
+  console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from caches`);
+}
+
+// --- Fun mode sandbox ---
+//
+// In fun mode, battles run their normal logic but ratings live only in memory: pools are served
+// as copies of the cached scenes (one copy per scene id), re-sorted by those copies' ratings, and
+// rating writes update the copies instead of Stash or the real cache.
+
+const funSandbox = new Map<string, Scene>();
+
+/** Fun-mode copy of a scene, created from the real one on first use. */
+export function sandboxScene(scene: Scene): Scene {
+  let copy = funSandbox.get(scene.id);
+  if (!copy) {
+    copy = { ...scene };
+    funSandbox.set(scene.id, copy);
+  }
+  return copy;
+}
+
+/** A real (rating-sorted) pool as sandbox copies, re-sorted by their in-memory ratings. */
+export function sandboxPool(pool: Scene[]): Scene[] {
+  // Stable sort: ties keep the real cache's order, unrated (0) stay last
+  return pool.map(sandboxScene).sort((a, b) => (b.rating100 ?? 0) - (a.rating100 ?? 0));
+}
+
+/** Fun-mode rating write: updates the in-memory copy only. */
+export function setSandboxRating(sceneId: string, rating100: number | null): void {
+  const real = funSandbox.has(sceneId) ? null : state.memoryCache.allScenes?.find((s) => s.id === sceneId);
+  const copy = funSandbox.get(sceneId) ?? (real ? sandboxScene(real) : null);
+  if (copy) copy.rating100 = rating100;
+}
+
+/** Forget all fun-mode ratings (fun mode toggled, cache refreshed). */
+export function resetSandbox(): void {
+  funSandbox.clear();
+}
+
+/** The scene's saved rating (from the real cache), for display while fun mode shows sandbox copies. */
+export function savedRating(scene: Scene): number | null | undefined {
+  const real = state.memoryCache.allScenes?.find((s) => s.id === scene.id);
+  return real ? real.rating100 : scene.rating100;
 }

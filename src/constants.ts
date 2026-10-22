@@ -6,13 +6,25 @@ export const CACHE_DB_VERSION = 1;
 export const CACHE_STORE_NAME = "scenes";
 export const CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes cache expiry
 
-// toggle: should scene2/opponents obey the same filter as scene1?
-// default is false (don't apply filter to both sides); user can override via UI.
-export const DEFAULT_FILTER_OPPONENTS = false;
+import type { Settings } from "./types";
 
-// LocalStorage keys for user preferences.
-export const FILTER_OPPONENTS_KEY = "sb_filterOpponents";
-export const MUTE_PREVIEWS_KEY = "sb_mutePreviews";
+/** Plugin id (folder name) — key for this plugin's settings in Stash's configuration. */
+export const PLUGIN_ID = "stash-battle";
+
+export const DEFAULT_SETTINGS: Settings = {
+  funMode: false,
+  openInNewTab: false,
+  unratedRating: 50,
+  previewVolume: 50,
+  autoplayPreviews: true,
+  filterOpponents: false,
+  cleanMode: false,
+  pauseMediaOnOpen: true,
+};
+
+// Pre-2.7 localStorage preference keys (migrated into plugin settings).
+export const LEGACY_FILTER_OPPONENTS_KEY = "sb_filterOpponents";
+export const LEGACY_MUTE_PREVIEWS_KEY = "sb_mutePreviews";
 
 // Swiss mode: initial rank band (±N) when picking a similar-strength opponent; doubles until candidates exist.
 export const SWISS_OPPONENT_REACH_INITIAL = 10;

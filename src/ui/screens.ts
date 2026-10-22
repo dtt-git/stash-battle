@@ -1,9 +1,10 @@
 // Victory and placement end-screens for gauntlet/champion runs.
 
-import { resetGauntletState, state } from "../state";
+import { ratingsEnabled } from "../rating";
+import { resetRunState, state } from "../state";
 import { saveState } from "../storage";
 import type { Scene } from "../types";
-import { loadNewPair } from "./mainUI";
+import { loadNewPair, setActionsVisible } from "./mainUI";
 import { resolveSceneTitle } from "./sceneTitle";
 
 function buildEndScreenHtml(
@@ -20,15 +21,15 @@ function buildEndScreenHtml(
       <div class="sb-end-screen">
         <div class="sb-end-screen-icon">${crown}</div>
         <h2 class="sb-end-screen-headline">${headline}</h2>
-        <div class="sb-end-screen-scene">
+        <div class="sb-end-screen-scene pwr-scene-image-container">
           ${
             screenshotPath
-              ? `<img class="sb-end-screen-image" src="${screenshotPath}" alt="${title}" />`
+              ? `<img class="sb-end-screen-image pwr-scene-image" src="${screenshotPath}" alt="${title}" />`
               : `<div class="sb-end-screen-image sb-no-image">No Screenshot</div>`
           }
         </div>
         <h3 class="sb-end-screen-name">${title}</h3>
-        <p class="sb-end-screen-stats">${statsHtml}</p>
+        <p class="sb-end-screen-stats">${statsHtml}${ratingsEnabled() ? "" : "<br><em>🎈 Fun mode: rating not saved</em>"}</p>
         <button id="sb-new-gauntlet" class="btn btn-primary">${buttonLabel}</button>
       </div>
     `;
@@ -40,19 +41,16 @@ function showEndScreen(html: string): void {
   if (!comparisonArea) return;
 
   comparisonArea.innerHTML = html;
-
-  const actionsEl = document.querySelector<HTMLElement>(".sb-actions");
-  if (actionsEl) actionsEl.style.display = "none";
+  setActionsVisible(false);
 
   comparisonArea.querySelector("#sb-new-gauntlet")?.addEventListener("click", () => {
-    if (actionsEl) actionsEl.style.display = "";
     loadNewPair();
   });
 }
 
 /** Capture display values, clear run state, then show the end screen. */
 function finishRunShowEndScreen(html: string): void {
-  resetGauntletState();
+  resetRunState();
   saveState();
   showEndScreen(html);
 }
@@ -77,11 +75,13 @@ export function showVictoryScreen(champion: Scene): void {
 }
 
 export function showPlacementScreen(scene: Scene, rank: number, finalRating: number): void {
+  const battles = state.placement?.battles;
+  const battlesLine = battles ? ` · ${battles} battle${battles === 1 ? "" : "s"}` : "";
   const html = buildEndScreenHtml(
     scene,
     "📍",
     "PLACED!",
-    `Rank <strong>#${rank}</strong> of ${state.totalScenesCount}<br>Rating: <strong>${finalRating}/100</strong>`,
+    `Rank <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesLine}<br>Rating: <strong>${finalRating}/100</strong>`,
     "Start New Run",
   );
 

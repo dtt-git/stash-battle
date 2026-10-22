@@ -1,6 +1,4 @@
-<img width="1696" height="1135" alt="image" src="https://github.com/user-attachments/assets/4983d20c-2141-4000-afd5-cc1a669d4ddd" />
-
-NSFW Demo Video on the Stash forum post: https://discourse.stashapp.cc/t/stash-battle/5180
+<img width="1000" height="702" alt="Stash Battle: two scenes side by side with the Battle and Settings tabs, mode buttons and preview volume" src="docs/screenshots/battle.jpg" />
 
 # ⚔️ Stash Battle
 
@@ -12,19 +10,35 @@ Stash Battle presents you with two scenes side-by-side and asks you to pick the 
 
 ## Features
 
-- **Three Comparison Modes:**
-  - **Swiss** ⚖️ – Fair matchups between similarly-rated scenes. Both scenes' ratings adjust based on the outcome.
-  - **Gauntlet** 🎯 – Place a random scene in your rankings. It climbs from the bottom, challenging each scene above it until it loses, then settles into its final position.
+- **Four Comparison Modes:**
+  - **Swiss** ⚖️ – Fair matchups between similarly-rated scenes. Both scenes' ratings adjust based on the outcome. Scenes stay in the pool, so you can keep battling a small filter indefinitely.
+  - **Placement** 📍 – Place a scene fast. Each pick narrows the range of ranks it could land in (shown on its card). A rated scene starts near its current rank and takes bigger jumps while it keeps winning or losing, then bounces back with smaller steps once it overshoots, so it never skips scenes it belongs among. An unrated scene lands in about 10 picks even in a library of 500+ rated scenes.
+  - **Gauntlet** 🎯 – Climb the ladder. A scene climbs from the bottom, challenging scenes above it until it loses, then falls to find its floor.
   - **Champion** 🏆 – Winner stays on. The winning scene keeps battling until it's dethroned.
 
-- **Filtering**: Apply any filters on the scenes page before opening Battle. What you see on the scenes page is what you get in Stash Battle. By default, filtered scenes appear on the left (scenes to rate) and opponents come from your full library on the right.
+- **Filtering**: Apply any filters on the scenes page before opening Battle. What you see on the scenes page is what you get in Stash Battle, in every mode; a line above the cards shows whether you're rating your filter or your whole library, and how many scenes that is. By default, filtered scenes appear on the left (scenes to rate) and opponents come from your full library on the right.
+
+- **Settings tab** (next to the Battle tab, or Stash's Settings → Plugins). Saves to Stash:
+  - **Fun mode** – battle without changing any ratings; every mode still plays out normally, nothing is saved
+  - **Autoplay previews** – both loop silently; hover a card to hear it (on by default)
+  - **Pause playing video when Battle opens** – on by default; turn it off to keep a scene playing behind the battle
+  - **Open scenes in a new tab** when clicking a thumbnail
+  - **Unrated scene rating** – what unrated scenes count as in Swiss (50 by default, a classic ELO start; 0 starts them at the bottom)
+  - **Use filtered scenes for both sides**
+  - **Clean mode** – a 🗑 button on each card opens Stash's own delete dialog (same options and defaults as deleting in Stash), so you can clean up without leaving the battle
+
+- **Preview volume** slider on the tab bar (it follows perceived loudness); click the speaker to mute or unmute.
+
+- **Works on phones and tablets**: the cards stay side by side on tablets, stack compactly on phones, and Skip stays pinned at the bottom. On touch screens, tap a thumbnail to play its preview, use ↗ to open the scene, and tap ⓘ next to the modes for an explanation of the current mode.
+
+- **SFW Switch support**: thumbnails and previews blur when the [SFW Switch](https://github.com/stashapp/CommunityScripts) plugin's SFW mode is on.
 
 
 ## Installation
 
-⚠️ Install at your own risk, nearly entirely vibe coded for myself but I review code and test as thoroughly as I can.
+⚠️ Install at your own risk, nearly entirely vibe coded for myself but I review (some) of the code and test as thoroughly as I can.
 
-Recommend saving a backup of your database beforehand (Settings → Interface → Editing) just in case. 
+Recommend saving a backup of your database beforehand (Settings → Tasks → Backup) just in case. 
 
 ### Source Index: 
 
@@ -38,13 +52,15 @@ Recommend saving a backup of your database beforehand (Settings → Interface �
 
 Optional Step: Change Rating System Type to "Decimal" (Settings → Interface → Editing)
 1. Navigate to the **Scenes** page in Stash
-2. (Optional) Apply any filters or search to narrow down which scenes you want to rate
+2. (Optional) Apply any filters or search to narrow down which scenes you want to rate (the line above the cards confirms what you're rating)
 3. Click the **Battle** button in the navbar
-4. Choose your preferred comparison mode
-5. Click on a scene (or use arrow keys) to pick the winner
+4. Choose a mode (hover a mode, or tap ⓘ on a phone, for a short explanation)
+5. Click a scene (or press ← / →) to pick the winner; Space skips the pair
 6. Watch your rankings evolve over time!
 
-As well you can open battle on a scene page which puts that scene into battle right away. 
+You can also open Battle on a scene page, which puts that scene into a battle right away. 
+
+Settings live in the **Settings** tab next to **Battle**.
 
 
 ## How It Works
@@ -63,6 +79,8 @@ The plugin uses an ELO-inspired algorithm where:
 | 15+ | 4 | Very stable ratings that resist large swings |
 
 In Gauntlet and Champion mode, only the active climber’s rating changes during a run (opponents are benchmarks). Climber wins use a high K-factor so placements move quickly.
+
+In Placement mode no ratings change until the scene's spot is found; then it gets one rating between the scenes directly above and below it.
 
 ## Development
 
@@ -105,15 +123,17 @@ With the watcher running, edit any file in `src/` and save — the build deploys
 | Module | Responsibility |
 |--------|----------------|
 | `types.ts` / `constants.ts` | Shared types and constants |
-| `state.ts` | Central mutable runtime state + `resetGauntletState()` |
+| `state.ts` | Central mutable runtime state + `resetRunState()` |
+| `settings.ts` | User settings stored in Stash's plugin config |
 | `graphql.ts` | Stash GraphQL access + `SCENE_FRAGMENT` |
 | `cache.ts` | IndexedDB + in-memory scene cache (stale-while-revalidate) |
 | `storage.ts` | localStorage session persistence |
 | `filters.ts` | URL filter parsing + filtered-scene selection |
-| `pairs.ts` | Matchmaking for Swiss / Gauntlet / Champion modes |
+| `pairs.ts` | Matchmaking for Swiss / Placement / Gauntlet / Champion modes |
 | `elo.ts` | ELO rating math |
 | `rating.ts` | Persist ratings to Stash, keep pools in sync |
-| `ui/*` | Scene cards, screens, main UI, nav button, modal |
+| `sceneActions.ts` | Checks for scenes deleted while in a battle |
+| `ui/*` | Scene cards, screens, main UI, settings panel, delete dialog, nav button, modal |
 | `main.ts` | Entry point / bootstrap |
 
 ## License

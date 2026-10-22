@@ -1,81 +1,155 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
-import { clearFilteredCache, getAllScenesCached, removeFromFilteredPool } from "../cache";
-import { calculateRatingChanges } from "../elo";
+import { clearFilteredCache, removeSceneEverywhere, sandboxScene } from "../cache";
+import { calculateRatingChanges, effectiveRating } from "../elo";
 import { CLIMB_K_PLAY_COUNT, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
 import { readFilters } from "../filters";
 import { fetchSceneById } from "../graphql";
 import { navigateToUrl } from "../navigation";
-import { applyClimbWinRating, fetchChampionPair, fetchGauntletPair, fetchSwissPair } from "../pairs";
-import { updateSceneRating } from "../rating";
-import { state } from "../state";
+import {
+  applyClimbWinRating,
+  fetchChampionPair,
+  fetchGauntletPair,
+  fetchPlacementPair,
+  fetchSwissPair,
+  loadPoolSize,
+  recordPlacementResult,
+} from "../pairs";
+import { ratingsEnabled, updateSceneRating } from "../rating";
+import { findExistingSceneIds } from "../sceneActions";
+import { isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { saveState } from "../storage";
 import type { BattleSide, ComparisonDeltas, Mode, Rank, Scene } from "../types";
+import { confirmDeleteScene } from "./deleteDialog";
 import { createSceneCard } from "./sceneCard";
 import { showPlacementScreen, showVictoryScreen } from "./screens";
+import { createSettingsTab, createTabBar, getActiveTab } from "./settingsPanel";
+
+const MODES: { mode: Mode; icon: string; title: string; desc: string; tip: string }[] = [
+  {
+    mode: "swiss",
+    icon: "⚖️",
+    title: "Swiss",
+    desc: "Fair matchups",
+    tip: "Each scene faces an opponent with a similar rating. Both ratings change after every pick, and every scene stays in the rotation.",
+  },
+  {
+    mode: "placement",
+    icon: "📍",
+    title: "Placement",
+    desc: "Place a scene",
+    tip: "Finds where one scene belongs. Each pick narrows the range of ranks it could land in (shown on its card) until its spot is found, about 10 picks for an unrated scene. Only its rating changes, once at the end.",
+  },
+  {
+    mode: "gauntlet",
+    icon: "🎯",
+    title: "Gauntlet",
+    desc: "Climb the ladder",
+    tip: "A scene starts at the bottom and climbs by beating the scenes above it. When it loses, it falls until it finds its floor. Only the climber's rating changes.",
+  },
+  {
+    mode: "champion",
+    icon: "🏆",
+    title: "Champion",
+    desc: "Winner stays on",
+    tip: "Winner stays on: the scene you pick keeps defending against new challengers until it's beaten, then the winner takes over.",
+  },
+];
 
 export function createMainUI(): string {
+  const modeButtons = MODES.map(
+    ({ mode, icon, title, desc, tip }) => `
+            <button class="sb-mode-btn ${state.currentMode === mode ? "active" : ""}" data-mode="${mode}" data-tip="${tip}" aria-description="${tip}">
+              <span class="sb-mode-icon">${icon}</span>
+              <span class="sb-mode-title">${title}</span>
+              <span class="sb-mode-desc">${desc}</span>
+            </button>`,
+  ).join("");
+
   return `
       <div id="stash-battle-container" class="sb-container">
         <div class="sb-header">
           <h1 class="sb-title">⚔️ Stash Battle</h1>
           <p class="sb-subtitle">Compare scenes head-to-head to build your rankings</p>
+          ${createTabBar()}
+        </div>
 
-          <div class="sb-mode-toggle">
-            <button class="sb-mode-btn ${state.currentMode === "swiss" ? "active" : ""}" data-mode="swiss">
-              <span class="sb-mode-icon">⚖️</span>
-              <span class="sb-mode-title">Swiss</span>
-              <span class="sb-mode-desc">Fair matchups</span>
-            </button>
-            <button class="sb-mode-btn ${state.currentMode === "gauntlet" ? "active" : ""}" data-mode="gauntlet">
-              <span class="sb-mode-icon">🎯</span>
-              <span class="sb-mode-title">Gauntlet</span>
-              <span class="sb-mode-desc">Place a scene</span>
-            </button>
-            <button class="sb-mode-btn ${state.currentMode === "champion" ? "active" : ""}" data-mode="champion">
-              <span class="sb-mode-icon">🏆</span>
-              <span class="sb-mode-title">Champion</span>
-              <span class="sb-mode-desc">Winner stays on</span>
-            </button>
+        <div class="sb-tab-panel" data-panel="battle">
+          <p id="sb-fun-badge" class="sb-fun-badge" ${state.settings.funMode ? "" : "hidden"}>🎈 Fun mode: ratings are not saved</p>
+          <div class="sb-mode-row">
+            <div class="sb-mode-toggle">${modeButtons}
+            </div>
+            <button type="button" class="sb-mode-info-btn" aria-controls="sb-mode-info" aria-expanded="false" aria-label="What does this mode do?">ⓘ</button>
           </div>
+          <p id="sb-mode-info" class="sb-mode-info" hidden></p>
 
-          <div class="sb-opponents-toggle" style="margin-top:8px;">
-            <label>
-              <input type="checkbox" id="sb-filter-opponents-checkbox" ${state.filterOpponents ? "checked" : ""}>
-               Use filtered scenes for both sides
-            </label>
-            <label style="margin-left:16px;">
-              <input type="checkbox" id="sb-mute-previews-checkbox" ${state.mutePreviews ? "checked" : ""}>
-               Mute hover previews
-            </label>
-          </div>
           <p id="sb-climb-pool-warning" class="sb-climb-warning" hidden>
             Gauntlet and Champion can behave oddly with small filtered pools when both sides use the filter
-            (fewer than ${CLIMB_SMALL_POOL_WARN_AT} scenes). Prefer a larger filter or turn off filter opponents.
+            (fewer than ${CLIMB_SMALL_POOL_WARN_AT} scenes). Use a larger filter, or turn off
+            "Use filtered scenes for both sides" in Settings.
           </p>
+
+          <p id="sb-pool-status" class="sb-pool-status" hidden></p>
+
+          <div class="sb-content">
+            <div id="sb-comparison-area" class="sb-comparison-area">
+              <div class="sb-loading">Loading scenes...</div>
+            </div>
+            <div class="sb-actions">
+              <div class="sb-action-buttons">
+                <button id="sb-skip-btn" class="btn btn-secondary">Skip</button>
+                <button id="sb-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh</button>
+              </div>
+              <div class="sb-keyboard-hint">
+                <span>←</span> choose left ·
+                <span>→</span> choose right ·
+                <span>Space</span> skip
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="sb-content">
-          <div id="sb-comparison-area" class="sb-comparison-area">
-            <div class="sb-loading">Loading scenes...</div>
-          </div>
-          <div class="sb-actions">
-            <div class="sb-action-buttons">
-              <button id="sb-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
-              <button id="sb-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh Cache</button>
-            </div>
-            <div class="sb-keyboard-hint">
-              <span>← Left Arrow</span> to choose left ·
-              <span>→ Right Arrow</span> to choose right ·
-              <span>Space</span> to skip
-            </div>
-          </div>
-        </div>
+        ${createSettingsTab()}
       </div>
     `;
 }
 
+/** Touch screens have no hover tooltips: the ⓘ button shows the current mode's explanation here. */
+export function updateModeInfo(): void {
+  const info = document.getElementById("sb-mode-info");
+  const mode = MODES.find((m) => m.mode === state.currentMode);
+  if (info && mode) info.innerHTML = `<strong>${mode.icon} ${mode.title}:</strong> ${mode.tip}`;
+}
+
+/** "Which scenes am I rating?" line above the cards: the Scenes page filter or the whole library. */
+export function updatePoolStatus(): void {
+  const status = document.getElementById("sb-pool-status");
+  if (!status) return;
+  const count = state.leftPoolSize;
+  const countHtml =
+    count === null ? "" : ` · <strong>${count} scene${count === 1 ? "" : "s"}</strong>`;
+
+  if (readFilters().filterActive) {
+    const opponents = state.settings.filterOpponents ? " · opponents from the filter too" : "";
+    status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${opponents}`;
+  } else {
+    status.innerHTML = `Rating scenes from your whole library${countHtml}<span class="sb-pool-hint"> · filter the Scenes page to narrow it down</span>`;
+  }
+  status.hidden = false;
+}
+
+/** Show/hide the fun mode badge to match the setting. */
+export function updateFunBadge(): void {
+  const badge = document.getElementById("sb-fun-badge");
+  if (badge) badge.hidden = !state.settings.funMode;
+}
+
 function climbStatusBadge(scene: Scene): number | string | null {
+  if (state.currentMode === "placement") {
+    const run = state.placement;
+    if (run?.scene.id !== scene.id || run.rangeHi === run.rangeLo) return null;
+    return `📍 Narrowing between #${run.rangeLo + 1} and #${run.rangeHi + 1}`;
+  }
   if (state.currentMode !== "gauntlet" && state.currentMode !== "champion") return null;
   if (state.gauntletFalling && state.gauntletFallingScene?.id === scene.id) {
     return "📍 Finding final placement...";
@@ -100,6 +174,85 @@ interface SceneChoice {
 
 function bindSceneChoice(body: HTMLElement, choice: SceneChoice): void {
   body.addEventListener("click", () => handleSceneChoice(choice));
+}
+
+/** Show or hide the Skip / Refresh bar. Only end screens hide it; every rendered pair shows it. */
+export function setActionsVisible(visible: boolean): void {
+  const actionsEl = document.querySelector<HTMLElement>(".sb-actions");
+  if (actionsEl) actionsEl.style.display = visible ? "" : "none";
+}
+
+/** Touch devices have no hover: thumbnails toggle the preview instead of opening the scene. */
+function isTouchDevice(): boolean {
+  return window.matchMedia("(hover: none)").matches;
+}
+
+/** Thumbnail / ↗ link click: native link for new tab or modifier clicks, SPA navigation otherwise. */
+function handleSceneLinkClick(e: MouseEvent, link: HTMLAnchorElement): void {
+  const nativeNewTab = link.target === "_blank" && state.settings.openInNewTab;
+  if (nativeNewTab || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  navigateToUrl(link.getAttribute("href") || "");
+}
+
+/**
+ * Slider (0-100) to media volume on a cubic curve, so the slider tracks perceived loudness.
+ * (Stash's player is linear, but generated preview clips are much louder than the source.)
+ */
+function sliderToVolume(slider: number): number {
+  return Math.pow(slider / 100, 3);
+}
+
+/** Apply volume/autoplay settings to the rendered preview videos (hovered card is audible). */
+export function applyPreviewSettings(): void {
+  const { previewVolume, autoplayPreviews } = state.settings;
+  const battleVisible = getActiveTab() === "battle";
+  document.querySelector(".sb-vs-container")?.classList.toggle("sb-autoplay", autoplayPreviews);
+
+  document.querySelectorAll<HTMLElement>("#sb-comparison-area .sb-scene-card").forEach((card) => {
+    const video = card.querySelector<HTMLVideoElement>(".sb-hover-preview");
+    if (!video) return;
+    const active = card.matches(":hover") || card.classList.contains("sb-previewing");
+    video.volume = sliderToVolume(previewVolume);
+    video.muted = !active || previewVolume === 0;
+    if (battleVisible && (autoplayPreviews || active)) {
+      if (video.paused) video.play().catch(() => {});
+    } else {
+      video.pause();
+      video.currentTime = 0;
+    }
+  });
+}
+
+function bindPreview(card: HTMLElement): void {
+  const video = card.querySelector<HTMLVideoElement>(".sb-hover-preview");
+  if (!video) return;
+
+  card.addEventListener("mouseenter", () => {
+    if (isTouchDevice()) return;
+    if (!state.settings.autoplayPreviews) video.currentTime = 0;
+    video.volume = sliderToVolume(state.settings.previewVolume);
+    video.muted = state.settings.previewVolume === 0;
+    video.play().catch(() => {});
+  });
+
+  card.addEventListener("mouseleave", () => {
+    if (isTouchDevice()) return;
+    if (state.settings.autoplayPreviews) {
+      video.muted = true;
+      return;
+    }
+    video.pause();
+    video.currentTime = 0;
+  });
+}
+
+/** Touch: tap the thumbnail to play/stop its preview with sound. */
+function togglePreview(card: HTMLElement): void {
+  const previewing = !card.classList.contains("sb-previewing");
+  document.querySelectorAll(".sb-scene-card.sb-previewing").forEach((c) => c.classList.remove("sb-previewing"));
+  card.classList.toggle("sb-previewing", previewing);
+  applyPreviewSettings();
 }
 
 // Shared rendering logic for displaying a pair of scenes
@@ -147,47 +300,45 @@ export function renderPair(scenes: Scene[], ranks: Rank[]): void {
       winnerRank: ranks[1],
       loserRank: ranks[0],
     });
+
+    leftCard.querySelector(".sb-delete-btn")?.addEventListener("click", () => void deleteFromBattle(left));
+    rightCard.querySelector(".sb-delete-btn")?.addEventListener("click", () => void deleteFromBattle(right));
   }
 
-  // Attach click-to-open (for thumbnail only) - use React Router navigation
-  comparisonArea.querySelectorAll<HTMLElement>(".sb-scene-image-container").forEach((container) => {
-    const sceneUrl = container.dataset.sceneUrl;
-
-    container.addEventListener("click", () => {
-      if (sceneUrl) {
-        navigateToUrl(sceneUrl);
-      }
-    });
-  });
-
-  // Attach hover preview to entire card
   comparisonArea.querySelectorAll<HTMLElement>(".sb-scene-card").forEach((card) => {
-    const video = card.querySelector<HTMLVideoElement>(".sb-hover-preview");
-    if (!video) return;
-
-    card.addEventListener("mouseenter", () => {
-      video.currentTime = 0;
-      video.muted = state.mutePreviews;
-      video.volume = 0.5;
-      video.play().catch(() => {});
+    const thumb = card.querySelector<HTMLAnchorElement>(".sb-scene-image-container");
+    thumb?.addEventListener("click", (e) => {
+      if (isTouchDevice()) {
+        e.preventDefault();
+        togglePreview(card);
+        return;
+      }
+      handleSceneLinkClick(e, thumb);
     });
-
-    card.addEventListener("mouseleave", () => {
-      video.pause();
-      video.currentTime = 0;
+    const openLink = card.querySelector<HTMLAnchorElement>(".sb-open-link");
+    openLink?.addEventListener("click", (e) => {
+      if (!state.settings.openInNewTab) handleSceneLinkClick(e, openLink);
     });
+    bindPreview(card);
   });
+  applyPreviewSettings();
+
+  setActionsVisible(true);
 
   // Update skip button state
   const skipBtn = document.querySelector<HTMLButtonElement>("#sb-skip-btn");
-  if (skipBtn) {
-    const disableSkip =
-      (state.currentMode === "gauntlet" || state.currentMode === "champion") &&
-      state.gauntletClimber !== null;
-    skipBtn.disabled = disableSkip;
-    skipBtn.style.opacity = disableSkip ? "0.5" : "1";
-    skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
+  if (skipBtn) skipBtn.disabled = isRunActive();
+}
+
+/** Skip the current pair (not allowed mid-run). */
+export function skipPair(): void {
+  if (isRunActive() || state.disableChoice) return;
+  state.disableChoice = true;
+  if (state.currentMode !== "swiss") {
+    resetRunState();
+    saveState();
   }
+  loadNewPair();
 }
 
 export async function loadNewPair(forcedLeftSceneId: string | null = null): Promise<void> {
@@ -211,6 +362,8 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     let forcedLeftScene: Scene | null = null;
     if (forcedLeftSceneId) {
       forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+      // Fun mode battles only ever touch sandbox copies (see cache.ts)
+      if (forcedLeftScene && !ratingsEnabled()) forcedLeftScene = sandboxScene(forcedLeftScene);
       if (!forcedLeftScene) {
         console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
       }
@@ -219,7 +372,17 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     let scenes: Scene[] = [];
     let ranks: Rank[] = [null, null];
 
-    if (state.currentMode === "gauntlet") {
+    if (state.currentMode === "placement") {
+      const placementResult = await fetchPlacementPair(forcedLeftScene);
+
+      if (placementResult.done) {
+        showPlacementScreen(placementResult.scene, placementResult.rank, placementResult.rating);
+        return;
+      }
+
+      scenes = placementResult.scenes;
+      ranks = placementResult.ranks;
+    } else if (state.currentMode === "gauntlet") {
       const gauntletResult = await fetchGauntletPair(forcedLeftScene);
 
       // Check for victory (champion reached #1)
@@ -274,6 +437,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     );
 
     renderPair(scenes, ranks);
+    updatePoolStatus();
     updateClimbPoolWarning();
     saveState();
   } catch (error) {
@@ -287,6 +451,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
           <button id="sb-error-retry" class="btn btn-primary">Retry</button>
         </div>
       `;
+    setActionsVisible(true);
 
     // Attach retry handler
     const retryBtn = document.getElementById("sb-error-retry") as HTMLButtonElement | null;
@@ -298,10 +463,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
         if (isNoScenes) {
           // "No scenes" error: clear everything and start fresh
           await clearFilteredCache();
-          state.shuffledFilteredScenes = [];
-          state.shuffleIndex = 0;
-          state.shuffleFilterKey = null;
-          state.removedSceneIds.clear();
+          resetShuffle();
         }
         // Network/other errors: just retry without clearing session state
 
@@ -311,20 +473,91 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
   }
 }
 
-export function restoreCurrentPair(): void {
+/** Render the saved pair, unless one of its scenes was deleted in Stash meanwhile. */
+export async function restoreCurrentPair(): Promise<void> {
   state.disableChoice = false;
-  console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
+  const left = state.currentPair.left as Scene;
+  const right = state.currentPair.right as Scene;
 
-  // Pre-warm the cache in background for when user makes a choice
-  if (!state.memoryCache.allScenes) {
-    console.log("[Stash Battle] 🔥 Pre-warming cache in background...");
-    getAllScenesCached(); // Don't await - runs in background
+  // Load the (cached) pools in the background: pre-warms them for the next choice and fills in
+  // the pool size on the status line, which a restored pair otherwise doesn't know yet
+  void loadPoolSize()
+    .then(updatePoolStatus)
+    .catch((e) => console.warn("[Stash Battle] Could not load scene pools for the status line:", e));
+
+  if (!(await verifyCurrentPair())) return;
+
+  console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
+  renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
+  updatePoolStatus();
+}
+
+/**
+ * Check the current pair still exists in Stash (scenes may be deleted elsewhere). If one is gone,
+ * continue without it and return false. Network errors count as "still there".
+ */
+export async function verifyCurrentPair(): Promise<boolean> {
+  const { left, right } = state.currentPair;
+  if (!left || !right) return true;
+  try {
+    const existing = await findExistingSceneIds([left.id, right.id]);
+    const gone = [left, right].find((s) => !existing.has(s.id));
+    if (gone) {
+      console.log(`[Stash Battle] 👻 Scene ${gone.id} in the current pair no longer exists`);
+      await handleSceneGone(gone.id);
+      return false;
+    }
+  } catch (e) {
+    console.warn("[Stash Battle] Could not verify current pair:", e);
+  }
+  return true;
+}
+
+/** Forget a scene id referenced by the current run (it no longer exists). */
+function dropFromRun(sceneId: string): void {
+  state.gauntletDefeated = state.gauntletDefeated.filter((id) => id !== sceneId);
+  const run = state.placement;
+  if (!run) return;
+  if (run.aboveId === sceneId) run.aboveId = null;
+  if (run.belowId === sceneId) run.belowId = null;
+  if (run.lastOpponentId === sceneId) {
+    run.lastOpponentId = null;
+    run.galloping = false;
+  }
+}
+
+/**
+ * A scene in play no longer exists. If it was the scene being rated/placed/climbing, start over;
+ * otherwise keep the other scene and find it a new opponent.
+ */
+export async function handleSceneGone(sceneId: string): Promise<void> {
+  await removeSceneEverywhere(sceneId);
+
+  const { left, right } = state.currentPair;
+  const runSceneIds = [left?.id, state.placement?.scene.id, state.gauntletClimber?.id, state.gauntletFallingScene?.id];
+
+  if (runSceneIds.includes(sceneId)) {
+    resetRunState();
+    saveState();
+    await loadNewPair();
+    return;
   }
 
-  renderPair(
-    [state.currentPair.left as Scene, state.currentPair.right as Scene],
-    [state.currentRanks.left, state.currentRanks.right],
-  );
+  dropFromRun(sceneId);
+  saveState();
+  // Forced left only applies when no run is under way (Swiss, or before a climb starts)
+  const keepId = right?.id === sceneId ? left?.id : null;
+  await loadNewPair(keepId ?? null);
+}
+
+/** Clean mode: Stash's own delete dialog does the deleting; then continue the battle without it. */
+async function deleteFromBattle(scene: Scene): Promise<void> {
+  if (state.disableChoice) return;
+  const deleted = await confirmDeleteScene(scene);
+  if (!deleted) return;
+
+  state.disableChoice = true;
+  await handleSceneGone(scene.id);
 }
 
 function activeClimberId(): string | null {
@@ -338,6 +571,12 @@ function battleRoleFor(sceneId: string, mode: Mode): BattleSide["role"] {
   if (mode === "swiss") return "combatant";
   const climberId = activeClimberId();
   return climberId !== null && sceneId === climberId ? "climber" : "benchmark";
+}
+
+/** Rating used in ELO math. The unrated-rating setting applies to Swiss; climbs start from the bottom. */
+function battleRating(scene: Scene): number {
+  const unrated = state.currentMode === "swiss" ? state.settings.unratedRating : 0;
+  return effectiveRating(scene.rating100, unrated);
 }
 
 /** Apply climb/champion rules on top of raw two-sided ELO. Swiss uses the raw result as-is. */
@@ -365,11 +604,11 @@ function applyModePolicy(
   return { winner: winnerDelta, loser: loserDelta };
 }
 
-/** Run pure ELO math and persist any rating changes to Stash. */
+/** Run pure ELO math and write any rating changes (to Stash, or in fun mode to the in-memory sandbox). */
 function resolveComparison(winner: Scene, loser: Scene): ComparisonDeltas {
   const mode = state.currentMode;
-  const winnerRating = winner.rating100 || 1;
-  const loserRating = loser.rating100 || 1;
+  const winnerRating = battleRating(winner);
+  const loserRating = battleRating(loser);
 
   const climberId = activeClimberId();
   const winnerPlayCount =
@@ -401,10 +640,27 @@ export function updateClimbPoolWarning(): void {
 
   warning.hidden = !(
     isClimb &&
-    state.filterOpponents &&
+    state.settings.filterOpponents &&
     filters.filterActive &&
     smallPool
   );
+}
+
+/** Placement: record the result; the next pair (or the final placement) comes from the fetch. */
+function handlePlacementChoice(choice: SceneChoice): void {
+  const run = state.placement;
+  if (!run) {
+    state.disableChoice = false;
+    return;
+  }
+
+  const won = choice.winner.id === run.scene.id;
+  recordPlacementResult(won, won ? choice.loser.id : choice.winner.id);
+  saveState();
+
+  choice.winnerCard.classList.add("sb-winner");
+  choice.loserCard.classList.add("sb-loser");
+  setTimeout(() => loadNewPair(), 600);
 }
 
 /** Gauntlet climb / first-battle path (after falling-mode branch). */
@@ -557,8 +813,6 @@ function handleSceneChoice(choice: SceneChoice): void {
   const {
     winner: winnerScene,
     loser: loserScene,
-    left,
-    right,
     winnerCard,
     loserCard,
     loserRank,
@@ -566,15 +820,18 @@ function handleSceneChoice(choice: SceneChoice): void {
 
   const winnerId = winnerScene.id;
   const loserId = loserScene.id;
-  const winnerRating = winnerScene.rating100 || 1;
-  const loserRating = loserScene.rating100 || 1;
-  const loserDisplayRating = loserScene.rating100 || 0;
+
+  if (state.currentMode === "placement") {
+    handlePlacementChoice(choice);
+    return;
+  }
 
   // Handle gauntlet mode (climber tracking)
   if (state.currentMode === "gauntlet") {
     // Check if we're in falling mode (finding floor after a loss)
     if (state.gauntletFalling && state.gauntletFallingScene) {
       const fallingScene = state.gauntletFallingScene;
+      const loserRating = loserScene.rating100 || 1;
       console.log(
         `[Stash Battle] 📊 Falling mode: fallingScene=${fallingScene.id} winnerId=${winnerId} loserId=${loserId} loserRating=${loserRating}`,
       );
@@ -626,28 +883,19 @@ function handleSceneChoice(choice: SceneChoice): void {
     return;
   }
 
-  // For Swiss: Calculate and show rating changes
+  // Swiss: calculate and show rating changes (both scenes stay in the pool)
+  const winnerStart = battleRating(winnerScene);
+  const loserStart = battleRating(loserScene);
   const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
-  const newWinnerRating = winnerRating + winnerDelta;
-  const newLoserRating = loserDisplayRating + loserDelta;
-
-  // Remove both scenes from filtered pool (they've been processed)
-  removeFromFilteredPool(left.id);
-  removeFromFilteredPool(right.id);
 
   saveState();
 
   winnerCard.classList.add("sb-winner");
   if (loserCard) loserCard.classList.add("sb-loser");
 
-  showRatingAnimation(winnerCard, winnerRating, newWinnerRating, true);
+  showRatingAnimation(winnerCard, winnerStart, winnerStart + winnerDelta, true);
   if (loserCard) {
-    showRatingAnimation(
-      loserCard,
-      loserDisplayRating,
-      loserDelta !== 0 ? newLoserRating : loserDisplayRating,
-      false,
-    );
+    showRatingAnimation(loserCard, loserStart, loserStart + loserDelta, false);
   }
   scheduleNextPairAfterAnimations();
 }
@@ -659,7 +907,8 @@ const RATING_ANIM_DEFAULT_STEP_MS = 50;
 const RATING_ANIM_MIN_STEP_MS = 8;
 
 function scheduleNextPairAfterAnimations(): void {
-  setTimeout(() => loadNewPair(), 1500);
+  // Fun mode has no rating animation to wait for
+  setTimeout(() => loadNewPair(), ratingsEnabled() ? 1500 : 600);
 }
 
 /** Count-up/down overlay; large jumps speed up so the full count fits within 1400ms. */
@@ -669,6 +918,7 @@ function showRatingAnimation(
   newRating: number,
   isWinner: boolean,
 ): void {
+  if (!ratingsEnabled()) return;
   const change = newRating - oldRating;
   // Create overlay
   const overlay = document.createElement("div");

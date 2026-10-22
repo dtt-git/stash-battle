@@ -1,13 +1,16 @@
 // Matchmaking: build the scene pairs for each comparison mode.
 
-import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached } from "./cache";
+import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached, sandboxPool } from "./cache";
 import { CLIMB_OPPONENT_PICK_WINDOW, SWISS_OPPONENT_REACH_INITIAL, SWISS_OPPONENT_REACH_MULTIPLIER } from "./constants";
+import { effectiveRating } from "./elo";
 import { readFilters, type ListFilters } from "./filters";
 import { updateSceneRating } from "./rating";
 import { state } from "./state";
 import type {
   ChampionPairResult,
   GauntletPairResult,
+  PlacementPairResult,
+  PlacementRun,
   Rank,
   Scene,
   SwissPairResult,
@@ -25,160 +28,145 @@ function shuffleArray<T>(array: T[]): T[] {
 // Track last scene to avoid immediate repeat after reshuffle
 let lastShownSceneId: string | null = null;
 
-/** Next left-side scene from the shuffled left pool (no network fetch). */
-function getNextFilteredScene(leftPool: Scene[], filterKey: string): Scene | null {
-  if (state.shuffleFilterKey !== null && filterKey !== state.shuffleFilterKey) {
-    console.log("[Stash Battle] 🔀 Filter changed, resetting removed scenes tracking");
-    state.removedSceneIds.clear();
+/** True once every scene in the current shuffle has been shown (time to re-query the filter). */
+function isShuffleCycleComplete(filterKey: string): boolean {
+  return (
+    state.shuffleFilterKey === filterKey &&
+    state.shuffledFilteredScenes.length > 0 &&
+    state.shuffleIndex >= state.shuffledFilteredScenes.length
+  );
+}
+
+/** Reshuffle the left pool for a new pass, without showing the previous pass's last scene first. */
+function startNewPass(leftPool: Scene[]): void {
+  console.log("[Stash Battle] 🔀 Reshuffling (completed full cycle)");
+  state.shuffledFilteredScenes = shuffleArray(leftPool);
+  state.shuffleIndex = 0;
+
+  if (
+    lastShownSceneId &&
+    state.shuffledFilteredScenes.length > 1 &&
+    state.shuffledFilteredScenes[0].id === lastShownSceneId
+  ) {
+    const swapIdx = 1 + Math.floor(Math.random() * (state.shuffledFilteredScenes.length - 1));
+    [state.shuffledFilteredScenes[0], state.shuffledFilteredScenes[swapIdx]] = [
+      state.shuffledFilteredScenes[swapIdx],
+      state.shuffledFilteredScenes[0],
+    ];
+    console.log("[Stash Battle] 🔄 Swapped first scene to avoid repeat");
   }
+}
 
-  const availableScenes = leftPool.filter((s) => !state.removedSceneIds.has(s.id));
-
-  if (availableScenes.length === 0) {
-    console.log("[Stash Battle] 🏁 Filtered pool exhausted - all scenes rated!");
+/** Next left-side scene from the shuffled left pool (no network fetch). Scenes stay in the pool. */
+function getNextFilteredScene(leftPool: Scene[], filterKey: string): Scene | null {
+  if (leftPool.length === 0) {
+    console.log("[Stash Battle] 🏁 Filtered pool is empty");
     return null;
   }
 
   if (filterKey !== state.shuffleFilterKey || state.shuffledFilteredScenes.length === 0) {
     console.log("[Stash Battle] 🔀 Shuffling filtered scenes (filter changed or first load)");
-    state.shuffledFilteredScenes = shuffleArray(availableScenes);
+    state.shuffledFilteredScenes = shuffleArray(leftPool);
     state.shuffleIndex = 0;
     state.shuffleFilterKey = filterKey;
     lastShownSceneId = null;
   }
 
   if (state.shuffleIndex >= state.shuffledFilteredScenes.length) {
-    console.log("[Stash Battle] 🔀 Reshuffling (completed full cycle)");
-    state.shuffledFilteredScenes = shuffleArray(availableScenes);
-    state.shuffleIndex = 0;
-
-    if (
-      lastShownSceneId &&
-      state.shuffledFilteredScenes.length > 1 &&
-      state.shuffledFilteredScenes[0].id === lastShownSceneId
-    ) {
-      const swapIdx = 1 + Math.floor(Math.random() * (state.shuffledFilteredScenes.length - 1));
-      [state.shuffledFilteredScenes[0], state.shuffledFilteredScenes[swapIdx]] = [
-        state.shuffledFilteredScenes[swapIdx],
-        state.shuffledFilteredScenes[0],
-      ];
-      console.log("[Stash Battle] 🔄 Swapped first scene to avoid repeat");
-    }
+    startNewPass(leftPool);
   }
 
   const scene = state.shuffledFilteredScenes[state.shuffleIndex];
   state.shuffleIndex++;
   lastShownSceneId = scene.id;
   console.log(
-    `[Stash Battle] 📍 Picked scene ${scene.id} (${state.shuffledFilteredScenes.length - state.shuffleIndex} remaining in pool, ${state.removedSceneIds.size} removed this session)`,
+    `[Stash Battle] 📍 Picked scene ${scene.id} (${state.shuffledFilteredScenes.length - state.shuffleIndex} left in this pass)`,
   );
   return scene;
 }
 
 function buildOpponentPool(allScenes: Scene[], leftPool: Scene[], filters: ListFilters): Scene[] {
-  if (state.filterOpponents && filters.filterActive) {
+  if (state.settings.filterOpponents && filters.filterActive) {
     return leftPool;
   }
   const ratedOnly = allScenes.filter((s) => s.rating100 != null);
   return ratedOnly.length >= 1 ? ratedOnly : allScenes;
 }
 
-async function resetLeftPool(): Promise<void> {
-  await clearFilteredCache();
-  state.shuffledFilteredScenes = [];
-  state.shuffleIndex = 0;
-  state.shuffleFilterKey = null;
-  state.removedSceneIds.clear();
-}
-
+/** Load the left ("to rate") and full pools. In fun mode both are sandbox copies (see cache.ts). */
 async function loadScenePools(
   filters: ListFilters,
 ): Promise<{ leftPool: Scene[]; allScenes: Scene[] }> {
+  let leftPool: Scene[];
+  let allScenes: Scene[];
+
   if (filters.filterActive) {
+    // Re-query the filter after each full pass so filters like "unrated" shrink as scenes get rated
+    const passComplete = isShuffleCycleComplete(filters.filterKey);
+    if (passComplete) {
+      console.log("[Stash Battle] 🔁 Pass complete, re-fetching filtered scenes");
+      await clearFilteredCache();
+    }
     console.log("[Stash Battle] 📋 Filter active, fetching filtered + all scenes");
     const [filteredResult, allResult] = await Promise.all([
       getFilteredScenesCached(filters),
       getAllScenesCached(),
     ]);
-    return {
-      leftPool: filteredResult.scenes || [],
-      allScenes: allResult.scenes || [],
-    };
+    leftPool = filteredResult.scenes || [];
+    allScenes = allResult.scenes || [];
+    // Start the next pass now, so later loads in a run (which pick no new left scene) don't
+    // see the pass as complete and re-fetch the filter every time
+    if (passComplete) startNewPass(leftPool);
+  } else {
+    console.log("[Stash Battle] 📋 No filter active, using all scenes");
+    allScenes = (await getAllScenesCached()).scenes || [];
+    leftPool = allScenes;
   }
 
-  console.log("[Stash Battle] 📋 No filter active, using all scenes");
-  const allResult = await getAllScenesCached();
-  const allScenes = allResult.scenes || [];
-  return { leftPool: allScenes, allScenes };
+  state.leftPoolSize = leftPool.length;
+  if (state.settings.funMode) {
+    return { leftPool: sandboxPool(leftPool), allScenes: sandboxPool(allScenes) };
+  }
+  return { leftPool, allScenes };
 }
 
-function pickLeftScene(
-  forcedLeftScene: Scene | null,
-  leftPool: Scene[],
-  filterKey: string,
-): Scene | null {
-  return forcedLeftScene || getNextFilteredScene(leftPool, filterKey);
+/** Load the pools (served from cache when possible) just to record the left pool's size. */
+export async function loadPoolSize(): Promise<void> {
+  await loadScenePools(readFilters());
 }
 
-function hasLeftAvailable(leftPool: Scene[], forcedLeftScene: Scene | null): boolean {
-  return (
-    forcedLeftScene !== null ||
-    leftPool.some((s) => !state.removedSceneIds.has(s.id))
-  );
-}
-
-/** Load left/right pools; refresh once if the left pool or filter-opponents right pool is depleted. */
-async function buildSwissPools(forcedLeftScene: Scene | null): Promise<{
+/** Load left (scene to rate) and right (opponent) pools for Swiss. */
+async function buildSwissPools(): Promise<{
   leftPool: Scene[];
   rightPool: Scene[];
   filterKey: string;
 }> {
-  let filters = readFilters();
-  let { leftPool, allScenes } = await loadScenePools(filters);
+  const filters = readFilters();
+  const { leftPool, allScenes } = await loadScenePools(filters);
 
   if (allScenes.length < 2) {
     throw new Error("Not enough scenes for comparison.");
   }
 
-  let rightPool = buildOpponentPool(allScenes, leftPool, filters);
-
-  const needsLeftRefresh = !hasLeftAvailable(leftPool, forcedLeftScene);
-  const needsOpponentRestart =
-    state.filterOpponents && filters.filterActive && rightPool.length < 2;
-
-  if (!needsLeftRefresh && !needsOpponentRestart) {
-    return { leftPool, rightPool, filterKey: filters.filterKey };
-  }
-
-  if (needsLeftRefresh) {
-    console.log("[Stash Battle] 🏁 Pool exhausted, fetching fresh from network...");
-  } else {
-    console.log("[Stash Battle] 🔄 Filtered opponent pool too small, restarting cycle...");
-  }
-
-  await resetLeftPool();
-  leftPool = filters.filterActive
-    ? (await getFilteredScenesCached(filters)).scenes || []
-    : allScenes;
-  filters = readFilters();
-  rightPool = buildOpponentPool(allScenes, leftPool, filters);
-
-  if (needsOpponentRestart && rightPool.length < 2) {
+  const rightPool = buildOpponentPool(allScenes, leftPool, filters);
+  if (state.settings.filterOpponents && filters.filterActive && rightPool.length < 2) {
     throw new Error("Not enough scenes in your filter for a match. You need at least 2 scenes.");
   }
 
-  return {
-    leftPool,
-    rightPool,
-    filterKey: filters.filterKey,
-  };
+  return { leftPool, rightPool, filterKey: filters.filterKey };
+}
+
+/** Index where a scene with this rating would sit in a rating-sorted (DESC) pool. */
+function insertionIndex(pool: Scene[], rating: number): number {
+  const idx = pool.findIndex((s) => (s.rating100 ?? 0) < rating);
+  return idx === -1 ? pool.length : idx;
 }
 
 // Swiss mode: left = scene to rate (filtered pool), right = similar-strength opponent
 export async function fetchSwissPair(forcedLeftScene: Scene | null = null): Promise<SwissPairResult> {
-  const { leftPool, rightPool, filterKey } = await buildSwissPools(forcedLeftScene);
+  const { leftPool, rightPool, filterKey } = await buildSwissPools();
 
-  const scene1 = pickLeftScene(forcedLeftScene, leftPool, filterKey);
+  const scene1 = forcedLeftScene || getNextFilteredScene(leftPool, filterKey);
   if (!scene1) {
     throw new Error("No scenes match your filter criteria.");
   }
@@ -193,7 +181,11 @@ function pickSwissOpponent(
   rightPool: Scene[],
 ): { scene2: Scene; ranks: [Rank, Rank] } {
   const scene1IdxInPool = rightPool.findIndex((s) => s.id === scene1.id);
-  const effectiveScene1Idx = scene1IdxInPool >= 0 ? scene1IdxInPool : rightPool.length;
+  // Rated scenes match around their own rank; unrated ones around where `unratedRating` would sit
+  const effectiveScene1Idx =
+    scene1.rating100 && scene1IdxInPool >= 0
+      ? scene1IdxInPool
+      : insertionIndex(rightPool, effectiveRating(scene1.rating100, state.settings.unratedRating));
   const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
 
   const candidates: { scene: Scene; idx: number }[] = [];
@@ -394,7 +386,7 @@ export async function fetchGauntletPair(
 
   return {
     scenes: [climber, nextOpponent],
-    ranks: [climberIndex + 1, nextOpponentIndex + 1],
+    ranks: [climberIndex >= 0 ? climberIndex + 1 : null, nextOpponentIndex + 1],
     isVictory: false,
     isFalling: false,
   };
@@ -469,4 +461,138 @@ export async function fetchChampionPair(
     ranks: [climberIndex + 1, nextOpponentIndex + 1],
     isVictory: false,
   };
+}
+
+// --- Placement mode: bounded search with momentum ---
+//
+// The scene's slot lies in [lo, hi) of the rating-sorted opponent pool. A win against index i
+// means the slot is above i (hi = i); a loss means it's below (lo = i + 1). A rated scene starts
+// next to its current rank and gallops (steps 1, 2, 4, 8...) while results keep going the same
+// way; the first reversal (or an unrated scene) switches to halving the remaining range.
+
+function newPlacementRun(scene: Scene): PlacementRun {
+  return {
+    scene,
+    aboveId: null,
+    belowId: null,
+    lastOpponentId: null,
+    lastWon: null,
+    galloping: scene.rating100 != null,
+    step: 1,
+    battles: 0,
+    rangeLo: 0,
+    rangeHi: 0,
+  };
+}
+
+/** Current [lo, hi) slot bounds, resolved from the bounding opponents' ids. */
+function placementBounds(run: PlacementRun, pool: Scene[]): { lo: number; hi: number } {
+  const aboveIdx = run.aboveId ? pool.findIndex((s) => s.id === run.aboveId) : -1;
+  const belowIdx = run.belowId ? pool.findIndex((s) => s.id === run.belowId) : -1;
+  return { lo: aboveIdx + 1, hi: belowIdx >= 0 ? belowIdx : pool.length };
+}
+
+function nextPlacementIndex(run: PlacementRun, pool: Scene[], lo: number, hi: number): number {
+  if (run.galloping) {
+    if (run.lastOpponentId === null) {
+      // Start just below the scene's current rating: a correctly rated scene confirms in ~2 battles
+      return insertionIndex(pool, run.scene.rating100 ?? 0);
+    }
+    const lastIdx = pool.findIndex((s) => s.id === run.lastOpponentId);
+    if (lastIdx >= 0) {
+      // Step from the far edge of the last opponent's tie group: another equal rating teaches nothing
+      const dir = run.lastWon ? -1 : 1;
+      const lastRating = pool[lastIdx].rating100 ?? 0;
+      let edge = lastIdx;
+      while (edge + dir >= 0 && edge + dir < pool.length && (pool[edge + dir].rating100 ?? 0) === lastRating) {
+        edge += dir;
+      }
+      return edge + dir * run.step;
+    }
+  }
+  return lo + Math.floor((hi - lo) / 2);
+}
+
+/** Random pick among scenes in [lo, hi) that share pool[idx]'s rating (their order is arbitrary). */
+function pickAmongTies(pool: Scene[], idx: number, lo: number, hi: number): number {
+  const rating = pool[idx].rating100 ?? 0;
+  const ties: number[] = [];
+  for (let i = lo; i < hi; i++) {
+    if ((pool[i].rating100 ?? 0) === rating) ties.push(i);
+  }
+  return ties[Math.floor(Math.random() * ties.length)];
+}
+
+/** Rating for a scene placed at `slot`: between its neighbours, ±1 at the edges. */
+function placementRating(pool: Scene[], slot: number): number {
+  const above = slot > 0 ? (pool[slot - 1].rating100 ?? 0) : null;
+  const below = slot < pool.length ? (pool[slot].rating100 ?? 0) : null;
+  if (above === null) return Math.min(100, (below ?? 0) + 1);
+  if (below === null) return Math.max(1, above - 1);
+  if (above - below >= 2) return Math.round((above + below) / 2);
+  // No integer strictly between: tie with the scene above (cache ordering puts ties first-come)
+  return Math.max(1, above);
+}
+
+/** Record a placement battle result and update the momentum. */
+export function recordPlacementResult(won: boolean, opponentId: string): void {
+  const run = state.placement;
+  if (!run) return;
+
+  if (run.lastWon !== null) {
+    if (run.lastWon === won) run.step *= 2;
+    else run.galloping = false;
+  }
+  if (won) run.belowId = opponentId;
+  else run.aboveId = opponentId;
+
+  run.lastOpponentId = opponentId;
+  run.lastWon = won;
+  run.battles++;
+}
+
+// Placement mode: left = scene being placed, right = the next opponent in its search range
+export async function fetchPlacementPair(
+  forcedLeftScene: Scene | null = null,
+): Promise<PlacementPairResult> {
+  const filters = readFilters();
+  const { leftPool, allScenes } = await loadScenePools(filters);
+
+  if (allScenes.length < 2) {
+    throw new Error("Not enough scenes for comparison.");
+  }
+
+  if (!state.placement) {
+    const scene = forcedLeftScene || getNextFilteredScene(leftPool, filters.filterKey);
+    if (!scene) {
+      throw new Error("No scenes match your filter criteria.");
+    }
+    state.placement = newPlacementRun(scene);
+  }
+  const run = state.placement;
+
+  const pool = buildOpponentPool(allScenes, leftPool, filters).filter((s) => s.id !== run.scene.id);
+  if (pool.length === 0) {
+    throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
+  }
+  state.totalScenesCount = pool.length + 1;
+
+  const { lo, hi } = placementBounds(run, pool);
+  run.rangeLo = Math.min(lo, hi);
+  run.rangeHi = hi;
+
+  if (lo >= hi) {
+    const slot = Math.min(lo, hi);
+    const rating = placementRating(pool, slot);
+    console.log(
+      `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${slot + 1} after ${run.battles} battles, rating ${rating}`,
+    );
+    await updateSceneRating(run.scene.id, rating);
+    run.scene.rating100 = rating;
+    return { done: true, scene: run.scene, rank: slot + 1, rating };
+  }
+
+  const target = Math.max(lo, Math.min(hi - 1, nextPlacementIndex(run, pool, lo, hi)));
+  const idx = pickAmongTies(pool, target, lo, hi);
+  return { done: false, scenes: [run.scene, pool[idx]], ranks: [null, idx + 1] };
 }

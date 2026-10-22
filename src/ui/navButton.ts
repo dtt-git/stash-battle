@@ -55,7 +55,7 @@ export function injectNavButton(): void {
   if (link) {
     link.addEventListener("click", (e) => {
       e.preventDefault();
-      openModal();
+      void openModal();
     });
   }
 
