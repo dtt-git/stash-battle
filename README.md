@@ -1,12 +1,8 @@
 <img width="1000" height="702" alt="Stash Battle: two scenes side by side with the Battle and Settings tabs, mode buttons and preview volume" src="docs/screenshots/battle.jpg" />
 
-NSFW Demo Video on the Stash forum post: https://discourse.stashapp.cc/t/stash-battle/5180
-
 # ⚔️ Stash Battle
 
 A head-to-head scene comparison plugin for [Stash](https://stashapp.cc/) that uses an ELO-style rating system to help you rank your scenes.
-
-**What's new:** see the [changelog](CHANGELOG.md) (v2.7.0 adds Placement mode, a Settings tab, fun mode, Clean mode and a phone-friendly layout).
 
 ## Overview
 
@@ -22,7 +18,7 @@ Stash Battle presents you with two scenes side-by-side and asks you to pick the 
 
 - **Filtering**: Apply any filters on the scenes page before opening Battle. What you see on the scenes page is what you get in Stash Battle, in every mode; a line above the cards shows whether you're rating your filter or your whole library, and how many scenes that is. By default, filtered scenes appear on the left (scenes to rate) and opponents come from your full library on the right.
 
-- **Settings tab** (next to the Battle tab, or Stash's Settings → Plugins). Saved to Stash, so they follow you across devices:
+- **Settings tab** (next to the Battle tab, or Stash's Settings → Plugins). Saves to Stash:
   - **Fun mode** – battle without changing any ratings; every mode still plays out normally, nothing is saved
   - **Autoplay previews** – both loop silently; hover a card to hear it (on by default)
   - **Pause playing video when Battle opens** – on by default; turn it off to keep a scene playing behind the battle
@@ -33,16 +29,16 @@ Stash Battle presents you with two scenes side-by-side and asks you to pick the 
 
 - **Preview volume** slider on the tab bar (it follows perceived loudness); click the speaker to mute or unmute.
 
-- **Works on phones and tablets**: the cards stay side by side on tablets, stack compactly on phones, and Skip stays pinned at the bottom. On touch screens, tap a thumbnail to play its preview, use ↗ to open the scene, and tap ⓘ next to the modes for an explanation of the current mode (on desktop, hover a mode).
+- **Works on phones and tablets**: the cards stay side by side on tablets, stack compactly on phones, and Skip stays pinned at the bottom. On touch screens, tap a thumbnail to play its preview, use ↗ to open the scene, and tap ⓘ next to the modes for an explanation of the current mode.
 
 - **SFW Switch support**: thumbnails and previews blur when the [SFW Switch](https://github.com/stashapp/CommunityScripts) plugin's SFW mode is on.
 
 
 ## Installation
 
-⚠️ Install at your own risk, nearly entirely vibe coded for myself but I review code and test as thoroughly as I can.
+⚠️ Install at your own risk, nearly entirely vibe coded for myself but I review (some) of the code and test as thoroughly as I can.
 
-Recommend saving a backup of your database beforehand (Settings → Interface → Editing) just in case. 
+Recommend saving a backup of your database beforehand (Settings → Tasks → Backup) just in case. 
 
 ### Source Index: 
 
@@ -62,7 +58,9 @@ Optional Step: Change Rating System Type to "Decimal" (Settings → Interface �
 5. Click a scene (or press ← / →) to pick the winner; Space skips the pair
 6. Watch your rankings evolve over time!
 
-You can also open Battle on a scene page, which puts that scene into a battle right away. Settings live in the **Settings** tab next to **Battle**.
+You can also open Battle on a scene page, which puts that scene into a battle right away. 
+
+Settings live in the **Settings** tab next to **Battle**.
 
 
 ## How It Works
