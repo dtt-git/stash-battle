@@ -129,7 +129,12 @@
     }
     api.patch.after(
       "MainNavBar.UtilityItems",
-      (_props, _ctx, result) => React.createElement(React.Fragment, null, result, React.createElement(DeleteBridge))
+      (...args) => React.createElement(
+        React.Fragment,
+        null,
+        args[args.length - 1],
+        React.createElement(DeleteBridge)
+      )
     );
   }
   async function confirmDeleteScene(scene) {

@@ -118,8 +118,15 @@ export function registerDeleteDialogBridge(): void {
     });
   }
 
-  api.patch.after("MainNavBar.UtilityItems", (_props, _ctx, result) =>
-    React.createElement(React.Fragment, null, result, React.createElement(DeleteBridge)),
+  // Stash appends the rendered result after the call's args, and another plugin's `before` patch
+  // can change how many args there are, so the result is always the last one, not a fixed slot.
+  api.patch.after("MainNavBar.UtilityItems", (...args: unknown[]) =>
+    React.createElement(
+      React.Fragment,
+      null,
+      args[args.length - 1] as ReactNode,
+      React.createElement(DeleteBridge),
+    ),
   );
 }
 
