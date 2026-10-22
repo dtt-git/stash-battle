@@ -1,21 +1,85 @@
 // The battle modal: opens/closes, wires controls and keyboard shortcuts.
 
 import { clearSceneCache } from "../cache";
-import { FILTER_OPPONENTS_KEY, MUTE_PREVIEWS_KEY } from "../constants";
 import { getSceneIdFromUrl } from "../graphql";
-import { resetGauntletState, state } from "../state";
+import { SCENE_MISSING_EVENT } from "../rating";
+import { loadSettings } from "../settings";
+import { resetRunState, resetShuffle, state } from "../state";
 import { loadState, saveState } from "../storage";
-import type { Mode } from "../types";
-import { createMainUI, loadNewPair, restoreCurrentPair, updateClimbPoolWarning } from "./mainUI";
+import type { Mode, Settings } from "../types";
+import { cancelDeleteDialog, isDeleteDialogOpen } from "./deleteDialog";
+import {
+  applyPreviewSettings,
+  createMainUI,
+  handleSceneGone,
+  loadNewPair,
+  renderPair,
+  restoreCurrentPair,
+  skipPair,
+  updateClimbPoolWarning,
+  updateFunBadge,
+  updateModeInfo,
+  verifyCurrentPair,
+} from "./mainUI";
+import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
 
 // Track keyboard handler so we can remove it on close
 let modalKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+let sceneMissingListenerAdded = false;
 
-export function openModal(): void {
+/** On <body> while Battle is open; CSS uses it to lift Stash's own modals above ours. */
+const BATTLE_OPEN_CLASS = "sb-battle-open";
+
+/** Re-render the pair on screen so card markup picks up a changed setting. */
+function rerenderCurrentPair(): void {
+  const { left, right } = state.currentPair;
+  if (!left || !right || state.disableChoice || !document.querySelector("#sb-comparison-area .sb-vs-container")) {
+    return;
+  }
+  renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
+}
+
+function onSettingChanged(key: keyof Settings): void {
+  switch (key) {
+    case "filterOpponents":
+      // switching the toggle counts as changing filters: reset any run
+      if (state.currentMode !== "swiss") resetRunState();
+      saveState();
+      loadNewPair();
+      updateClimbPoolWarning();
+      break;
+    case "funMode":
+      updateFunBadge();
+      break;
+    case "previewVolume":
+    case "autoplayPreviews":
+      applyPreviewSettings();
+      break;
+    case "openInNewTab":
+    case "cleanMode":
+    case "unratedRating":
+      rerenderCurrentPair();
+      break;
+  }
+}
+
+export async function openModal(): Promise<void> {
   console.log("[Stash Battle] 🎯 Opening modal...");
 
-  // Pause all media playing in stash when battle modal is opened to prevent audio overlap with hover previews
-  document.querySelectorAll<HTMLMediaElement>("video, audio").forEach((v) => v.pause());
+  await loadSettings();
+  addKeySwallowers();
+
+  // Optionally pause whatever Stash is playing so it doesn't overlap the battle previews
+  if (state.settings.pauseMediaOnOpen) {
+    document.querySelectorAll<HTMLMediaElement>("video, audio").forEach((v) => v.pause());
+  }
+
+  if (!sceneMissingListenerAdded) {
+    sceneMissingListenerAdded = true;
+    window.addEventListener(SCENE_MISSING_EVENT, (e) => {
+      void handleSceneGone((e as CustomEvent<string>).detail);
+    });
+  }
 
   // Try to load saved state
   const hasState = loadState();
@@ -26,10 +90,10 @@ export function openModal(): void {
   const filtersChanged = hasState && state.savedFilterParams !== currentFilterParams;
 
   if (filtersChanged) {
-    console.log("[Stash Battle] Filter params changed, resetting gauntlet state and filtered cache");
+    console.log("[Stash Battle] Filter params changed, resetting run state and filtered cache");
     state.currentPair = { left: null, right: null };
     state.currentRanks = { left: null, right: null };
-    resetGauntletState();
+    resetRunState();
     state.savedFilterParams = currentFilterParams;
 
     // Clear filtered scenes cache (but keep all scenes cache)
@@ -37,9 +101,7 @@ export function openModal(): void {
     state.memoryCache.filterKey = null;
 
     // Reset shuffle for new filter
-    state.shuffledFilteredScenes = [];
-    state.shuffleIndex = 0;
-    state.shuffleFilterKey = null;
+    resetShuffle();
   }
 
   // Detect if opened from an individual scene page (e.g. /scenes/123)
@@ -54,7 +116,7 @@ export function openModal(): void {
 
   if (forceSceneBattle) {
     console.log(`[Stash Battle] 🎯 Opened from scene page ${scenePageId}, starting new battle with this scene`);
-    resetGauntletState();
+    resetRunState();
     state.currentPair = { left: null, right: null };
     state.currentRanks = { left: null, right: null };
   }
@@ -64,12 +126,18 @@ export function openModal(): void {
   if (existingModal && existingModal.classList.contains("sb-modal-hidden")) {
     console.log("[Stash Battle] ♻️ Reusing existing modal");
     existingModal.classList.remove("sb-modal-hidden", "sb-modal-closing");
+    document.body.classList.add(BATTLE_OPEN_CLASS);
+
+    // Always reopen on the Battle tab; settings may have changed elsewhere meanwhile
+    showTab(existingModal, "battle");
+    syncSettingsControls(existingModal);
+    updateFunBadge();
 
     // Re-register keyboard handler
     if (modalKeyHandler) {
       document.removeEventListener("keydown", modalKeyHandler, true);
+      document.addEventListener("keydown", modalKeyHandler, true);
     }
-    if (modalKeyHandler) document.addEventListener("keydown", modalKeyHandler, true);
 
     // Focus modal content
     const modalContent = existingModal.querySelector<HTMLElement>(".sb-modal-content");
@@ -80,8 +148,11 @@ export function openModal(): void {
       loadNewPair(scenePageId);
     } else if (filtersChanged || !state.currentPair.left || !state.currentPair.right) {
       loadNewPair();
+    } else if (document.querySelector("#sb-comparison-area .sb-vs-container")) {
+      // Existing pair is still valid unless a scene was deleted elsewhere meanwhile
+      applyPreviewSettings();
+      void verifyCurrentPair();
     }
-    // Otherwise the existing content is still valid
 
     return;
   }
@@ -99,12 +170,13 @@ export function openModal(): void {
   modal.innerHTML = `
       <div class="sb-modal-backdrop"></div>
       <div class="sb-modal-content">
-        <button class="sb-modal-close">✕</button>
+        <button class="sb-modal-close" aria-label="Close">✕</button>
         ${createMainUI()}
       </div>
     `;
 
   document.body.appendChild(modal);
+  document.body.classList.add(BATTLE_OPEN_CLASS);
 
   // Focus the modal content so keyboard shortcuts work immediately
   const modalContent = modal.querySelector<HTMLElement>(".sb-modal-content");
@@ -121,7 +193,7 @@ export function openModal(): void {
       if (newMode !== state.currentMode) {
         state.currentMode = newMode;
 
-        resetGauntletState();
+        resetRunState();
 
         // Reset shuffle to start fresh with new mode
         state.shuffleIndex = 0;
@@ -130,10 +202,7 @@ export function openModal(): void {
         modal.querySelectorAll<HTMLElement>(".sb-mode-btn").forEach((b) => {
           b.classList.toggle("active", b.dataset.mode === state.currentMode);
         });
-
-        // Re-show actions (skip button) in case it was hidden
-        const actionsEl = document.querySelector<HTMLElement>(".sb-actions");
-        if (actionsEl) actionsEl.style.display = "";
+        updateModeInfo();
 
         // Load new pair in new mode, preserving scene page context
         loadNewPair(getSceneIdFromUrl());
@@ -143,61 +212,22 @@ export function openModal(): void {
     });
   });
 
-  // Opponents filter checkbox
-  const oppCheckbox = modal.querySelector<HTMLInputElement>("#sb-filter-opponents-checkbox");
-  if (oppCheckbox) {
-    oppCheckbox.addEventListener("change", (e) => {
-      state.filterOpponents = (e.target as HTMLInputElement).checked;
-      try {
-        localStorage.setItem(FILTER_OPPONENTS_KEY, state.filterOpponents ? "1" : "0");
-      } catch {
-        /* ignore */
-      }
-      // switching the toggle counts as changing filters: reset gauntlet/champion run
-      if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-        resetGauntletState();
-      }
-      saveState();
-      loadNewPair();
-      updateClimbPoolWarning();
-    });
-  }
+  // Touch-only ⓘ: show/hide the current mode's explanation
+  const modeInfoBtn = modal.querySelector<HTMLButtonElement>(".sb-mode-info-btn");
+  const modeInfo = modal.querySelector<HTMLElement>("#sb-mode-info");
+  modeInfoBtn?.addEventListener("click", () => {
+    if (!modeInfo) return;
+    updateModeInfo();
+    modeInfo.hidden = !modeInfo.hidden;
+    modeInfoBtn.setAttribute("aria-expanded", String(!modeInfo.hidden));
+  });
 
-  // Mute hover previews checkbox
-  const muteCheckbox = modal.querySelector<HTMLInputElement>("#sb-mute-previews-checkbox");
-  if (muteCheckbox) {
-    muteCheckbox.addEventListener("change", (e) => {
-      state.mutePreviews = (e.target as HTMLInputElement).checked;
-      try {
-        localStorage.setItem(MUTE_PREVIEWS_KEY, state.mutePreviews ? "1" : "0");
-      } catch {
-        /* ignore */
-      }
-      // apply immediately to any preview videos currently rendered
-      document.querySelectorAll<HTMLVideoElement>(".sb-hover-preview").forEach((v) => {
-        v.muted = state.mutePreviews;
-      });
-    });
-  }
+  // Battle / Settings tabs, settings controls, volume
+  showTab(modal, "battle");
+  bindSettingsControls(modal, onSettingChanged, () => applyPreviewSettings());
 
   // Skip button
-  const skipBtn = modal.querySelector("#sb-skip-btn");
-  if (skipBtn) {
-    skipBtn.addEventListener("click", () => {
-      // In gauntlet/champion mode with active run, skip is disabled
-      if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber) {
-        return;
-      }
-      if (state.disableChoice) return;
-      state.disableChoice = true;
-      // Reset state on skip
-      if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-        resetGauntletState();
-        saveState();
-      }
-      loadNewPair();
-    });
-  }
+  modal.querySelector("#sb-skip-btn")?.addEventListener("click", skipPair);
 
   // Refresh cache button
   const refreshCacheBtn = modal.querySelector<HTMLButtonElement>("#sb-refresh-cache-btn");
@@ -205,6 +235,7 @@ export function openModal(): void {
     refreshCacheBtn.addEventListener("click", async () => {
       if (state.disableChoice) return;
 
+      const label = refreshCacheBtn.textContent;
       refreshCacheBtn.disabled = true;
       refreshCacheBtn.textContent = "🔄 Refreshing...";
 
@@ -212,25 +243,18 @@ export function openModal(): void {
         await clearSceneCache();
 
         // Reset shuffle state since scene list is being refreshed
-        state.shuffledFilteredScenes = [];
-        state.shuffleIndex = 0;
-        state.shuffleFilterKey = null;
-        state.removedSceneIds.clear(); // Reset removed tracking for fresh data
+        resetShuffle();
 
-        // Reset gauntlet state since rankings may have changed
-        resetGauntletState();
+        // Reset run state since rankings may have changed
+        resetRunState();
         saveState();
-
-        // Re-show actions in case hidden
-        const actionsEl = document.querySelector<HTMLElement>(".sb-actions");
-        if (actionsEl) actionsEl.style.display = "";
 
         await loadNewPair();
       } catch (e) {
         console.error("[Stash Battle] Refresh failed:", e);
       } finally {
         refreshCacheBtn.disabled = false;
-        refreshCacheBtn.textContent = "🔄 Refresh Cache";
+        refreshCacheBtn.textContent = label;
       }
     });
   }
@@ -243,7 +267,7 @@ export function openModal(): void {
     console.log(
       `[Stash Battle] 📂 Restoring saved pair from localStorage (Scene ${state.currentPair.left.id} vs Scene ${state.currentPair.right.id})`,
     );
-    restoreCurrentPair();
+    void restoreCurrentPair();
   } else {
     console.log("[Stash Battle] 🆕 No saved pair or filters changed, loading new pair...");
     loadNewPair();
@@ -267,57 +291,81 @@ export function openModal(): void {
       return;
     }
 
+    // Stash's own delete dialog (Clean mode) is on top: let it have the keys (Escape, Enter)
+    if (isDeleteDialogOpen()) return;
+
+    // Nothing typed while Battle is open may reach Stash's own hotkeys (page arrows, letter
+    // shortcuts), or it acts on the page behind the modal. Default actions (typing in inputs,
+    // slider arrows, checkbox Space) still happen since only propagation is stopped here.
+    e.stopImmediatePropagation();
+
     // Escape to close
     if (e.key === "Escape") {
       e.preventDefault();
-      e.stopImmediatePropagation();
       closeModal();
       return;
     }
 
-    // Arrow keys to choose (stop propagation to prevent Stash scene navigation)
+    // Battle shortcuts only apply on the Battle tab
+    if (getActiveTab() !== "battle") return;
+
+    // Let the volume slider / number input keep their own arrow keys (checkboxes don't need them)
+    const active = document.activeElement as HTMLInputElement | null;
+    const tag = active?.tagName;
+    const isToggle = tag === "INPUT" && (active?.type === "checkbox" || active?.type === "radio");
+    if ((tag === "INPUT" && !isToggle) || tag === "TEXTAREA" || tag === "SELECT") return;
+
+    // Arrow keys to choose
     if (e.key === "ArrowLeft" && state.currentPair.left) {
       e.preventDefault();
-      e.stopImmediatePropagation();
       const leftBody = activeModal.querySelector<HTMLElement>('.sb-scene-card[data-side="left"] .sb-scene-body');
       if (leftBody) leftBody.click();
     }
     if (e.key === "ArrowRight" && state.currentPair.right) {
       e.preventDefault();
-      e.stopImmediatePropagation();
       const rightBody = activeModal.querySelector<HTMLElement>('.sb-scene-card[data-side="right"] .sb-scene-body');
       if (rightBody) rightBody.click();
     }
 
     // Spacebar to skip
     if (e.key === " " || e.code === "Space") {
-      const tag = document.activeElement?.tagName;
-      // Skip if focused on input/textarea, or if a button is focused (let button's click handle it)
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") {
-        return;
-      }
+      // Let a focused button or checkbox handle its own Space
+      if (tag === "BUTTON" || isToggle) return;
       e.preventDefault();
-      e.stopImmediatePropagation();
-      // Don't skip during active gauntlet/champion run
-      if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber) {
-        return;
-      }
-      if (state.disableChoice) return;
-      state.disableChoice = true;
-      if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-        resetGauntletState();
-        saveState();
-      }
-      loadNewPair();
+      skipPair();
     }
   };
 
   document.addEventListener("keydown", modalKeyHandler, true);
 }
 
+/** True while the battle modal is on screen (it stays in the DOM, hidden, after closing). */
+function isModalVisible(): boolean {
+  const modal = document.getElementById("sb-modal");
+  return modal !== null && !modal.classList.contains("sb-modal-hidden");
+}
+
+// Stash's hotkeys (Mousetrap) also listen for keypress/keyup on document; keydown is handled
+// by modalKeyHandler. Registered once, in the capture phase, and inert while the modal is hidden.
+let keySwallowersAdded = false;
+function addKeySwallowers(): void {
+  if (keySwallowersAdded) return;
+  keySwallowersAdded = true;
+  const swallow = (e: KeyboardEvent): void => {
+    if (isModalVisible() && !isDeleteDialogOpen()) e.stopImmediatePropagation();
+  };
+  document.addEventListener("keypress", swallow, true);
+  document.addEventListener("keyup", swallow, true);
+}
+
 export function closeModal(): void {
   const modal = document.getElementById("sb-modal");
   if (!modal || modal.classList.contains("sb-modal-hidden")) return;
+
+  cancelDeleteDialog();
+
+  // Stop previews (autoplay keeps them running otherwise)
+  modal.querySelectorAll<HTMLVideoElement>(".sb-hover-preview").forEach((v) => v.pause());
 
   // Add closing class to trigger fade-out animation
   modal.classList.add("sb-modal-closing");
@@ -325,6 +373,7 @@ export function closeModal(): void {
   // After animation completes, hide the modal (keep in DOM for reuse)
   setTimeout(() => {
     modal.classList.add("sb-modal-hidden");
+    document.body.classList.remove(BATTLE_OPEN_CLASS);
     modal.classList.remove("sb-modal-closing");
   }, 200); // Match CSS animation duration
 
@@ -333,3 +382,4 @@ export function closeModal(): void {
     document.removeEventListener("keydown", modalKeyHandler, true);
   }
 }
+

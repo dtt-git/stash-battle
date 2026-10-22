@@ -13,6 +13,11 @@ export function getKFactor(playCount: number): number {
   return 4;
 }
 
+/** Rating used in ELO math: the stored rating, or `unratedRating` for unrated scenes (min 1). */
+export function effectiveRating(rating100: number | null | undefined, unratedRating: number): number {
+  return rating100 || clampRating(unratedRating);
+}
+
 function clampRating(rating: number): number {
   return Math.min(MAX_RATING, Math.max(MIN_RATING, rating));
 }

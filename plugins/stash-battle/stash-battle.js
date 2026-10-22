@@ -1,14 +1,189 @@
 "use strict";
 (() => {
+  // src/graphql.ts
+  async function graphqlQuery(query, variables = {}) {
+    const response = await fetch("/graphql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ query, variables })
+    });
+    const result = await response.json();
+    if (result.errors) {
+      console.error("[Stash Battle] GraphQL error:", result.errors);
+      throw new Error(result.errors[0].message);
+    }
+    return result.data;
+  }
+  var SCENE_FRAGMENT = `
+    id
+    title
+    date
+    rating100
+    play_count
+    paths {
+      screenshot
+      preview
+    }
+    files {
+      duration
+      path
+    }
+    studio {
+      name
+    }
+    performers {
+      name
+    }
+    tags {
+      name
+    }
+  `;
+  var FIND_SCENES_QUERY = `
+      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+        findScenes(filter: $filter, scene_filter: $scene_filter) {
+          count
+          scenes {
+            ${SCENE_FRAGMENT}
+          }
+        }
+      }
+    `;
+  function getSceneIdFromUrl() {
+    const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
+    return match ? match[1] : null;
+  }
+  async function fetchSceneById(sceneId) {
+    const query = `
+      query FindScene($id: ID!) {
+        findScene(id: $id) {
+          ${SCENE_FRAGMENT}
+        }
+      }
+    `;
+    const result = await graphqlQuery(query, { id: sceneId });
+    return result.findScene;
+  }
+
+  // src/ui/deleteDialog.ts
+  var OPEN_EVENT = "stash-battle:open-delete-dialog";
+  var CLOSE_EVENT = "stash-battle:close-delete-dialog";
+  var bridgeRegistered = false;
+  var pendingResult = null;
+  var DeleteScenesDialog = null;
+  var dialogLoaded = Promise.resolve();
+  function settle(deleted) {
+    const resolve = pendingResult;
+    pendingResult = null;
+    resolve?.(deleted);
+  }
+  function isStashDeleteDialogAvailable() {
+    return bridgeRegistered;
+  }
+  function isDeleteDialogOpen() {
+    return pendingResult !== null;
+  }
+  function cancelDeleteDialog() {
+    if (!pendingResult) return;
+    window.dispatchEvent(new CustomEvent(CLOSE_EVENT));
+    settle(false);
+  }
+  function registerDeleteDialogBridge() {
+    const api = window.PluginApi;
+    if (bridgeRegistered || !api?.loadableComponents?.DeleteScenesDialog) {
+      if (!api?.loadableComponents?.DeleteScenesDialog) {
+        console.warn("[Stash Battle] Stash's delete dialog isn't available to plugins; Clean mode is disabled");
+      }
+      return;
+    }
+    bridgeRegistered = true;
+    const { React } = api;
+    dialogLoaded = api.loadableComponents.DeleteScenesDialog().then((mod) => {
+      DeleteScenesDialog = mod.DeleteScenesDialog ?? mod.default ?? null;
+    }).catch((e) => console.error("[Stash Battle] Failed to load Stash's delete dialog:", e));
+    function DeleteBridge() {
+      const [scene, setScene] = React.useState(null);
+      React.useEffect(() => {
+        const open = (e) => {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          setScene(e.detail);
+        };
+        const close = () => setScene(null);
+        window.addEventListener(OPEN_EVENT, open);
+        window.addEventListener(CLOSE_EVENT, close);
+        return () => {
+          window.removeEventListener(OPEN_EVENT, open);
+          window.removeEventListener(CLOSE_EVENT, close);
+        };
+      }, []);
+      if (!scene || !DeleteScenesDialog) return null;
+      return React.createElement(DeleteScenesDialog, {
+        selected: [scene],
+        onClose: (deleted) => {
+          setScene(null);
+          settle(deleted);
+        }
+      });
+    }
+    api.patch.after(
+      "MainNavBar.UtilityItems",
+      (_props, _ctx, result) => React.createElement(React.Fragment, null, result, React.createElement(DeleteBridge))
+    );
+  }
+  async function confirmDeleteScene(scene) {
+    if (!bridgeRegistered) return false;
+    cancelDeleteDialog();
+    await dialogLoaded;
+    if (!DeleteScenesDialog) return false;
+    const { findScene } = await graphqlQuery(
+      `query BattleDeletableScene($id: ID!) { findScene(id: $id) { id title interactive files { path } } }`,
+      { id: scene.id }
+    );
+    if (!findScene) return false;
+    const result = new Promise((resolve) => {
+      pendingResult = resolve;
+    });
+    if (!requestDialog(findScene)) {
+      rerenderNavbar();
+      await new Promise((r) => setTimeout(r, 150));
+      if (!requestDialog(findScene)) {
+        console.warn("[Stash Battle] Stash's delete dialog bridge isn't mounted");
+        settle(false);
+        window.alert("Couldn't open Stash's delete dialog. Reload the page and try again.");
+      }
+    }
+    return result;
+  }
+  function requestDialog(scene) {
+    const request = new CustomEvent(OPEN_EVENT, { detail: scene, cancelable: true });
+    return !window.dispatchEvent(request);
+  }
+  function rerenderNavbar() {
+    window.history.replaceState(window.history.state, "", window.location.href);
+    window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
+  }
+
   // src/constants.ts
   var STORAGE_KEY = "stash-battle-state";
   var CACHE_DB_NAME = "stash-battle-cache";
   var CACHE_DB_VERSION = 1;
   var CACHE_STORE_NAME = "scenes";
   var CACHE_MAX_AGE_MS = 5 * 60 * 1e3;
-  var DEFAULT_FILTER_OPPONENTS = false;
-  var FILTER_OPPONENTS_KEY = "sb_filterOpponents";
-  var MUTE_PREVIEWS_KEY = "sb_mutePreviews";
+  var PLUGIN_ID = "stash-battle";
+  var DEFAULT_SETTINGS = {
+    funMode: false,
+    openInNewTab: false,
+    unratedRating: 0,
+    previewVolume: 50,
+    autoplayPreviews: false,
+    filterOpponents: false,
+    cleanMode: false,
+    pauseMediaOnOpen: true
+  };
+  var LEGACY_FILTER_OPPONENTS_KEY = "sb_filterOpponents";
+  var LEGACY_MUTE_PREVIEWS_KEY = "sb_mutePreviews";
   var SWISS_OPPONENT_REACH_INITIAL = 10;
   var SWISS_OPPONENT_REACH_MULTIPLIER = 2;
   var CLIMB_OPPONENT_PICK_WINDOW = 5;
@@ -193,81 +368,7 @@
     };
   }
 
-  // src/graphql.ts
-  async function graphqlQuery(query, variables = {}) {
-    const response = await fetch("/graphql", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ query, variables })
-    });
-    const result = await response.json();
-    if (result.errors) {
-      console.error("[Stash Battle] GraphQL error:", result.errors);
-      throw new Error(result.errors[0].message);
-    }
-    return result.data;
-  }
-  var SCENE_FRAGMENT = `
-    id
-    title
-    date
-    rating100
-    play_count
-    paths {
-      screenshot
-      preview
-    }
-    files {
-      duration
-      path
-    }
-    studio {
-      name
-    }
-    performers {
-      name
-    }
-    tags {
-      name
-    }
-  `;
-  var FIND_SCENES_QUERY = `
-      query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
-        findScenes(filter: $filter, scene_filter: $scene_filter) {
-          count
-          scenes {
-            ${SCENE_FRAGMENT}
-          }
-        }
-      }
-    `;
-  function getSceneIdFromUrl() {
-    const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
-    return match ? match[1] : null;
-  }
-  async function fetchSceneById(sceneId) {
-    const query = `
-      query FindScene($id: ID!) {
-        findScene(id: $id) {
-          ${SCENE_FRAGMENT}
-        }
-      }
-    `;
-    const result = await graphqlQuery(query, { id: sceneId });
-    return result.findScene;
-  }
-
   // src/state.ts
-  function readBooleanPref(key, fallback) {
-    try {
-      const stored = localStorage.getItem(key);
-      if (stored !== null) return stored === "1";
-    } catch {
-    }
-    return fallback;
-  }
   var state = {
     currentPair: { left: null, right: null },
     currentRanks: { left: null, right: null },
@@ -278,15 +379,15 @@
     gauntletDefeated: [],
     gauntletFalling: false,
     gauntletFallingScene: null,
+    placement: null,
     totalScenesCount: 0,
+    leftPoolSize: null,
     disableChoice: false,
     savedFilterParams: "",
-    filterOpponents: readBooleanPref(FILTER_OPPONENTS_KEY, DEFAULT_FILTER_OPPONENTS),
-    mutePreviews: readBooleanPref(MUTE_PREVIEWS_KEY, false),
+    settings: { ...DEFAULT_SETTINGS },
     shuffledFilteredScenes: [],
     shuffleIndex: 0,
     shuffleFilterKey: null,
-    removedSceneIds: /* @__PURE__ */ new Set(),
     memoryCache: {
       allScenes: null,
       filteredScenes: null,
@@ -294,13 +395,30 @@
       timestamp: null
     }
   };
-  function resetGauntletState() {
+  function resetRunState() {
     state.gauntletClimber = null;
     state.gauntletWins = 0;
     state.gauntletClimberRank = 0;
     state.gauntletDefeated = [];
     state.gauntletFalling = false;
     state.gauntletFallingScene = null;
+    state.placement = null;
+  }
+  function resetShuffle() {
+    state.shuffledFilteredScenes = [];
+    state.shuffleIndex = 0;
+    state.shuffleFilterKey = null;
+  }
+  function isRunActive() {
+    switch (state.currentMode) {
+      case "gauntlet":
+      case "champion":
+        return state.gauntletClimber !== null;
+      case "placement":
+        return (state.placement?.battles ?? 0) > 0;
+      default:
+        return false;
+    }
   }
 
   // src/cache.ts
@@ -622,30 +740,141 @@
       console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
     }
     if (state.memoryCache.filteredScenes) {
-      const scene = state.memoryCache.filteredScenes.find((s) => s.id === sceneId);
-      if (scene) {
-        scene.rating100 = newRating;
-      }
+      repositionSceneInArray(state.memoryCache.filteredScenes, sceneId, newRating);
     }
   }
-  function removeFromFilteredPool(sceneId) {
-    state.removedSceneIds.add(sceneId);
-    if (state.memoryCache.filteredScenes) {
-      const idx = state.memoryCache.filteredScenes.findIndex((s) => s.id === sceneId);
-      if (idx !== -1) {
-        state.memoryCache.filteredScenes.splice(idx, 1);
-        console.log(
-          `[Stash Battle] 🗑️ Removed scene ${sceneId} from filtered pool (${state.memoryCache.filteredScenes.length} remaining, ${state.removedSceneIds.size} removed this session)`
-        );
-      }
-    }
+  async function removeSceneEverywhere(sceneId) {
+    const without = (scenes) => scenes ? scenes.filter((s) => s.id !== sceneId) : scenes;
+    state.memoryCache.allScenes = without(state.memoryCache.allScenes);
+    state.memoryCache.filteredScenes = without(state.memoryCache.filteredScenes);
     const shuffleIdx = state.shuffledFilteredScenes.findIndex((s) => s.id === sceneId);
     if (shuffleIdx !== -1) {
       state.shuffledFilteredScenes.splice(shuffleIdx, 1);
-      if (shuffleIdx < state.shuffleIndex) {
-        state.shuffleIndex--;
+      if (shuffleIdx < state.shuffleIndex) state.shuffleIndex--;
+    }
+    for (const cacheKey of ["all-scenes", "filtered-scenes"]) {
+      const cached = await getCachedScenes(cacheKey);
+      if (cached && cached.scenes.some((s) => s.id === sceneId)) {
+        const scenes = cached.scenes.filter((s) => s.id !== sceneId);
+        await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey);
       }
     }
+    console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from caches`);
+  }
+
+  // src/sceneActions.ts
+  async function findExistingSceneIds(ids) {
+    const aliases = ids.map((id, i) => `s${i}: findScene(id: ${JSON.stringify(id)}) { id }`).join("\n");
+    const result = await graphqlQuery(`{ ${aliases} }`);
+    return new Set(Object.values(result).flatMap((s) => s ? [s.id] : []));
+  }
+  function isSceneNotFoundError(error) {
+    return error instanceof Error && /not found/i.test(error.message);
+  }
+
+  // src/rating.ts
+  var SCENE_MISSING_EVENT = "stash-battle:scene-missing";
+  function ratingsEnabled() {
+    return !state.settings.funMode;
+  }
+  var SCENE_UPDATE_MUTATION = `
+      mutation SceneUpdate($input: SceneUpdateInput!) {
+        sceneUpdate(input: $input) {
+          id
+          rating100
+        }
+      }
+    `;
+  async function updateSceneRating(sceneId, rating100) {
+    if (!ratingsEnabled()) {
+      console.log(`[Stash Battle] 🎈 Fun mode: not saving rating for scene ${sceneId}`);
+      return;
+    }
+    const stashRating = rating100 === null ? null : Math.max(1, Math.min(100, rating100));
+    try {
+      await graphqlQuery(SCENE_UPDATE_MUTATION, {
+        input: {
+          id: sceneId,
+          rating100: stashRating
+        }
+      });
+      if (stashRating === null) {
+        console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} rating in Stash`);
+        clearSceneInCache(sceneId);
+      } else {
+        console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${stashRating} in Stash`);
+        updateSceneInCache(sceneId, stashRating);
+      }
+    } catch (e) {
+      const action = stashRating === null ? "clear" : "update";
+      console.error(`[Stash Battle] Failed to ${action} scene ${sceneId} rating:`, e);
+      if (isSceneNotFoundError(e)) {
+        window.dispatchEvent(new CustomEvent(SCENE_MISSING_EVENT, { detail: sceneId }));
+      }
+    }
+  }
+
+  // src/settings.ts
+  var CONFIG_QUERY = `{ configuration { plugins } }`;
+  var CONFIGURE_PLUGIN_MUTATION = `
+      mutation ConfigurePlugin($plugin_id: ID!, $input: Map!) {
+        configurePlugin(plugin_id: $plugin_id, input: $input)
+      }
+    `;
+  var SAVE_DEBOUNCE_MS = 400;
+  var saveTimer = null;
+  function clampPercent(value, fallback) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : fallback;
+  }
+  function normalize(raw, base) {
+    const bool = (key) => typeof raw[key] === "boolean" ? raw[key] : base[key];
+    return {
+      funMode: bool("funMode"),
+      openInNewTab: bool("openInNewTab"),
+      autoplayPreviews: bool("autoplayPreviews"),
+      filterOpponents: bool("filterOpponents"),
+      cleanMode: bool("cleanMode"),
+      pauseMediaOnOpen: bool("pauseMediaOnOpen"),
+      unratedRating: clampPercent(raw.unratedRating ?? base.unratedRating, base.unratedRating),
+      previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume)
+    };
+  }
+  function legacyDefaults() {
+    const settings = { ...DEFAULT_SETTINGS };
+    try {
+      if (localStorage.getItem(LEGACY_FILTER_OPPONENTS_KEY) === "1") settings.filterOpponents = true;
+      if (localStorage.getItem(LEGACY_MUTE_PREVIEWS_KEY) === "1") settings.previewVolume = 0;
+    } catch {
+    }
+    return settings;
+  }
+  async function loadSettings() {
+    try {
+      const data = await graphqlQuery(
+        CONFIG_QUERY
+      );
+      const stored = data.configuration.plugins?.[PLUGIN_ID];
+      state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
+    } catch (e) {
+      console.error("[Stash Battle] Failed to load settings, using current values:", e);
+    }
+    return state.settings;
+  }
+  async function persistSettings() {
+    try {
+      await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input: { ...state.settings } });
+    } catch (e) {
+      console.error("[Stash Battle] Failed to save settings:", e);
+    }
+  }
+  function updateSettings(patch) {
+    state.settings = normalize({ ...state.settings, ...patch }, state.settings);
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void persistSettings();
+    }, SAVE_DEBOUNCE_MS);
   }
 
   // src/storage.ts
@@ -660,6 +889,7 @@
       gauntletDefeated: state.gauntletDefeated,
       gauntletFalling: state.gauntletFalling,
       gauntletFallingScene: state.gauntletFallingScene,
+      placement: state.placement,
       totalScenesCount: state.totalScenesCount,
       savedFilterParams: window.location.search
     };
@@ -683,6 +913,7 @@
         state.gauntletDefeated = parsed.gauntletDefeated || [];
         state.gauntletFalling = parsed.gauntletFalling || false;
         state.gauntletFallingScene = parsed.gauntletFallingScene || null;
+        state.placement = parsed.placement || null;
         state.totalScenesCount = parsed.totalScenesCount || 0;
         state.savedFilterParams = parsed.savedFilterParams || "";
         return true;
@@ -701,6 +932,9 @@
     if (playCount < 8) return 8;
     if (playCount < 15) return 6;
     return 4;
+  }
+  function effectiveRating(rating100, unratedRating) {
+    return rating100 || clampRating(unratedRating);
   }
   function clampRating(rating) {
     return Math.min(MAX_RATING, Math.max(MIN_RATING, rating));
@@ -730,37 +964,6 @@
     window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
   }
 
-  // src/rating.ts
-  var SCENE_UPDATE_MUTATION = `
-      mutation SceneUpdate($input: SceneUpdateInput!) {
-        sceneUpdate(input: $input) {
-          id
-          rating100
-        }
-      }
-    `;
-  async function updateSceneRating(sceneId, rating100) {
-    const stashRating = rating100 === null ? null : Math.max(1, Math.min(100, rating100));
-    try {
-      await graphqlQuery(SCENE_UPDATE_MUTATION, {
-        input: {
-          id: sceneId,
-          rating100: stashRating
-        }
-      });
-      if (stashRating === null) {
-        console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} rating in Stash`);
-        clearSceneInCache(sceneId);
-      } else {
-        console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${stashRating} in Stash`);
-        updateSceneInCache(sceneId, stashRating);
-      }
-    } catch (e) {
-      const action = stashRating === null ? "clear" : "update";
-      console.error(`[Stash Battle] Failed to ${action} scene ${sceneId} rating:`, e);
-    }
-  }
-
   // src/pairs.ts
   function shuffleArray(array) {
     const shuffled = [...array];
@@ -771,14 +974,13 @@
     return shuffled;
   }
   var lastShownSceneId = null;
+  function isShuffleCycleComplete(filterKey) {
+    return state.shuffleFilterKey === filterKey && state.shuffledFilteredScenes.length > 0 && state.shuffleIndex >= state.shuffledFilteredScenes.length;
+  }
   function getNextFilteredScene(leftPool, filterKey) {
-    if (state.shuffleFilterKey !== null && filterKey !== state.shuffleFilterKey) {
-      console.log("[Stash Battle] 🔀 Filter changed, resetting removed scenes tracking");
-      state.removedSceneIds.clear();
-    }
-    const availableScenes = leftPool.filter((s) => !state.removedSceneIds.has(s.id));
+    const availableScenes = leftPool;
     if (availableScenes.length === 0) {
-      console.log("[Stash Battle] 🏁 Filtered pool exhausted - all scenes rated!");
+      console.log("[Stash Battle] 🏁 Filtered pool is empty");
       return null;
     }
     if (filterKey !== state.shuffleFilterKey || state.shuffledFilteredScenes.length === 0) {
@@ -805,79 +1007,62 @@
     state.shuffleIndex++;
     lastShownSceneId = scene.id;
     console.log(
-      `[Stash Battle] 📍 Picked scene ${scene.id} (${state.shuffledFilteredScenes.length - state.shuffleIndex} remaining in pool, ${state.removedSceneIds.size} removed this session)`
+      `[Stash Battle] 📍 Picked scene ${scene.id} (${state.shuffledFilteredScenes.length - state.shuffleIndex} left in this pass)`
     );
     return scene;
   }
   function buildOpponentPool(allScenes, leftPool, filters) {
-    if (state.filterOpponents && filters.filterActive) {
+    if (state.settings.filterOpponents && filters.filterActive) {
       return leftPool;
     }
     const ratedOnly = allScenes.filter((s) => s.rating100 != null);
     return ratedOnly.length >= 1 ? ratedOnly : allScenes;
   }
-  async function resetLeftPool() {
-    await clearFilteredCache();
-    state.shuffledFilteredScenes = [];
-    state.shuffleIndex = 0;
-    state.shuffleFilterKey = null;
-    state.removedSceneIds.clear();
-  }
   async function loadScenePools(filters) {
     if (filters.filterActive) {
+      if (isShuffleCycleComplete(filters.filterKey)) {
+        console.log("[Stash Battle] 🔁 Pass complete, re-fetching filtered scenes");
+        await clearFilteredCache();
+      }
       console.log("[Stash Battle] 📋 Filter active, fetching filtered + all scenes");
       const [filteredResult, allResult2] = await Promise.all([
         getFilteredScenesCached(filters),
         getAllScenesCached()
       ]);
-      return {
-        leftPool: filteredResult.scenes || [],
-        allScenes: allResult2.scenes || []
-      };
+      const leftPool = filteredResult.scenes || [];
+      state.leftPoolSize = leftPool.length;
+      return { leftPool, allScenes: allResult2.scenes || [] };
     }
     console.log("[Stash Battle] 📋 No filter active, using all scenes");
     const allResult = await getAllScenesCached();
     const allScenes = allResult.scenes || [];
+    state.leftPoolSize = allScenes.length;
     return { leftPool: allScenes, allScenes };
   }
   function pickLeftScene(forcedLeftScene, leftPool, filterKey) {
     return forcedLeftScene || getNextFilteredScene(leftPool, filterKey);
   }
-  function hasLeftAvailable(leftPool, forcedLeftScene) {
-    return forcedLeftScene !== null || leftPool.some((s) => !state.removedSceneIds.has(s.id));
+  async function loadPoolSize() {
+    await loadScenePools(readFilters());
   }
-  async function buildSwissPools(forcedLeftScene) {
-    let filters = readFilters();
-    let { leftPool, allScenes } = await loadScenePools(filters);
+  async function buildSwissPools() {
+    const filters = readFilters();
+    const { leftPool, allScenes } = await loadScenePools(filters);
     if (allScenes.length < 2) {
       throw new Error("Not enough scenes for comparison.");
     }
-    let rightPool = buildOpponentPool(allScenes, leftPool, filters);
-    const needsLeftRefresh = !hasLeftAvailable(leftPool, forcedLeftScene);
-    const needsOpponentRestart = state.filterOpponents && filters.filterActive && rightPool.length < 2;
-    if (!needsLeftRefresh && !needsOpponentRestart) {
-      return { leftPool, rightPool, filterKey: filters.filterKey };
-    }
-    if (needsLeftRefresh) {
-      console.log("[Stash Battle] 🏁 Pool exhausted, fetching fresh from network...");
-    } else {
-      console.log("[Stash Battle] 🔄 Filtered opponent pool too small, restarting cycle...");
-    }
-    await resetLeftPool();
-    leftPool = filters.filterActive ? (await getFilteredScenesCached(filters)).scenes || [] : allScenes;
-    filters = readFilters();
-    rightPool = buildOpponentPool(allScenes, leftPool, filters);
-    if (needsOpponentRestart && rightPool.length < 2) {
+    const rightPool = buildOpponentPool(allScenes, leftPool, filters);
+    if (state.settings.filterOpponents && filters.filterActive && rightPool.length < 2) {
       throw new Error("Not enough scenes in your filter for a match. You need at least 2 scenes.");
     }
-    return {
-      leftPool,
-      rightPool,
-      filterKey: filters.filterKey
-    };
+    return { leftPool, rightPool, filterKey: filters.filterKey };
+  }
+  function insertionIndex(pool, rating) {
+    const idx = pool.findIndex((s) => (s.rating100 ?? 0) < rating);
+    return idx === -1 ? pool.length : idx;
   }
   async function fetchSwissPair(forcedLeftScene = null) {
-    const { leftPool, rightPool, filterKey } = await buildSwissPools(forcedLeftScene);
+    const { leftPool, rightPool, filterKey } = await buildSwissPools();
     const scene1 = pickLeftScene(forcedLeftScene, leftPool, filterKey);
     if (!scene1) {
       throw new Error("No scenes match your filter criteria.");
@@ -887,7 +1072,7 @@
   }
   function pickSwissOpponent(scene1, rightPool) {
     const scene1IdxInPool = rightPool.findIndex((s) => s.id === scene1.id);
-    const effectiveScene1Idx = scene1IdxInPool >= 0 ? scene1IdxInPool : rightPool.length;
+    const effectiveScene1Idx = scene1.rating100 && scene1IdxInPool >= 0 ? scene1IdxInPool : insertionIndex(rightPool, effectiveRating(scene1.rating100, state.settings.unratedRating));
     const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
     const candidates = [];
     for (let reach = Math.min(SWISS_OPPONENT_REACH_INITIAL, rightPool.length); candidates.length === 0 && reach <= rightPool.length; reach = Math.min(reach * SWISS_OPPONENT_REACH_MULTIPLIER, rightPool.length)) {
@@ -910,6 +1095,9 @@
     const closest = remainingOpponents.slice(-CLIMB_OPPONENT_PICK_WINDOW);
     return closest[Math.floor(Math.random() * closest.length)];
   }
+  function climberPoolIndex(climber, rightPool) {
+    return climber.rating100 == null ? -1 : rightPool.findIndex((s) => s.id === climber.id);
+  }
   function getRemainingClimbOpponents(climber, rightPool, climberIndex) {
     return rightPool.filter((s, idx) => {
       if (s.id === climber.id || state.gauntletDefeated.includes(s.id)) return false;
@@ -922,6 +1110,7 @@
     return buildOpponentPool(allScenes, leftPool, filters);
   }
   async function applyClimbWinRating(climber, beatenOpponent, eloRating) {
+    if (!ratingsEnabled()) return climber.rating100 ?? eloRating;
     climber.rating100 = eloRating;
     const rightPool = await getClimbOpponentPool();
     const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
@@ -956,7 +1145,8 @@
     }
     if (state.gauntletFalling && state.gauntletFallingScene) {
       const fallingScene = state.gauntletFallingScene;
-      const fallingIndex = rightPool.findIndex((s) => s.id === fallingScene.id);
+      const fallingIndex = fallingScene.rating100 == null ? rightPool.findIndex((s) => s.id === state.gauntletDefeated[0]) : rightPool.findIndex((s) => s.id === fallingScene.id);
+      const fallingRank = fallingScene.rating100 == null ? fallingIndex + 2 : fallingIndex + 1;
       const belowOpponents = rightPool.filter((s, idx) => {
         if (s.id === fallingScene.id || state.gauntletDefeated.includes(s.id)) return false;
         return idx > fallingIndex;
@@ -979,10 +1169,10 @@
       } else {
         const nextBelow = belowOpponents[0];
         const nextBelowIndex = rightPool.findIndex((s) => s.id === nextBelow.id);
-        state.gauntletClimberRank = fallingIndex + 1;
+        state.gauntletClimberRank = fallingRank;
         return {
           scenes: [fallingScene, nextBelow],
-          ranks: [fallingIndex + 1, nextBelowIndex + 1],
+          ranks: [fallingRank, nextBelowIndex + 1],
           isVictory: false,
           isFalling: true
         };
@@ -1007,7 +1197,7 @@
       };
     }
     const climber = state.gauntletClimber;
-    const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
+    const climberIndex = climberPoolIndex(climber, rightPool);
     state.gauntletClimberRank = climberIndex >= 0 ? climberIndex + 1 : 1;
     const remainingOpponents = getRemainingClimbOpponents(climber, rightPool, climberIndex);
     if (remainingOpponents.length === 0) {
@@ -1023,7 +1213,7 @@
     const nextOpponentIndex = rightPool.findIndex((s) => s.id === nextOpponent.id);
     return {
       scenes: [climber, nextOpponent],
-      ranks: [climberIndex + 1, nextOpponentIndex + 1],
+      ranks: [climberIndex >= 0 ? climberIndex + 1 : null, nextOpponentIndex + 1],
       isVictory: false,
       isFalling: false
     };
@@ -1075,6 +1265,108 @@
       isVictory: false
     };
   }
+  function newPlacementRun(scene) {
+    return {
+      scene,
+      aboveId: null,
+      belowId: null,
+      lastOpponentId: null,
+      lastWon: null,
+      galloping: scene.rating100 != null,
+      step: 1,
+      battles: 0,
+      rangeLo: 0,
+      rangeHi: 0
+    };
+  }
+  function placementBounds(run, pool) {
+    const aboveIdx = run.aboveId ? pool.findIndex((s) => s.id === run.aboveId) : -1;
+    const belowIdx = run.belowId ? pool.findIndex((s) => s.id === run.belowId) : -1;
+    return { lo: aboveIdx + 1, hi: belowIdx >= 0 ? belowIdx : pool.length };
+  }
+  function nextPlacementIndex(run, pool, lo, hi) {
+    if (run.galloping) {
+      if (run.lastOpponentId === null) {
+        return insertionIndex(pool, run.scene.rating100 ?? 0);
+      }
+      const lastIdx = pool.findIndex((s) => s.id === run.lastOpponentId);
+      if (lastIdx >= 0) {
+        const dir = run.lastWon ? -1 : 1;
+        const lastRating = pool[lastIdx].rating100 ?? 0;
+        let edge = lastIdx;
+        while (edge + dir >= 0 && edge + dir < pool.length && (pool[edge + dir].rating100 ?? 0) === lastRating) {
+          edge += dir;
+        }
+        return edge + dir * run.step;
+      }
+    }
+    return lo + Math.floor((hi - lo) / 2);
+  }
+  function pickAmongTies(pool, idx, lo, hi) {
+    const rating = pool[idx].rating100 ?? 0;
+    const ties = [];
+    for (let i = lo; i < hi; i++) {
+      if ((pool[i].rating100 ?? 0) === rating) ties.push(i);
+    }
+    return ties[Math.floor(Math.random() * ties.length)];
+  }
+  function placementRating(pool, slot) {
+    const above = slot > 0 ? pool[slot - 1].rating100 ?? 0 : null;
+    const below = slot < pool.length ? pool[slot].rating100 ?? 0 : null;
+    if (above === null) return Math.min(100, (below ?? 0) + 1);
+    if (below === null) return Math.max(1, above - 1);
+    if (above - below >= 2) return Math.round((above + below) / 2);
+    return Math.max(1, above);
+  }
+  function recordPlacementResult(won, opponentId) {
+    const run = state.placement;
+    if (!run) return;
+    if (run.lastWon !== null) {
+      if (run.lastWon === won) run.step *= 2;
+      else run.galloping = false;
+    }
+    if (won) run.belowId = opponentId;
+    else run.aboveId = opponentId;
+    run.lastOpponentId = opponentId;
+    run.lastWon = won;
+    run.battles++;
+  }
+  async function fetchPlacementPair(forcedLeftScene = null) {
+    const filters = readFilters();
+    const { leftPool, allScenes } = await loadScenePools(filters);
+    if (allScenes.length < 2) {
+      throw new Error("Not enough scenes for comparison.");
+    }
+    if (!state.placement) {
+      const scene = forcedLeftScene || getNextFilteredScene(leftPool, filters.filterKey);
+      if (!scene) {
+        throw new Error("No scenes match your filter criteria.");
+      }
+      state.placement = newPlacementRun(scene);
+    }
+    const run = state.placement;
+    const pool = buildOpponentPool(allScenes, leftPool, filters).filter((s) => s.id !== run.scene.id);
+    if (pool.length === 0) {
+      throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
+    }
+    state.totalScenesCount = pool.length + 1;
+    const { lo, hi } = placementBounds(run, pool);
+    run.rangeLo = Math.min(lo, hi);
+    run.rangeHi = hi;
+    if (lo >= hi) {
+      const slot = Math.min(lo, hi);
+      const rating = placementRating(pool, slot);
+      console.log(
+        `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${slot + 1} after ${run.battles} battles, rating ${rating}`
+      );
+      await updateSceneRating(run.scene.id, rating);
+      if (ratingsEnabled()) run.scene.rating100 = rating;
+      return { done: true, scene: run.scene, rank: slot + 1, rating };
+    }
+    const target = Math.max(lo, Math.min(hi - 1, nextPlacementIndex(run, pool, lo, hi)));
+    const idx = pickAmongTies(pool, target, lo, hi);
+    return { done: false, scenes: [run.scene, pool[idx]], ranks: [null, idx + 1] };
+  }
 
   // src/ui/sceneTitle.ts
   function resolveSceneTitle(scene) {
@@ -1107,7 +1399,9 @@
     const title = resolveSceneTitle(scene);
     const screenshotPath = scene.paths ? scene.paths.screenshot : null;
     const previewPath = scene.paths ? scene.paths.preview : null;
-    const stashRating = scene.rating100 ? `${scene.rating100}/100` : "Unrated";
+    const { unratedRating, openInNewTab, cleanMode } = state.settings;
+    const unratedLabel = state.currentMode === "swiss" && unratedRating > 1 ? `Unrated (counts as ${unratedRating})` : "Unrated";
+    const stashRating = scene.rating100 ? `${scene.rating100}/100` : unratedLabel;
     let rankDisplay = "";
     if (rank !== null && rank !== void 0) {
       rankDisplay = `<span class="sb-scene-rank">#${rank}</span>`;
@@ -1120,34 +1414,39 @@
     }
     const currentParams = window.location.search;
     const sceneUrl = `/scenes/${scene.id}${currentParams}`;
+    const linkTarget = openInNewTab ? ` target="_blank" rel="noopener"` : "";
     return `
       <div class="sb-scene-card" data-side="${side}">
-        <div class="sb-scene-image-container" data-scene-url="${sceneUrl}">
-          ${screenshotPath ? `<img class="sb-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />` : `<div class="sb-scene-image sb-no-image">No Screenshot</div>`}
-          ${previewPath ? `<video class="sb-hover-preview" src="${previewPath}" loop playsinline></video>` : ""}
+        <div class="sb-scene-media">
+          <a class="sb-scene-image-container pwr-scene-image-container" href="${sceneUrl}"${linkTarget}>
+            ${screenshotPath ? `<img class="sb-scene-image pwr-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />` : `<div class="sb-scene-image sb-no-image">No Screenshot</div>`}
+            ${previewPath ? `<video class="sb-hover-preview pwr-hover-preview" src="${previewPath}" loop muted playsinline></video>` : ""}
+          </a>
           <div class="sb-scene-duration">${formatDuration(duration)}</div>
           ${statusBadgeHtml}
-          <div class="sb-click-hint">Click to open scene</div>
+          <div class="sb-click-hint">${openInNewTab ? "Click to open in new tab" : "Click to open scene"}</div>
+          <a class="sb-open-link" href="${sceneUrl}" target="_blank" rel="noopener" title="Open scene in new tab">↗</a>
+          ${cleanMode && isStashDeleteDialogAvailable() ? `<button type="button" class="sb-delete-btn" title="Delete this scene from Stash">🗑</button>` : ""}
         </div>
 
         <div class="sb-scene-body" data-winner="${scene.id}">
-          <div class="sb-scene-info">
+          <div class="sb-scene-info pwr-scene-info">
             <div class="sb-scene-title-row">
               <h3 class="sb-scene-title">${title}</h3>
               ${rankDisplay}
             </div>
 
             <div class="sb-scene-meta">
-              <div class="sb-meta-item"><strong>Studio:</strong> ${studio}</div>
-              <div class="sb-meta-item"><strong>Performers:</strong> ${performers}</div>
-              <div class="sb-meta-item"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="sb-meta-item"><strong>Rating:</strong> ${stashRating}</div>
+              <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
+              <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
+              <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
+              <div class="sb-meta-item sb-meta-rating"><strong>Rating:</strong> ${stashRating}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
           </div>
 
           <div class="sb-choose-btn">
-            ✓ Choose This Scene
+            ✓ Choose<span class="sb-choose-long"> This Scene</span>
           </div>
         </div>
       </div>
@@ -1162,11 +1461,11 @@
       <div class="sb-end-screen">
         <div class="sb-end-screen-icon">${crown}</div>
         <h2 class="sb-end-screen-headline">${headline}</h2>
-        <div class="sb-end-screen-scene">
-          ${screenshotPath ? `<img class="sb-end-screen-image" src="${screenshotPath}" alt="${title}" />` : `<div class="sb-end-screen-image sb-no-image">No Screenshot</div>`}
+        <div class="sb-end-screen-scene pwr-scene-image-container">
+          ${screenshotPath ? `<img class="sb-end-screen-image pwr-scene-image" src="${screenshotPath}" alt="${title}" />` : `<div class="sb-end-screen-image sb-no-image">No Screenshot</div>`}
         </div>
         <h3 class="sb-end-screen-name">${title}</h3>
-        <p class="sb-end-screen-stats">${statsHtml}</p>
+        <p class="sb-end-screen-stats">${statsHtml}${ratingsEnabled() ? "" : "<br><em>🎈 Fun mode: rating not saved</em>"}</p>
         <button id="sb-new-gauntlet" class="btn btn-primary">${buttonLabel}</button>
       </div>
     `;
@@ -1175,15 +1474,13 @@
     const comparisonArea = document.getElementById("sb-comparison-area");
     if (!comparisonArea) return;
     comparisonArea.innerHTML = html;
-    const actionsEl = document.querySelector(".sb-actions");
-    if (actionsEl) actionsEl.style.display = "none";
+    setActionsVisible(false);
     comparisonArea.querySelector("#sb-new-gauntlet")?.addEventListener("click", () => {
-      if (actionsEl) actionsEl.style.display = "";
       loadNewPair();
     });
   }
   function finishRunShowEndScreen(html) {
-    resetGauntletState();
+    resetRunState();
     saveState();
     showEndScreen(html);
   }
@@ -1201,78 +1498,276 @@
     finishRunShowEndScreen(html);
   }
   function showPlacementScreen(scene, rank, finalRating) {
+    const battles = state.placement?.battles;
+    const battlesLine = battles ? ` · ${battles} battle${battles === 1 ? "" : "s"}` : "";
     const html = buildEndScreenHtml(
       scene,
       "📍",
       "PLACED!",
-      `Rank <strong>#${rank}</strong> of ${state.totalScenesCount}<br>Rating: <strong>${finalRating}/100</strong>`,
+      `Rank <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesLine}<br>Rating: <strong>${finalRating}/100</strong>`,
       "Start New Run"
     );
     finishRunShowEndScreen(html);
   }
 
+  // src/ui/settingsPanel.ts
+  var SECTIONS = [
+    {
+      title: "Battles",
+      rows: [
+        { key: "filterOpponents", title: "Use filtered scenes for both sides", hint: "Opponents also come from the current scene list filter instead of your whole rated library" },
+        { key: "unratedRating", title: "Unrated scene rating", hint: "What unrated scenes count as in Swiss. 0 starts them at the bottom; 50 is closer to a classic ELO start" },
+        { key: "funMode", title: "Fun mode", hint: "Battle without changing any ratings" }
+      ]
+    },
+    {
+      title: "Scenes",
+      rows: [
+        { key: "autoplayPreviews", title: "Autoplay previews", hint: "Loop both previews silently; hover a card to hear it" },
+        { key: "pauseMediaOnOpen", title: "Pause playing video when Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
+        { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
+        { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" }
+      ]
+    }
+  ];
+  var DEFAULT_UNMUTE_VOLUME = 50;
+  var volumeBeforeMute = null;
+  var activeTab = "battle";
+  function getActiveTab() {
+    return activeTab;
+  }
+  function volumeIcon(volume) {
+    if (volume === 0) return "🔇";
+    return volume < 50 ? "🔉" : "🔊";
+  }
+  function settingControl(key) {
+    if (key === "unratedRating") {
+      return `<input type="number" min="0" max="100" step="1" data-setting="${key}" value="${state.settings[key]}" class="form-control form-control-sm input-control sb-setting-number">`;
+    }
+    const id = `sb-setting-${key}`;
+    return `
+          <div class="custom-control custom-switch">
+            <input type="checkbox" class="custom-control-input" id="${id}" data-setting="${key}" ${state.settings[key] ? "checked" : ""}>
+            <label class="custom-control-label" for="${id}"></label>
+          </div>`;
+  }
+  function createTabBar() {
+    const { previewVolume } = state.settings;
+    return `
+      <div class="sb-tab-bar">
+        <nav class="nav nav-tabs sb-tabs" role="tablist">
+          <a class="nav-item nav-link active" role="tab" data-tab="battle" aria-selected="true">⚔️ Battle</a>
+          <a class="nav-item nav-link" role="tab" data-tab="settings" aria-selected="false">⚙ Settings</a>
+        </nav>
+        <div class="sb-volume" title="Preview volume">
+          <button type="button" class="sb-volume-icon" aria-label="Mute previews">${volumeIcon(previewVolume)}</button>
+          <input type="range" min="0" max="100" step="1" data-setting="previewVolume" value="${previewVolume}" aria-label="Preview volume">
+          <span class="sb-volume-value">${previewVolume}</span>
+        </div>
+      </div>
+    `;
+  }
+  function createSettingsTab() {
+    const sections = SECTIONS.map(
+      ({ title, rows }) => `
+        <div class="setting-section">
+          <h1>${title}</h1>
+          <div class="card">
+            ${rows.map(
+        ({ key, title: rowTitle, hint }) => `
+            <div class="setting">
+              <div>
+                <h3>${rowTitle}</h3>
+                <div class="sub-heading">${hint}</div>
+              </div>
+              <div>${settingControl(key)}</div>
+            </div>`
+      ).join("")}
+          </div>
+        </div>`
+    ).join("");
+    return `
+      <div class="sb-tab-panel sb-settings-tab" data-panel="settings" hidden>
+        ${sections}
+        <p class="sb-settings-note">Saves to Stash, also under Settings → Plugins.</p>
+      </div>
+    `;
+  }
+  function syncSettingsControls(root) {
+    root.querySelectorAll("input[data-setting]").forEach((input) => {
+      const key = input.dataset.setting;
+      const value = state.settings[key];
+      if (input.type === "checkbox") input.checked = Boolean(value);
+      else input.value = String(value);
+    });
+    const volume = state.settings.previewVolume;
+    root.querySelectorAll(".sb-volume-icon").forEach((el) => {
+      el.textContent = volumeIcon(volume);
+      el.setAttribute("aria-label", volume === 0 ? "Unmute previews" : "Mute previews");
+    });
+    root.querySelectorAll(".sb-volume-value").forEach((el) => el.textContent = String(volume));
+  }
+  function showTab(root, tab) {
+    activeTab = tab;
+    root.querySelectorAll(".sb-tabs .nav-link").forEach((link) => {
+      const on = link.dataset.tab === tab;
+      link.classList.toggle("active", on);
+      link.setAttribute("aria-selected", String(on));
+    });
+    root.querySelectorAll(".sb-tab-panel").forEach((panel) => {
+      panel.hidden = panel.dataset.panel !== tab;
+    });
+  }
+  function bindSettingsControls(root, onChange, onTabChange) {
+    const apply = (patch, key) => {
+      updateSettings(patch);
+      syncSettingsControls(root);
+      onChange(key);
+    };
+    root.querySelectorAll("input[data-setting]").forEach((input) => {
+      const key = input.dataset.setting;
+      const eventName = input.type === "range" ? "input" : "change";
+      input.addEventListener(eventName, () => {
+        const value = input.type === "checkbox" ? input.checked : Number(input.value);
+        apply({ [key]: value }, key);
+      });
+    });
+    root.querySelectorAll(".sb-volume-icon").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const current = state.settings.previewVolume;
+        if (current > 0) {
+          volumeBeforeMute = current;
+          apply({ previewVolume: 0 }, "previewVolume");
+        } else {
+          apply({ previewVolume: volumeBeforeMute ?? DEFAULT_UNMUTE_VOLUME }, "previewVolume");
+        }
+      });
+    });
+    root.querySelectorAll(".sb-tabs .nav-link").forEach((link) => {
+      link.addEventListener("click", () => {
+        const tab = link.dataset.tab;
+        if (tab === activeTab) return;
+        showTab(root, tab);
+        onTabChange(tab);
+      });
+    });
+  }
+
   // src/ui/mainUI.ts
+  var MODES = [
+    {
+      mode: "swiss",
+      icon: "⚖️",
+      title: "Swiss",
+      desc: "Fair matchups",
+      tip: "Each scene faces an opponent with a similar rating. Both ratings change after every pick, and every scene stays in the rotation."
+    },
+    {
+      mode: "placement",
+      icon: "📍",
+      title: "Placement",
+      desc: "Place a scene",
+      tip: "Finds where one scene belongs. Each pick narrows the range of ranks it could land in (shown on its card) until its spot is found, about 10 picks for an unrated scene. Only its rating changes, once at the end."
+    },
+    {
+      mode: "gauntlet",
+      icon: "🎯",
+      title: "Gauntlet",
+      desc: "Climb the ladder",
+      tip: "A scene starts at the bottom and climbs by beating the scenes above it. When it loses, it falls until it finds its floor. Only the climber's rating changes."
+    },
+    {
+      mode: "champion",
+      icon: "🏆",
+      title: "Champion",
+      desc: "Winner stays on",
+      tip: "Winner stays on: the scene you pick keeps defending against new challengers until it's beaten, then the winner takes over."
+    }
+  ];
   function createMainUI() {
+    const modeButtons = MODES.map(
+      ({ mode, icon, title, desc, tip }) => `
+            <button class="sb-mode-btn ${state.currentMode === mode ? "active" : ""}" data-mode="${mode}" data-tip="${tip}" aria-description="${tip}">
+              <span class="sb-mode-icon">${icon}</span>
+              <span class="sb-mode-title">${title}</span>
+              <span class="sb-mode-desc">${desc}</span>
+            </button>`
+    ).join("");
     return `
       <div id="stash-battle-container" class="sb-container">
         <div class="sb-header">
           <h1 class="sb-title">⚔️ Stash Battle</h1>
           <p class="sb-subtitle">Compare scenes head-to-head to build your rankings</p>
+          ${createTabBar()}
+        </div>
 
-          <div class="sb-mode-toggle">
-            <button class="sb-mode-btn ${state.currentMode === "swiss" ? "active" : ""}" data-mode="swiss">
-              <span class="sb-mode-icon">⚖️</span>
-              <span class="sb-mode-title">Swiss</span>
-              <span class="sb-mode-desc">Fair matchups</span>
-            </button>
-            <button class="sb-mode-btn ${state.currentMode === "gauntlet" ? "active" : ""}" data-mode="gauntlet">
-              <span class="sb-mode-icon">🎯</span>
-              <span class="sb-mode-title">Gauntlet</span>
-              <span class="sb-mode-desc">Place a scene</span>
-            </button>
-            <button class="sb-mode-btn ${state.currentMode === "champion" ? "active" : ""}" data-mode="champion">
-              <span class="sb-mode-icon">🏆</span>
-              <span class="sb-mode-title">Champion</span>
-              <span class="sb-mode-desc">Winner stays on</span>
-            </button>
+        <div class="sb-tab-panel" data-panel="battle">
+          <p id="sb-fun-badge" class="sb-fun-badge" ${state.settings.funMode ? "" : "hidden"}>🎈 Fun mode: ratings are not saved</p>
+          <div class="sb-mode-row">
+            <div class="sb-mode-toggle">${modeButtons}
+            </div>
+            <button type="button" class="sb-mode-info-btn" aria-controls="sb-mode-info" aria-expanded="false" aria-label="What does this mode do?">ⓘ</button>
           </div>
+          <p id="sb-mode-info" class="sb-mode-info" hidden></p>
 
-          <div class="sb-opponents-toggle" style="margin-top:8px;">
-            <label>
-              <input type="checkbox" id="sb-filter-opponents-checkbox" ${state.filterOpponents ? "checked" : ""}>
-               Use filtered scenes for both sides
-            </label>
-            <label style="margin-left:16px;">
-              <input type="checkbox" id="sb-mute-previews-checkbox" ${state.mutePreviews ? "checked" : ""}>
-               Mute hover previews
-            </label>
-          </div>
           <p id="sb-climb-pool-warning" class="sb-climb-warning" hidden>
             Gauntlet and Champion can behave oddly with small filtered pools when both sides use the filter
-            (fewer than ${CLIMB_SMALL_POOL_WARN_AT} scenes). Prefer a larger filter or turn off filter opponents.
+            (fewer than ${CLIMB_SMALL_POOL_WARN_AT} scenes). Use a larger filter, or turn off
+            "Use filtered scenes for both sides" in Settings.
           </p>
+
+          <p id="sb-pool-status" class="sb-pool-status" hidden></p>
+
+          <div class="sb-content">
+            <div id="sb-comparison-area" class="sb-comparison-area">
+              <div class="sb-loading">Loading scenes...</div>
+            </div>
+            <div class="sb-actions">
+              <div class="sb-action-buttons">
+                <button id="sb-skip-btn" class="btn btn-secondary">Skip</button>
+                <button id="sb-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh</button>
+              </div>
+              <div class="sb-keyboard-hint">
+                <span>←</span> choose left ·
+                <span>→</span> choose right ·
+                <span>Space</span> skip
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="sb-content">
-          <div id="sb-comparison-area" class="sb-comparison-area">
-            <div class="sb-loading">Loading scenes...</div>
-          </div>
-          <div class="sb-actions">
-            <div class="sb-action-buttons">
-              <button id="sb-skip-btn" class="btn btn-secondary">Skip (Get New Pair)</button>
-              <button id="sb-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh Cache</button>
-            </div>
-            <div class="sb-keyboard-hint">
-              <span>← Left Arrow</span> to choose left ·
-              <span>→ Right Arrow</span> to choose right ·
-              <span>Space</span> to skip
-            </div>
-          </div>
-        </div>
+        ${createSettingsTab()}
       </div>
     `;
   }
+  function updateModeInfo() {
+    const info = document.getElementById("sb-mode-info");
+    const mode = MODES.find((m) => m.mode === state.currentMode);
+    if (info && mode) info.innerHTML = `<strong>${mode.icon} ${mode.title}:</strong> ${mode.tip}`;
+  }
+  function updatePoolStatus() {
+    const status = document.getElementById("sb-pool-status");
+    if (!status) return;
+    const count = state.leftPoolSize;
+    const countHtml = count === null ? "" : ` · <strong>${count} scene${count === 1 ? "" : "s"}</strong>`;
+    if (readFilters().filterActive) {
+      const opponents = state.settings.filterOpponents ? " · opponents from the filter too" : "";
+      status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${opponents}`;
+    } else {
+      status.innerHTML = `Rating scenes from your whole library${countHtml}<span class="sb-pool-hint"> · filter the Scenes page to narrow it down</span>`;
+    }
+    status.hidden = false;
+  }
+  function updateFunBadge() {
+    const badge = document.getElementById("sb-fun-badge");
+    if (badge) badge.hidden = !state.settings.funMode;
+  }
   function climbStatusBadge(scene) {
+    if (state.currentMode === "placement") {
+      const run = state.placement;
+      if (run?.scene.id !== scene.id || run.rangeHi === run.rangeLo) return null;
+      return `📍 Narrowing between #${run.rangeLo + 1} and #${run.rangeHi + 1}`;
+    }
     if (state.currentMode !== "gauntlet" && state.currentMode !== "champion") return null;
     if (state.gauntletFalling && state.gauntletFallingScene?.id === scene.id) {
       return "📍 Finding final placement...";
@@ -1284,6 +1779,65 @@
   }
   function bindSceneChoice(body, choice) {
     body.addEventListener("click", () => handleSceneChoice(choice));
+  }
+  function setActionsVisible(visible) {
+    const actionsEl = document.querySelector(".sb-actions");
+    if (actionsEl) actionsEl.style.display = visible ? "" : "none";
+  }
+  function isTouchDevice() {
+    return window.matchMedia("(hover: none)").matches;
+  }
+  function handleSceneLinkClick(e, link) {
+    const nativeNewTab = link.target === "_blank" && state.settings.openInNewTab;
+    if (nativeNewTab || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    navigateToUrl(link.getAttribute("href") || "");
+  }
+  function applyPreviewSettings() {
+    const { previewVolume, autoplayPreviews } = state.settings;
+    const battleVisible = getActiveTab() === "battle";
+    document.querySelector(".sb-vs-container")?.classList.toggle("sb-autoplay", autoplayPreviews);
+    document.querySelectorAll("#sb-comparison-area .sb-scene-card").forEach((card) => {
+      const video = card.querySelector(".sb-hover-preview");
+      if (!video) return;
+      const active = card.matches(":hover") || card.classList.contains("sb-previewing");
+      video.volume = previewVolume / 100;
+      video.muted = !active || previewVolume === 0;
+      if (battleVisible && (autoplayPreviews || active)) {
+        if (video.paused) video.play().catch(() => {
+        });
+      } else {
+        video.pause();
+        video.currentTime = 0;
+      }
+    });
+  }
+  function bindPreview(card) {
+    const video = card.querySelector(".sb-hover-preview");
+    if (!video) return;
+    card.addEventListener("mouseenter", () => {
+      if (isTouchDevice()) return;
+      if (!state.settings.autoplayPreviews) video.currentTime = 0;
+      video.volume = state.settings.previewVolume / 100;
+      video.muted = state.settings.previewVolume === 0;
+      video.play().catch(() => {
+      });
+    });
+    card.addEventListener("mouseleave", () => {
+      if (isTouchDevice()) return;
+      if (state.settings.autoplayPreviews) {
+        video.muted = true;
+        return;
+      }
+      video.pause();
+      video.currentTime = 0;
+    });
+  }
+  function togglePreview(card) {
+    const previewing = !card.classList.contains("sb-previewing");
+    document.querySelectorAll(".sb-scene-card.sb-previewing").forEach((c) => c.classList.remove("sb-previewing"));
+    card.classList.toggle("sb-previewing", previewing);
+    applyPreviewSettings();
   }
   function renderPair(scenes, ranks) {
     const comparisonArea = document.getElementById("sb-comparison-area");
@@ -1325,37 +1879,38 @@
         winnerRank: ranks[1],
         loserRank: ranks[0]
       });
+      leftCard.querySelector(".sb-delete-btn")?.addEventListener("click", () => void deleteFromBattle(left));
+      rightCard.querySelector(".sb-delete-btn")?.addEventListener("click", () => void deleteFromBattle(right));
     }
-    comparisonArea.querySelectorAll(".sb-scene-image-container").forEach((container) => {
-      const sceneUrl = container.dataset.sceneUrl;
-      container.addEventListener("click", () => {
-        if (sceneUrl) {
-          navigateToUrl(sceneUrl);
-        }
-      });
-    });
     comparisonArea.querySelectorAll(".sb-scene-card").forEach((card) => {
-      const video = card.querySelector(".sb-hover-preview");
-      if (!video) return;
-      card.addEventListener("mouseenter", () => {
-        video.currentTime = 0;
-        video.muted = state.mutePreviews;
-        video.volume = 0.5;
-        video.play().catch(() => {
-        });
+      const thumb = card.querySelector(".sb-scene-image-container");
+      thumb?.addEventListener("click", (e) => {
+        if (isTouchDevice()) {
+          e.preventDefault();
+          togglePreview(card);
+          return;
+        }
+        handleSceneLinkClick(e, thumb);
       });
-      card.addEventListener("mouseleave", () => {
-        video.pause();
-        video.currentTime = 0;
+      const openLink = card.querySelector(".sb-open-link");
+      openLink?.addEventListener("click", (e) => {
+        if (!state.settings.openInNewTab) handleSceneLinkClick(e, openLink);
       });
+      bindPreview(card);
     });
+    applyPreviewSettings();
+    setActionsVisible(true);
     const skipBtn = document.querySelector("#sb-skip-btn");
-    if (skipBtn) {
-      const disableSkip = (state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber !== null;
-      skipBtn.disabled = disableSkip;
-      skipBtn.style.opacity = disableSkip ? "0.5" : "1";
-      skipBtn.style.cursor = disableSkip ? "not-allowed" : "pointer";
+    if (skipBtn) skipBtn.disabled = isRunActive();
+  }
+  function skipPair() {
+    if (isRunActive() || state.disableChoice) return;
+    state.disableChoice = true;
+    if (state.currentMode !== "swiss") {
+      resetRunState();
+      saveState();
     }
+    loadNewPair();
   }
   async function loadNewPair(forcedLeftSceneId = null) {
     state.disableChoice = false;
@@ -1379,7 +1934,15 @@
       }
       let scenes = [];
       let ranks = [null, null];
-      if (state.currentMode === "gauntlet") {
+      if (state.currentMode === "placement") {
+        const placementResult = await fetchPlacementPair(forcedLeftScene);
+        if (placementResult.done) {
+          showPlacementScreen(placementResult.scene, placementResult.rank, placementResult.rating);
+          return;
+        }
+        scenes = placementResult.scenes;
+        ranks = placementResult.ranks;
+      } else if (state.currentMode === "gauntlet") {
         const gauntletResult = await fetchGauntletPair(forcedLeftScene);
         if (gauntletResult.isVictory) {
           showVictoryScreen(gauntletResult.scenes[0]);
@@ -1421,6 +1984,7 @@
         `[Stash Battle] ✅ Pair loaded in ${loadTime}ms: Scene ${scenes[0].id} (rank #${ranks[0]}) vs Scene ${scenes[1].id} (rank #${ranks[1]})`
       );
       renderPair(scenes, ranks);
+      updatePoolStatus();
       updateClimbPoolWarning();
       saveState();
     } catch (error) {
@@ -1434,6 +1998,7 @@
           <button id="sb-error-retry" class="btn btn-primary">Retry</button>
         </div>
       `;
+      setActionsVisible(true);
       const retryBtn = document.getElementById("sb-error-retry");
       if (retryBtn) {
         retryBtn.addEventListener("click", async () => {
@@ -1441,27 +2006,71 @@
           retryBtn.textContent = "Loading...";
           if (isNoScenes) {
             await clearFilteredCache();
-            state.shuffledFilteredScenes = [];
-            state.shuffleIndex = 0;
-            state.shuffleFilterKey = null;
-            state.removedSceneIds.clear();
+            resetShuffle();
           }
           await loadNewPair();
         });
       }
     }
   }
-  function restoreCurrentPair() {
+  async function restoreCurrentPair() {
     state.disableChoice = false;
+    const left = state.currentPair.left;
+    const right = state.currentPair.right;
+    void loadPoolSize().then(updatePoolStatus).catch((e) => console.warn("[Stash Battle] Could not load scene pools for the status line:", e));
+    if (!await verifyCurrentPair()) return;
     console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
-    if (!state.memoryCache.allScenes) {
-      console.log("[Stash Battle] 🔥 Pre-warming cache in background...");
-      getAllScenesCached();
+    renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
+    updatePoolStatus();
+  }
+  async function verifyCurrentPair() {
+    const { left, right } = state.currentPair;
+    if (!left || !right) return true;
+    try {
+      const existing = await findExistingSceneIds([left.id, right.id]);
+      const gone = [left, right].find((s) => !existing.has(s.id));
+      if (gone) {
+        console.log(`[Stash Battle] 👻 Scene ${gone.id} in the current pair no longer exists`);
+        await handleSceneGone(gone.id);
+        return false;
+      }
+    } catch (e) {
+      console.warn("[Stash Battle] Could not verify current pair:", e);
     }
-    renderPair(
-      [state.currentPair.left, state.currentPair.right],
-      [state.currentRanks.left, state.currentRanks.right]
-    );
+    return true;
+  }
+  function dropFromRun(sceneId) {
+    state.gauntletDefeated = state.gauntletDefeated.filter((id) => id !== sceneId);
+    const run = state.placement;
+    if (!run) return;
+    if (run.aboveId === sceneId) run.aboveId = null;
+    if (run.belowId === sceneId) run.belowId = null;
+    if (run.lastOpponentId === sceneId) {
+      run.lastOpponentId = null;
+      run.galloping = false;
+    }
+  }
+  async function handleSceneGone(sceneId) {
+    await removeSceneEverywhere(sceneId);
+    const { left, right } = state.currentPair;
+    const runSceneIds = [left?.id, state.placement?.scene.id, state.gauntletClimber?.id, state.gauntletFallingScene?.id];
+    if (runSceneIds.includes(sceneId)) {
+      resetRunState();
+      saveState();
+      await loadNewPair();
+      return;
+    }
+    dropFromRun(sceneId);
+    saveState();
+    const keepId = right?.id === sceneId ? left?.id : null;
+    await loadNewPair(keepId ?? null);
+  }
+  async function deleteFromBattle(scene) {
+    if (state.disableChoice) return;
+    const deleted = await confirmDeleteScene(scene);
+    if (!deleted) return;
+    state.disableChoice = true;
+    await handleSceneGone(scene.id);
   }
   function activeClimberId() {
     if (state.gauntletFalling && state.gauntletFallingScene) {
@@ -1473,6 +2082,10 @@
     if (mode === "swiss") return "combatant";
     const climberId = activeClimberId();
     return climberId !== null && sceneId === climberId ? "climber" : "benchmark";
+  }
+  function battleRating(scene) {
+    const unrated = state.currentMode === "swiss" ? state.settings.unratedRating : 0;
+    return effectiveRating(scene.rating100, unrated);
   }
   function applyModePolicy(winner, loser, mode, raw) {
     if (mode === "swiss") return raw;
@@ -1488,9 +2101,10 @@
     return { winner: winnerDelta, loser: loserDelta };
   }
   function resolveComparison(winner, loser) {
+    if (!ratingsEnabled()) return { winner: 0, loser: 0 };
     const mode = state.currentMode;
-    const winnerRating = winner.rating100 || 1;
-    const loserRating = loser.rating100 || 1;
+    const winnerRating = battleRating(winner);
+    const loserRating = battleRating(loser);
     const climberId = activeClimberId();
     const winnerPlayCount = mode !== "swiss" && climberId === winner.id ? CLIMB_K_PLAY_COUNT : winner.play_count ?? 0;
     const raw = calculateRatingChanges({
@@ -1508,7 +2122,20 @@
     const isClimb = state.currentMode === "gauntlet" || state.currentMode === "champion";
     const filters = readFilters();
     const smallPool = state.totalScenesCount > 0 && state.totalScenesCount < CLIMB_SMALL_POOL_WARN_AT;
-    warning.hidden = !(isClimb && state.filterOpponents && filters.filterActive && smallPool);
+    warning.hidden = !(isClimb && state.settings.filterOpponents && filters.filterActive && smallPool);
+  }
+  function handlePlacementChoice(choice) {
+    const run = state.placement;
+    if (!run) {
+      state.disableChoice = false;
+      return;
+    }
+    const won = choice.winner.id === run.scene.id;
+    recordPlacementResult(won, won ? choice.loser.id : choice.winner.id);
+    saveState();
+    choice.winnerCard.classList.add("sb-winner");
+    choice.loserCard.classList.add("sb-loser");
+    setTimeout(() => loadNewPair(), 600);
   }
   async function handleGauntletClimbChoice(choice) {
     const {
@@ -1521,7 +2148,7 @@
     const winnerId = winnerScene.id;
     const loserId = loserScene.id;
     const isFirstBattle = !state.gauntletClimber;
-    if (isFirstBattle && left.rating100 != null) {
+    if (isFirstBattle && left.rating100 != null && ratingsEnabled()) {
       console.log(
         `[Stash Battle] 📊 Gauntlet: clearing rating ${left.rating100} for scene ${left.id} on first choice`
       );
@@ -1529,7 +2156,7 @@
       left.rating100 = null;
     }
     if (isFirstBattle) {
-      state.gauntletClimber = left;
+      state.gauntletClimber = ratingsEnabled() ? left : { ...left, rating100: null };
     }
     const climber = state.gauntletClimber;
     const winnerRating = winnerScene.rating100 || 1;
@@ -1564,7 +2191,7 @@
         `[Stash Battle] 📊 Gauntlet: climber ${climber.id}(rating=${climber.rating100}) LOST to ${winnerId}(rating=${newWinnerRating}), entering falling mode`
       );
       state.gauntletFalling = true;
-      state.gauntletFallingScene = loserScene;
+      state.gauntletFallingScene = climber;
       state.gauntletDefeated = [winnerId];
     }
     saveState();
@@ -1609,7 +2236,7 @@
       winnerDisplayRating = await applyClimbWinRating(climber, loserScene, newWinnerRating);
     } else {
       state.gauntletClimber = winnerScene;
-      winnerScene.rating100 = newWinnerRating;
+      if (ratingsEnabled()) winnerScene.rating100 = newWinnerRating;
       state.gauntletDefeated = [loserId];
       state.gauntletWins = 1;
     }
@@ -1633,20 +2260,20 @@
     const {
       winner: winnerScene,
       loser: loserScene,
-      left,
-      right,
       winnerCard,
       loserCard,
       loserRank
     } = choice;
     const winnerId = winnerScene.id;
     const loserId = loserScene.id;
-    const winnerRating = winnerScene.rating100 || 1;
-    const loserRating = loserScene.rating100 || 1;
-    const loserDisplayRating = loserScene.rating100 || 0;
+    if (state.currentMode === "placement") {
+      handlePlacementChoice(choice);
+      return;
+    }
     if (state.currentMode === "gauntlet") {
       if (state.gauntletFalling && state.gauntletFallingScene) {
         const fallingScene = state.gauntletFallingScene;
+        const loserRating = loserScene.rating100 || 1;
         console.log(
           `[Stash Battle] 📊 Falling mode: fallingScene=${fallingScene.id} winnerId=${winnerId} loserId=${loserId} loserRating=${loserRating}`
         );
@@ -1657,7 +2284,7 @@
             `[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`
           );
           void updateSceneRating(fallingScene.id, finalRating);
-          fallingScene.rating100 = finalRating;
+          if (ratingsEnabled()) fallingScene.rating100 = finalRating;
           const finalRank = Math.max(1, (loserRank ?? 1) - 1);
           winnerCard.classList.add("sb-winner");
           if (loserCard) loserCard.classList.add("sb-loser");
@@ -1684,22 +2311,15 @@
       void handleChampionChoice(choice);
       return;
     }
+    const winnerStart = battleRating(winnerScene);
+    const loserStart = battleRating(loserScene);
     const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
-    const newWinnerRating = winnerRating + winnerDelta;
-    const newLoserRating = loserDisplayRating + loserDelta;
-    removeFromFilteredPool(left.id);
-    removeFromFilteredPool(right.id);
     saveState();
     winnerCard.classList.add("sb-winner");
     if (loserCard) loserCard.classList.add("sb-loser");
-    showRatingAnimation(winnerCard, winnerRating, newWinnerRating, true);
+    showRatingAnimation(winnerCard, winnerStart, winnerStart + winnerDelta, true);
     if (loserCard) {
-      showRatingAnimation(
-        loserCard,
-        loserDisplayRating,
-        loserDelta !== 0 ? newLoserRating : loserDisplayRating,
-        false
-      );
+      showRatingAnimation(loserCard, loserStart, loserStart + loserDelta, false);
     }
     scheduleNextPairAfterAnimations();
   }
@@ -1709,9 +2329,10 @@
   var RATING_ANIM_DEFAULT_STEP_MS = 50;
   var RATING_ANIM_MIN_STEP_MS = 8;
   function scheduleNextPairAfterAnimations() {
-    setTimeout(() => loadNewPair(), 1500);
+    setTimeout(() => loadNewPair(), ratingsEnabled() ? 1500 : 600);
   }
   function showRatingAnimation(card, oldRating, newRating, isWinner) {
+    if (!ratingsEnabled()) return;
     const change = newRating - oldRating;
     const overlay = document.createElement("div");
     overlay.className = `sb-rating-overlay ${isWinner ? "sb-rating-winner" : "sb-rating-loser"}`;
@@ -1751,31 +2372,70 @@
 
   // src/ui/modal.ts
   var modalKeyHandler = null;
-  function openModal() {
+  var sceneMissingListenerAdded = false;
+  var BATTLE_OPEN_CLASS = "sb-battle-open";
+  function rerenderCurrentPair() {
+    const { left, right } = state.currentPair;
+    if (!left || !right || state.disableChoice || !document.querySelector("#sb-comparison-area .sb-vs-container")) {
+      return;
+    }
+    renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
+  }
+  function onSettingChanged(key) {
+    switch (key) {
+      case "filterOpponents":
+        if (state.currentMode !== "swiss") resetRunState();
+        saveState();
+        loadNewPair();
+        updateClimbPoolWarning();
+        break;
+      case "funMode":
+        updateFunBadge();
+        break;
+      case "previewVolume":
+      case "autoplayPreviews":
+        applyPreviewSettings();
+        break;
+      case "openInNewTab":
+      case "cleanMode":
+      case "unratedRating":
+        rerenderCurrentPair();
+        break;
+    }
+  }
+  async function openModal() {
     console.log("[Stash Battle] 🎯 Opening modal...");
-    document.querySelectorAll("video, audio").forEach((v) => v.pause());
+    await loadSettings();
+    addKeySwallowers();
+    if (state.settings.pauseMediaOnOpen) {
+      document.querySelectorAll("video, audio").forEach((v) => v.pause());
+    }
+    if (!sceneMissingListenerAdded) {
+      sceneMissingListenerAdded = true;
+      window.addEventListener(SCENE_MISSING_EVENT, (e) => {
+        void handleSceneGone(e.detail);
+      });
+    }
     const hasState = loadState();
     console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? "found" : "none"}`);
     const currentFilterParams = window.location.search;
     const filtersChanged = hasState && state.savedFilterParams !== currentFilterParams;
     if (filtersChanged) {
-      console.log("[Stash Battle] Filter params changed, resetting gauntlet state and filtered cache");
+      console.log("[Stash Battle] Filter params changed, resetting run state and filtered cache");
       state.currentPair = { left: null, right: null };
       state.currentRanks = { left: null, right: null };
-      resetGauntletState();
+      resetRunState();
       state.savedFilterParams = currentFilterParams;
       state.memoryCache.filteredScenes = null;
       state.memoryCache.filterKey = null;
-      state.shuffledFilteredScenes = [];
-      state.shuffleIndex = 0;
-      state.shuffleFilterKey = null;
+      resetShuffle();
     }
     const scenePageId = getSceneIdFromUrl();
     const sceneAlreadyInPair = scenePageId && state.currentPair.left && state.currentPair.right && (String(state.currentPair.left.id) === scenePageId || String(state.currentPair.right.id) === scenePageId);
     const forceSceneBattle = scenePageId && !sceneAlreadyInPair;
     if (forceSceneBattle) {
       console.log(`[Stash Battle] 🎯 Opened from scene page ${scenePageId}, starting new battle with this scene`);
-      resetGauntletState();
+      resetRunState();
       state.currentPair = { left: null, right: null };
       state.currentRanks = { left: null, right: null };
     }
@@ -1783,16 +2443,23 @@
     if (existingModal && existingModal.classList.contains("sb-modal-hidden")) {
       console.log("[Stash Battle] ♻️ Reusing existing modal");
       existingModal.classList.remove("sb-modal-hidden", "sb-modal-closing");
+      document.body.classList.add(BATTLE_OPEN_CLASS);
+      showTab(existingModal, "battle");
+      syncSettingsControls(existingModal);
+      updateFunBadge();
       if (modalKeyHandler) {
         document.removeEventListener("keydown", modalKeyHandler, true);
+        document.addEventListener("keydown", modalKeyHandler, true);
       }
-      if (modalKeyHandler) document.addEventListener("keydown", modalKeyHandler, true);
       const modalContent2 = existingModal.querySelector(".sb-modal-content");
       if (modalContent2) modalContent2.focus();
       if (forceSceneBattle) {
         loadNewPair(scenePageId);
       } else if (filtersChanged || !state.currentPair.left || !state.currentPair.right) {
         loadNewPair();
+      } else if (document.querySelector("#sb-comparison-area .sb-vs-container")) {
+        applyPreviewSettings();
+        void verifyCurrentPair();
       }
       return;
     }
@@ -1805,11 +2472,12 @@
     modal.innerHTML = `
       <div class="sb-modal-backdrop"></div>
       <div class="sb-modal-content">
-        <button class="sb-modal-close">✕</button>
+        <button class="sb-modal-close" aria-label="Close">✕</button>
         ${createMainUI()}
       </div>
     `;
     document.body.appendChild(modal);
+    document.body.classList.add(BATTLE_OPEN_CLASS);
     const modalContent = modal.querySelector(".sb-modal-content");
     if (modalContent) {
       modalContent.setAttribute("tabindex", "-1");
@@ -1821,85 +2489,47 @@
         const newMode = btn.dataset.mode;
         if (newMode !== state.currentMode) {
           state.currentMode = newMode;
-          resetGauntletState();
+          resetRunState();
           state.shuffleIndex = 0;
           modal.querySelectorAll(".sb-mode-btn").forEach((b) => {
             b.classList.toggle("active", b.dataset.mode === state.currentMode);
           });
-          const actionsEl = document.querySelector(".sb-actions");
-          if (actionsEl) actionsEl.style.display = "";
+          updateModeInfo();
           loadNewPair(getSceneIdFromUrl());
           updateClimbPoolWarning();
           saveState();
         }
       });
     });
-    const oppCheckbox = modal.querySelector("#sb-filter-opponents-checkbox");
-    if (oppCheckbox) {
-      oppCheckbox.addEventListener("change", (e) => {
-        state.filterOpponents = e.target.checked;
-        try {
-          localStorage.setItem(FILTER_OPPONENTS_KEY, state.filterOpponents ? "1" : "0");
-        } catch {
-        }
-        if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-          resetGauntletState();
-        }
-        saveState();
-        loadNewPair();
-        updateClimbPoolWarning();
-      });
-    }
-    const muteCheckbox = modal.querySelector("#sb-mute-previews-checkbox");
-    if (muteCheckbox) {
-      muteCheckbox.addEventListener("change", (e) => {
-        state.mutePreviews = e.target.checked;
-        try {
-          localStorage.setItem(MUTE_PREVIEWS_KEY, state.mutePreviews ? "1" : "0");
-        } catch {
-        }
-        document.querySelectorAll(".sb-hover-preview").forEach((v) => {
-          v.muted = state.mutePreviews;
-        });
-      });
-    }
-    const skipBtn = modal.querySelector("#sb-skip-btn");
-    if (skipBtn) {
-      skipBtn.addEventListener("click", () => {
-        if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber) {
-          return;
-        }
-        if (state.disableChoice) return;
-        state.disableChoice = true;
-        if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-          resetGauntletState();
-          saveState();
-        }
-        loadNewPair();
-      });
-    }
+    const modeInfoBtn = modal.querySelector(".sb-mode-info-btn");
+    const modeInfo = modal.querySelector("#sb-mode-info");
+    modeInfoBtn?.addEventListener("click", () => {
+      if (!modeInfo) return;
+      updateModeInfo();
+      modeInfo.hidden = !modeInfo.hidden;
+      modeInfoBtn.setAttribute("aria-expanded", String(!modeInfo.hidden));
+    });
+    showTab(modal, "battle");
+    bindSettingsControls(modal, onSettingChanged, () => applyPreviewSettings());
+    modal.querySelector("#sb-skip-btn")?.addEventListener("click", skipPair);
     const refreshCacheBtn = modal.querySelector("#sb-refresh-cache-btn");
     if (refreshCacheBtn) {
       refreshCacheBtn.addEventListener("click", async () => {
         if (state.disableChoice) return;
+        const label = refreshCacheBtn.textContent;
         refreshCacheBtn.disabled = true;
         refreshCacheBtn.textContent = "🔄 Refreshing...";
         try {
           await clearSceneCache();
-          state.shuffledFilteredScenes = [];
-          state.shuffleIndex = 0;
-          state.shuffleFilterKey = null;
-          state.removedSceneIds.clear();
-          resetGauntletState();
+          resetShuffle();
+          resetRunState();
           saveState();
-          const actionsEl = document.querySelector(".sb-actions");
-          if (actionsEl) actionsEl.style.display = "";
           await loadNewPair();
         } catch (e) {
           console.error("[Stash Battle] Refresh failed:", e);
         } finally {
           refreshCacheBtn.disabled = false;
-          refreshCacheBtn.textContent = "🔄 Refresh Cache";
+          refreshCacheBtn.textContent = label;
         }
       });
     }
@@ -1910,7 +2540,7 @@
       console.log(
         `[Stash Battle] 📂 Restoring saved pair from localStorage (Scene ${state.currentPair.left.id} vs Scene ${state.currentPair.right.id})`
       );
-      restoreCurrentPair();
+      void restoreCurrentPair();
     } else {
       console.log("[Stash Battle] 🆕 No saved pair or filters changed, loading new pair...");
       loadNewPair();
@@ -1927,51 +2557,59 @@
         modalKeyHandler = null;
         return;
       }
+      if (isDeleteDialogOpen()) return;
+      e.stopImmediatePropagation();
       if (e.key === "Escape") {
         e.preventDefault();
-        e.stopImmediatePropagation();
         closeModal();
         return;
       }
+      if (getActiveTab() !== "battle") return;
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      const isToggle = tag === "INPUT" && (active?.type === "checkbox" || active?.type === "radio");
+      if (tag === "INPUT" && !isToggle || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "ArrowLeft" && state.currentPair.left) {
         e.preventDefault();
-        e.stopImmediatePropagation();
         const leftBody = activeModal.querySelector('.sb-scene-card[data-side="left"] .sb-scene-body');
         if (leftBody) leftBody.click();
       }
       if (e.key === "ArrowRight" && state.currentPair.right) {
         e.preventDefault();
-        e.stopImmediatePropagation();
         const rightBody = activeModal.querySelector('.sb-scene-card[data-side="right"] .sb-scene-body');
         if (rightBody) rightBody.click();
       }
       if (e.key === " " || e.code === "Space") {
-        const tag = document.activeElement?.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") {
-          return;
-        }
+        if (tag === "BUTTON" || isToggle) return;
         e.preventDefault();
-        e.stopImmediatePropagation();
-        if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.gauntletClimber) {
-          return;
-        }
-        if (state.disableChoice) return;
-        state.disableChoice = true;
-        if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-          resetGauntletState();
-          saveState();
-        }
-        loadNewPair();
+        skipPair();
       }
     };
     document.addEventListener("keydown", modalKeyHandler, true);
   }
+  function isModalVisible() {
+    const modal = document.getElementById("sb-modal");
+    return modal !== null && !modal.classList.contains("sb-modal-hidden");
+  }
+  var keySwallowersAdded = false;
+  function addKeySwallowers() {
+    if (keySwallowersAdded) return;
+    keySwallowersAdded = true;
+    const swallow = (e) => {
+      if (isModalVisible() && !isDeleteDialogOpen()) e.stopImmediatePropagation();
+    };
+    document.addEventListener("keypress", swallow, true);
+    document.addEventListener("keyup", swallow, true);
+  }
   function closeModal() {
     const modal = document.getElementById("sb-modal");
     if (!modal || modal.classList.contains("sb-modal-hidden")) return;
+    cancelDeleteDialog();
+    modal.querySelectorAll(".sb-hover-preview").forEach((v) => v.pause());
     modal.classList.add("sb-modal-closing");
     setTimeout(() => {
       modal.classList.add("sb-modal-hidden");
+      document.body.classList.remove(BATTLE_OPEN_CLASS);
       modal.classList.remove("sb-modal-closing");
     }, 200);
     if (modalKeyHandler) {
@@ -2021,7 +2659,7 @@
     if (link) {
       link.addEventListener("click", (e) => {
         e.preventDefault();
-        openModal();
+        void openModal();
       });
     }
     const navTarget = document.querySelector(".navbar-nav");
@@ -2033,6 +2671,7 @@
   // src/main.ts
   function init() {
     console.log("[Stash Battle] Initialized");
+    registerDeleteDialogBridge();
     injectNavButton();
     const observer = new MutationObserver(() => {
       injectNavButton();

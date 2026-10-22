@@ -1,36 +1,56 @@
 /* ============================================
    STASH BATTLE PLUGIN STYLES
+   Breakpoints: ≤1000px tablet (trimmed meta), ≤640px phone (stacked, full-screen modal)
    ============================================ */
 
 /* Container */
 .sb-container {
   max-width: 1600px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 20px 24px 0;
   font-family: inherit;
+}
+
+/* [hidden] must win over component display rules */
+.sb-container [hidden],
+#sb-modal [hidden] {
+  display: none !important;
 }
 
 /* Header */
 .sb-header {
   text-align: center;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
 }
 
 .sb-title {
-  font-size: 2.5rem;
+  font-size: 2.2rem;
   font-weight: bold;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   color: #fff;
 }
 
 .sb-subtitle {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   color: #888;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+}
+
+/* Lives in the Battle tab (not the header) so toggling it never moves the tab bar */
+.sb-fun-badge {
+  display: block;
+  width: fit-content;
+  margin: 0 auto 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: #ffd27a;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.4);
 }
 
 .sb-climb-warning {
-  margin: 0 0 16px;
+  margin: 12px 0 0;
   padding: 8px 12px;
   font-size: 0.9rem;
   color: #ccc;
@@ -46,8 +66,57 @@
   display: flex;
   justify-content: center;
   gap: 10px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
+}
+
+/* Mode buttons + the touch-only ⓘ button */
+.sb-mode-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.sb-mode-row .sb-mode-toggle {
+  flex: 1;
+  min-width: 0;
+}
+
+.sb-mode-info-btn {
+  display: none;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: transparent;
+  color: #aaa;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.sb-mode-info-btn[aria-expanded="true"] {
+  border-color: #0d6efd;
+  color: #fff;
+}
+
+/* No hover on touch screens, so offer the explanation behind a tap instead */
+@media (hover: none) {
+  .sb-mode-info-btn {
+    display: flex;
+  }
+}
+
+.sb-mode-info {
+  margin: -6px 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: #ccc;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .sb-mode-btn {
@@ -55,10 +124,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding: 12px 20px;
+  padding: 10px 16px;
   min-width: 0;
   flex: 1;
-  max-width: 150px;
+  max-width: 160px;
   border: 2px solid #444;
   background: transparent;
   color: #aaa;
@@ -80,10 +149,59 @@
   color: #fff;
 }
 
-.sb-mode-desc {
-  font-size: 0.9rem;
-  margin-top: 4px;
-  opacity: 0.8;
+/* Mode explanations: shown on hover (after a short delay) or keyboard focus */
+.sb-mode-btn {
+  position: relative;
+}
+
+.sb-mode-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 40;
+  width: min(280px, 80vw);
+  padding: 8px 12px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #222;
+  color: #ddd;
+  font-size: 0.8rem;
+  font-weight: normal;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%);
+  transition: opacity 0.15s ease, visibility 0.15s;
+  pointer-events: none;
+}
+
+/* Keep the outer tooltips inside the modal */
+.sb-mode-btn[data-tip]:first-child::after {
+  left: 0;
+  transform: none;
+}
+
+.sb-mode-btn[data-tip]:last-child::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+.sb-mode-btn:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+@media (hover: hover) {
+  .sb-mode-btn:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0.35s;
+  }
 }
 
 .sb-mode-icon {
@@ -94,9 +212,170 @@
   font-size: 1rem;
 }
 
-/* Comparison Area - Fixed Height */
+.sb-mode-desc {
+  font-size: 0.85rem;
+  margin-top: 2px;
+  opacity: 0.8;
+}
+
+/* Tab bar: Stash's nav-tabs (as in Stash-TCode) with the preview volume on the right */
+.sb-tab-bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  border-bottom: 1px solid #333;
+  text-align: left;
+}
+
+.sb-tabs.nav-tabs {
+  margin: 0; /* Stash centers .nav-tabs with auto margins */
+  border-bottom: none;
+  flex-wrap: nowrap;
+}
+
+.sb-tabs .nav-link {
+  margin-bottom: -1px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  color: #aaa;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.sb-tabs .nav-link:hover {
+  color: #fff;
+  border-color: transparent;
+}
+
+.sb-tabs .nav-link.active {
+  color: #fff;
+  background: #1a1a1a;
+  border-color: #333 #333 #1a1a1a;
+}
+
+.sb-volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+.sb-volume-icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sb-volume-icon:hover {
+  background: #2a2a2a;
+}
+
+.sb-volume input[type="range"] {
+  width: 120px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: #0d6efd;
+}
+
+.sb-volume-value {
+  min-width: 2ch;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Settings tab: Stash's .setting-section / .setting rows, in Battle's palette */
+.sb-settings-tab {
+  max-width: 900px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+  text-align: left;
+}
+
+.sb-settings-tab .setting-section h1 {
+  font-size: 1.1rem;
+  margin: 0 0 8px;
+  color: #fff;
+}
+
+.sb-settings-tab .setting-section:not(:first-child) {
+  margin-top: 20px;
+}
+
+.sb-settings-tab .card {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.sb-settings-tab .setting {
+  gap: 16px;
+  padding: 12px 16px;
+}
+
+.sb-settings-tab .setting:not(:last-child) {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.sb-settings-tab .setting > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sb-settings-tab .setting > div:last-child {
+  flex: 0 0 auto;
+}
+
+.sb-settings-tab .setting h3 {
+  font-size: 1rem;
+  margin: 0;
+  color: #eee;
+}
+
+.sb-settings-tab .setting .sub-heading {
+  margin-top: 3px;
+  color: #888;
+  font-size: 0.82rem;
+}
+
+.sb-setting-number {
+  width: 80px;
+  text-align: right;
+}
+
+.sb-settings-note {
+  margin: 16px 0 0;
+  color: #666;
+  font-size: 0.8rem;
+}
+
+/* Which scenes are being rated (filter vs whole library) */
+.sb-pool-status {
+  margin: 0 0 12px;
+  color: #888;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.sb-pool-status strong {
+  color: #ccc;
+}
+
+/* Comparison Area */
 .sb-comparison-area {
-  min-height: 600px;
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -104,39 +383,14 @@
 
 .sb-vs-container {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 20px;
   align-items: stretch;
   width: 100%;
-}
-
-/* Scene Card - Fixed Height */
-.sb-scene-card {
-  background: #1a1a1a;
-  border: 2px solid #333;
-  border-radius: 12px;
-  overflow: hidden;
-  transition: all 0.3s ease;
-  display: flex;
-  flex-direction: column;
-  min-height: 550px;
-}
-
-@media (max-width: 1200px) {
-  .sb-vs-container {
-    grid-template-columns: 1fr;
-    gap: 30px;
-  }
-
-  .sb-vs-divider {
-    display: flex;
-    justify-content: center;
-    padding: 10px 0;
-  }
-  
-  .sb-scene-card {
-    min-height: auto;
-  }
+  /* Keep 16:9 thumbnails under ~38% of the viewport height so choose buttons stay on screen */
+  max-width: calc(135vh + 120px);
+  margin: 0 auto;
+  animation: fadeIn 0.3s ease-out;
 }
 
 /* VS Divider */
@@ -147,16 +401,31 @@
 }
 
 .sb-vs-text {
-  font-size: 3rem;
+  font-size: 2.6rem;
   font-weight: bold;
   color: #dc3545;
   text-shadow: 0 0 20px rgba(220, 53, 69, 0.5);
 }
 
-.sb-scene-card:hover {
-  border-color: #0d6efd;
-  transform: translateY(-5px);
-  box-shadow: 0 10px 30px rgba(13, 110, 253, 0.2);
+/* Scene Card */
+.sb-scene-card {
+  position: relative;
+  background: #1a1a1a;
+  border: 2px solid #333;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+@media (hover: hover) {
+  .sb-scene-card:hover {
+    border-color: #0d6efd;
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(13, 110, 253, 0.2);
+  }
 }
 
 .sb-scene-card.sb-winner {
@@ -169,18 +438,10 @@
   opacity: 0.7;
 }
 
-/* Ensure card has relative positioning for overlay */
-.sb-scene-card {
-  position: relative;
-}
-
 /* Rating Change Animation Overlay */
 .sb-rating-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -232,11 +493,17 @@
   100% { transform: scale(1); opacity: 1; }
 }
 
-/* Scene Image */
+/* Scene media: the thumbnail link plus badges layered on top (outside the SFW-blurred link) */
+.sb-scene-media {
+  position: relative;
+}
+
 .sb-scene-image-container {
   position: relative;
+  display: block;
   aspect-ratio: 16 / 9;
   overflow: hidden;
+  background: #000;
   cursor: pointer;
 }
 
@@ -256,11 +523,10 @@
   font-size: 1rem;
 }
 
-/* Hover Preview Video */
+/* Preview video: on hover, always with autoplay, or tapped on touch */
 .sb-hover-preview {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -269,12 +535,15 @@
   z-index: 1;
 }
 
-.sb-scene-card:hover .sb-hover-preview {
+.sb-autoplay .sb-hover-preview,
+.sb-scene-card.sb-previewing .sb-hover-preview {
   opacity: 1;
 }
 
-.sb-scene-card:hover .sb-scene-image:not(.sb-no-image) {
-  opacity: 0;
+@media (hover: hover) {
+  .sb-scene-card:hover .sb-hover-preview {
+    opacity: 1;
+  }
 }
 
 .sb-scene-duration {
@@ -288,21 +557,26 @@
   font-size: 0.85rem;
   font-weight: bold;
   z-index: 5;
+  pointer-events: none;
 }
 
-/* Streak badge for gauntlet champion */
+/* Streak / placement range badge */
 .sb-streak-badge {
   position: absolute;
   top: 10px;
   left: 10px;
-  background: linear-gradient(135deg, #ff6b35, #f7c531);
-  color: #000;
-  padding: 6px 12px;
-  border-radius: 20px;
+  max-width: calc(100% - 70px);
+  background: #f5a623;
+  color: #111;
+  /* Same chip shape as the duration overlay */
+  padding: 6px 9px;
+  border-radius: 4px;
   font-size: 0.9rem;
-  font-weight: bold;
+  font-weight: 700;
+  line-height: 1.25;
   z-index: 5;
-  box-shadow: 0 2px 8px rgba(255, 107, 53, 0.4);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
 }
 
 /* Click hint overlay */
@@ -321,8 +595,54 @@
   pointer-events: none;
 }
 
-.sb-scene-image-container:hover .sb-click-hint {
-  opacity: 1;
+@media (hover: hover) {
+  .sb-scene-media:hover .sb-click-hint {
+    opacity: 1;
+  }
+}
+
+/* Corner buttons: ↗ open (touch) and 🗑 delete (clean mode) */
+.sb-open-link,
+.sb-delete-btn {
+  position: absolute;
+  top: 8px;
+  z-index: 6;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sb-open-link {
+  right: 8px;
+  display: none;
+}
+
+.sb-delete-btn {
+  right: 8px;
+}
+
+.sb-delete-btn:hover {
+  background: #dc3545;
+}
+
+@media (hover: none) {
+  .sb-open-link {
+    display: flex;
+  }
+
+  .sb-open-link ~ .sb-delete-btn {
+    right: 50px;
+  }
 }
 
 /* Scene Info */
@@ -334,24 +654,20 @@
   transition: background 0.2s ease;
 }
 
-.sb-scene-body:hover {
-  background: rgba(13, 110, 253, 0.1);
-}
+@media (hover: hover) {
+  .sb-scene-body:hover {
+    background: rgba(13, 110, 253, 0.1);
+  }
 
-.sb-scene-body:hover .sb-choose-btn {
-  background: #0a58ca;
+  .sb-scene-body:hover .sb-choose-btn {
+    background: #0a58ca;
+  }
 }
 
 .sb-scene-info {
-  padding: 15px;
+  padding: 14px;
   flex: 1;
-}
-
-.sb-scene-title {
-  font-size: 1.2rem;
-  margin-bottom: 10px;
-  line-height: 1.3;
-  color: #fff;
+  min-width: 0;
 }
 
 .sb-scene-title-row {
@@ -362,9 +678,13 @@
   margin-bottom: 10px;
 }
 
-.sb-scene-title-row .sb-scene-title {
-  margin-bottom: 0;
+.sb-scene-title {
+  font-size: 1.15rem;
+  margin: 0;
+  line-height: 1.3;
+  color: #fff;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -383,7 +703,12 @@
   gap: 5px;
   font-size: 0.9rem;
   color: #aaa;
-  margin-bottom: 10px;
+}
+
+.sb-meta-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sb-meta-item strong {
@@ -396,7 +721,6 @@
   flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
-  overflow: hidden;
 }
 
 .sb-tags-row strong {
@@ -419,8 +743,8 @@
 /* Choose Button */
 .sb-choose-btn {
   width: 100%;
-  padding: 20px;
-  font-size: 1.2rem;
+  padding: 16px;
+  font-size: 1.15rem;
   font-weight: bold;
   transition: all 0.2s ease;
   background: #0d6efd;
@@ -428,13 +752,18 @@
   text-align: center;
 }
 
-/* Actions */
+/* Actions: sticky at the bottom of the modal so Skip is always reachable */
 .sb-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  margin-top: 30px;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 14px 0 16px;
+  background: linear-gradient(to bottom, rgba(18, 18, 18, 0), #121212 35%);
 }
 
 .sb-action-buttons {
@@ -445,14 +774,18 @@
 }
 
 .sb-action-buttons .btn {
-  padding: 10px 20px;
+  padding: 8px 20px;
   font-size: 0.9rem;
+}
+
+.sb-action-buttons .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .sb-keyboard-hint {
   font-size: 0.85rem;
   color: #666;
-  padding-top: 10px;
 }
 
 .sb-keyboard-hint span {
@@ -463,7 +796,7 @@
   font-family: monospace;
 }
 
-@media (max-width: 768px) {
+@media (hover: none) {
   .sb-keyboard-hint {
     display: none;
   }
@@ -477,7 +810,7 @@
   font-size: 1.2rem;
   color: #888;
   width: 100%;
-  min-height: 550px;
+  min-height: 300px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -546,22 +879,22 @@
   color: #fff;
 }
 
-.sb-container .btn-secondary:hover {
+.sb-container .btn-secondary:hover:not(:disabled) {
   background-color: #5c636a;
   border-color: #5c636a;
 }
 
 /* Modal Styles */
+/* Anchored to the top (not centered) so switching tabs never moves the header */
 #sb-modal {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   z-index: 10000;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 2.5vh;
+  padding-top: 2.5dvh;
 }
 
 #sb-modal.sb-modal-hidden {
@@ -570,10 +903,7 @@
 
 .sb-modal-backdrop {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   background: rgba(0, 0, 0, 0.95);
   animation: backdropFadeIn 0.2s ease-out;
 }
@@ -597,7 +927,10 @@
   width: 95%;
   max-width: 1500px;
   max-height: 95vh;
-  overflow: auto;
+  max-height: 95dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #121212;
   border-radius: 12px;
   box-shadow: 0 25px 80px rgba(0, 0, 0, 0.8);
@@ -618,11 +951,22 @@
   to { opacity: 0; transform: translateY(20px); }
 }
 
+.sb-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 1.8rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 30;
+  transition: color 0.2s;
+}
 
-@media (max-width: 1200px) {
-  .sb-modal-content {
-    overflow-y: auto;
-  }
+.sb-modal-close:hover {
+  color: #fff;
 }
 
 #sb-floating-btn {
@@ -640,30 +984,6 @@
   box-shadow: 0 4px 15px rgba(13, 110, 253, 0.4);
   z-index: 9999;
   transition: transform 0.2s, box-shadow 0.2s;
-}
-
-@media (max-width: 580px) {
-  #sb-floating-btn {
-    bottom: 60px;
-  }
-
-}
-
-.sb-modal-close {
-  position: absolute;
-  top: 15px;
-  right: 20px;
-  background: transparent;
-  border: none;
-  color: #888;
-  font-size: 1.8rem;
-  cursor: pointer;
-  z-index: 10;
-  transition: color 0.2s;
-}
-
-.sb-modal-close:hover {
-  color: #fff;
 }
 
 /* Scrollbar styling for modal */
@@ -684,14 +1004,20 @@
   background: #555;
 }
 
+/* Stash's own modals (e.g. the Clean mode delete dialog) portal to <body> with Bootstrap's
+   z-index 1040/1050, which is under the battle modal; lift them while Battle is open */
+body.sb-battle-open > .modal-backdrop {
+  z-index: 10050;
+}
+
+body.sb-battle-open > .modal {
+  z-index: 10060;
+}
+
 /* Animation for new pair loading */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-.sb-vs-container {
-  animation: fadeIn 0.3s ease-out;
 }
 
 /* End screen (victory / placement) */
@@ -701,6 +1027,7 @@
   align-items: center;
   justify-content: center;
   padding: 20px;
+  width: 100%;
   text-align: center;
   animation: fadeIn 0.5s ease-out;
 }
@@ -734,6 +1061,7 @@
 }
 
 .sb-end-screen-image {
+  display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: contain;
@@ -743,6 +1071,8 @@
   font-size: 1.3rem;
   color: #fff;
   margin: 8px 0;
+  max-width: 100%;
+  word-break: break-word;
 }
 
 .sb-end-screen-stats {
@@ -754,4 +1084,285 @@
 #sb-new-gauntlet {
   padding: 12px 30px;
   font-size: 1.1rem;
+}
+
+/* ---------- Short screens (laptops): compact header and meta ---------- */
+@media (max-height: 900px) and (min-width: 641px) {
+  .sb-container {
+    padding-top: 14px;
+  }
+
+  .sb-header {
+    margin-bottom: 14px;
+  }
+
+  .sb-title {
+    font-size: 1.6rem;
+    margin-bottom: 8px;
+  }
+
+  .sb-subtitle,
+  .sb-mode-desc {
+    display: none;
+  }
+
+  .sb-mode-btn {
+    flex-direction: row;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 12px;
+  }
+
+  .sb-mode-icon {
+    font-size: 1.05rem;
+  }
+
+  .sb-meta-plays,
+  .sb-tags-row {
+    display: none;
+  }
+
+  .sb-choose-btn {
+    padding: 12px;
+  }
+}
+
+/* ---------- Tablet: keep cards side by side, trim secondary meta ---------- */
+@media (max-width: 1000px) {
+  .sb-container {
+    padding: 16px 16px 0;
+  }
+
+  .sb-subtitle {
+    display: none;
+  }
+
+  .sb-vs-container {
+    gap: 10px;
+  }
+
+  .sb-vs-text {
+    font-size: 1.6rem;
+  }
+
+  .sb-meta-plays,
+  .sb-tags-row {
+    display: none;
+  }
+
+  .sb-mode-btn {
+    padding: 8px 10px;
+  }
+
+  .sb-mode-desc {
+    font-size: 0.75rem;
+  }
+}
+
+/* ---------- Phone: stacked compact cards, full-screen modal ---------- */
+@media (max-width: 640px) {
+  #sb-modal {
+    padding-top: 0;
+  }
+
+  .sb-modal-content {
+    width: 100%;
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .sb-container {
+    padding: 12px 12px 0;
+  }
+
+  .sb-header {
+    margin-bottom: 8px;
+  }
+
+  .sb-title {
+    font-size: 1.4rem;
+    margin: 2px 40px 10px;
+  }
+
+  .sb-fun-badge {
+    margin-bottom: 10px;
+    font-size: 0.8rem;
+  }
+
+  /* Modes as a compact segmented row */
+  .sb-mode-toggle {
+    gap: 4px;
+  }
+
+  .sb-mode-row {
+    margin-bottom: 8px;
+  }
+
+  .sb-pool-status {
+    margin-bottom: 6px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sb-pool-hint {
+    display: none;
+  }
+
+  .sb-mode-btn {
+    flex-direction: row;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px 4px;
+    border-width: 1px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+  }
+
+  .sb-mode-icon {
+    font-size: 1rem;
+  }
+
+  .sb-mode-title {
+    font-size: 0.8rem;
+  }
+
+  .sb-mode-desc {
+    display: none;
+  }
+
+  .sb-tab-bar {
+    margin-top: 4px;
+    gap: 6px;
+  }
+
+  .sb-tabs .nav-link {
+    padding: 4px 10px;
+    font-size: 0.85rem;
+  }
+
+  .sb-volume {
+    margin-bottom: 2px;
+  }
+
+  .sb-volume {
+    gap: 2px;
+    font-size: 0.8rem;
+  }
+
+  .sb-volume input[type="range"] {
+    width: 70px;
+  }
+
+  .sb-settings-tab .setting {
+    padding: 10px 12px;
+  }
+
+  .sb-vs-container {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  /* VS badge overlaps the gap between the stacked cards instead of taking a row */
+  .sb-vs-divider {
+    position: relative;
+    height: 0;
+    z-index: 8;
+  }
+
+  .sb-vs-text {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0 10px;
+    border-radius: 999px;
+    background: #121212;
+    font-size: 1rem;
+  }
+
+  .sb-scene-image-container {
+    aspect-ratio: 2 / 1;
+  }
+
+  .sb-scene-info {
+    padding: 8px 10px;
+  }
+
+  .sb-scene-title-row {
+    margin-bottom: 4px;
+  }
+
+  .sb-scene-title {
+    font-size: 1rem;
+  }
+
+  .sb-scene-rank {
+    font-size: 0.95rem;
+  }
+
+  .sb-scene-meta {
+    flex-direction: row;
+    gap: 12px;
+    font-size: 0.8rem;
+  }
+
+  .sb-meta-studio {
+    display: none;
+  }
+
+  .sb-meta-performers {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sb-meta-performers strong,
+  .sb-meta-rating strong {
+    display: none;
+  }
+
+  .sb-choose-btn {
+    padding: 10px;
+    font-size: 1rem;
+  }
+
+  .sb-choose-long {
+    display: none;
+  }
+
+  .sb-streak-badge {
+    top: 6px;
+    left: 6px;
+    padding: 5px 7px;
+    font-size: 0.8rem;
+  }
+
+  .sb-scene-duration {
+    bottom: 6px;
+    right: 6px;
+    font-size: 0.75rem;
+  }
+
+  .sb-actions {
+    margin-top: 8px;
+    padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .sb-end-screen-headline {
+    font-size: 1.8rem;
+  }
+
+  #sb-floating-btn {
+    bottom: 60px;
+  }
+}
+
+/* Narrow phones: mode names only, so four modes + ⓘ fit on one row */
+@media (max-width: 400px) {
+  .sb-mode-icon {
+    display: none;
+  }
 }

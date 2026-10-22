@@ -1,7 +1,19 @@
 // Shared type definitions for the Stash Battle plugin.
 
-/** The three comparison modes the plugin supports. */
-export type Mode = "swiss" | "gauntlet" | "champion";
+/** The comparison modes the plugin supports. */
+export type Mode = "swiss" | "placement" | "gauntlet" | "champion";
+
+/** User settings, persisted in Stash's plugin configuration (see settings.ts). */
+export interface Settings {
+  funMode: boolean; // Battles never write ratings
+  openInNewTab: boolean; // Thumbnail click opens the scene in a new tab
+  unratedRating: number; // Rating unrated scenes count as in Swiss ELO math / matchmaking
+  previewVolume: number; // 0-100, 0 = muted
+  autoplayPreviews: boolean; // Loop both previews (muted) without hovering
+  filterOpponents: boolean; // Right side obeys the list filter too
+  cleanMode: boolean; // Show a delete button on each card
+  pauseMediaOnOpen: boolean; // Pause Stash's playing video/audio when Battle opens
+}
 
 export interface SceneFile {
   duration?: number | null;
@@ -123,6 +135,27 @@ export type GauntletPairResult =
   | GauntletVictoryResult
   | GauntletFallingPair
   | GauntletPlacementResult;
+
+/**
+ * An in-progress Placement run. The scene's slot in the rating-sorted pool is narrowed between
+ * two opponents (stored by id so ranks survive background cache refreshes).
+ */
+export interface PlacementRun {
+  scene: Scene;
+  aboveId: string | null; // Lowest-ranked scene that beat it (slot is below this one)
+  belowId: string | null; // Highest-ranked scene it beat (slot is above this one)
+  lastOpponentId: string | null;
+  lastWon: boolean | null;
+  galloping: boolean; // Step doubles each battle until the first direction reversal
+  step: number;
+  battles: number;
+  rangeLo: number; // Current slot range for display (0-based, inclusive)
+  rangeHi: number;
+}
+
+export type PlacementPairResult =
+  | { done: false; scenes: Scene[]; ranks: Rank[] }
+  | { done: true; scene: Scene; rank: number; rating: number };
 
 export interface ChampionPairResult {
   scenes: Scene[];

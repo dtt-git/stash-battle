@@ -2,7 +2,7 @@
 
 import { STORAGE_KEY } from "./constants";
 import { state } from "./state";
-import type { Mode, Pair, Ranks, Scene } from "./types";
+import type { Mode, Pair, PlacementRun, Ranks, Scene } from "./types";
 
 interface PersistedState {
   currentPair?: Pair;
@@ -14,6 +14,7 @@ interface PersistedState {
   gauntletDefeated?: string[];
   gauntletFalling?: boolean;
   gauntletFallingScene?: Scene | null;
+  placement?: PlacementRun | null;
   totalScenesCount?: number;
   savedFilterParams?: string;
   /** @deprecated Renamed to gauntletClimber */
@@ -34,6 +35,7 @@ export function saveState(): void {
     gauntletDefeated: state.gauntletDefeated,
     gauntletFalling: state.gauntletFalling,
     gauntletFallingScene: state.gauntletFallingScene,
+    placement: state.placement,
     totalScenesCount: state.totalScenesCount,
     savedFilterParams: window.location.search,
   };
@@ -58,6 +60,7 @@ export function loadState(): boolean {
       state.gauntletDefeated = parsed.gauntletDefeated || [];
       state.gauntletFalling = parsed.gauntletFalling || false;
       state.gauntletFallingScene = parsed.gauntletFallingScene || null;
+      state.placement = parsed.placement || null;
       state.totalScenesCount = parsed.totalScenesCount || 0;
       state.savedFilterParams = parsed.savedFilterParams || "";
       return true;

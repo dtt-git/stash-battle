@@ -1,5 +1,7 @@
 // Renders an individual scene card (returns an HTML string).
 
+import { state } from "../state";
+import { isStashDeleteDialogAvailable } from "./deleteDialog";
 import type { Rank, Scene } from "../types";
 import { resolveSceneTitle } from "./sceneTitle";
 
@@ -33,7 +35,10 @@ export function createSceneCard(
 
   const screenshotPath = scene.paths ? scene.paths.screenshot : null;
   const previewPath = scene.paths ? scene.paths.preview : null;
-  const stashRating = scene.rating100 ? `${scene.rating100}/100` : "Unrated";
+  const { unratedRating, openInNewTab, cleanMode } = state.settings;
+  const unratedLabel =
+    state.currentMode === "swiss" && unratedRating > 1 ? `Unrated (counts as ${unratedRating})` : "Unrated";
+  const stashRating = scene.rating100 ? `${scene.rating100}/100` : unratedLabel;
 
   // Numeric rank badge (#N), omitted when null
   let rankDisplay = "";
@@ -52,39 +57,46 @@ export function createSceneCard(
   // Preserve URL search params when opening scene
   const currentParams = window.location.search;
   const sceneUrl = `/scenes/${scene.id}${currentParams}`;
+  const linkTarget = openInNewTab ? ` target="_blank" rel="noopener"` : "";
 
+  // pwr-* classes are the plugin's pre-2.0 names; SFW Switch still targets them to blur Stash Battle.
+  // Badges sit outside the (blurred) image container so they stay readable in SFW mode.
   return `
       <div class="sb-scene-card" data-side="${side}">
-        <div class="sb-scene-image-container" data-scene-url="${sceneUrl}">
-          ${
-            screenshotPath
-              ? `<img class="sb-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />`
-              : `<div class="sb-scene-image sb-no-image">No Screenshot</div>`
-          }
-          ${previewPath ? `<video class="sb-hover-preview" src="${previewPath}" loop playsinline></video>` : ""}
+        <div class="sb-scene-media">
+          <a class="sb-scene-image-container pwr-scene-image-container" href="${sceneUrl}"${linkTarget}>
+            ${
+              screenshotPath
+                ? `<img class="sb-scene-image pwr-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />`
+                : `<div class="sb-scene-image sb-no-image">No Screenshot</div>`
+            }
+            ${previewPath ? `<video class="sb-hover-preview pwr-hover-preview" src="${previewPath}" loop muted playsinline></video>` : ""}
+          </a>
           <div class="sb-scene-duration">${formatDuration(duration)}</div>
           ${statusBadgeHtml}
-          <div class="sb-click-hint">Click to open scene</div>
+          <div class="sb-click-hint">${openInNewTab ? "Click to open in new tab" : "Click to open scene"}</div>
+          <a class="sb-open-link" href="${sceneUrl}" target="_blank" rel="noopener" title="Open scene in new tab">↗</a>
+          ${cleanMode && isStashDeleteDialogAvailable() ? `<button type="button" class="sb-delete-btn" title="Delete this scene from Stash">🗑</button>` : ""}
         </div>
 
         <div class="sb-scene-body" data-winner="${scene.id}">
-          <div class="sb-scene-info">
+          <div class="sb-scene-info pwr-scene-info">
             <div class="sb-scene-title-row">
               <h3 class="sb-scene-title">${title}</h3>
               ${rankDisplay}
             </div>
 
             <div class="sb-scene-meta">
-              <div class="sb-meta-item"><strong>Studio:</strong> ${studio}</div>
-              <div class="sb-meta-item"><strong>Performers:</strong> ${performers}</div>
-              <div class="sb-meta-item"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="sb-meta-item"><strong>Rating:</strong> ${stashRating}</div>
+              <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
+              <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
+              <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
+              <div class="sb-meta-item sb-meta-rating"><strong>Rating:</strong> ${stashRating}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
           </div>
 
           <div class="sb-choose-btn">
-            ✓ Choose This Scene
+            ✓ Choose<span class="sb-choose-long"> This Scene</span>
           </div>
         </div>
       </div>

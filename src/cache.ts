@@ -424,35 +424,32 @@ export function updateSceneInCache(sceneId: string, newRating: number): void {
     console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
   }
 
-  // Also update rating in filteredScenes if present (removal from the left-side pool is separate)
+  // Also reposition in filteredScenes (it doubles as the opponent pool when filtering both sides)
   if (state.memoryCache.filteredScenes) {
-    const scene = state.memoryCache.filteredScenes.find((s) => s.id === sceneId);
-    if (scene) {
-      scene.rating100 = newRating;
-    }
+    repositionSceneInArray(state.memoryCache.filteredScenes, sceneId, newRating);
   }
 }
 
-// Remove a scene from the filtered pool (called after battle regardless of rating change)
-export function removeFromFilteredPool(sceneId: string): void {
-  // Track removal - survives background refresh race condition
-  state.removedSceneIds.add(sceneId);
+// Drop a deleted scene from every cache tier and the left-side shuffle
+export async function removeSceneEverywhere(sceneId: string): Promise<void> {
+  const without = (scenes: Scene[] | null): Scene[] | null =>
+    scenes ? scenes.filter((s) => s.id !== sceneId) : scenes;
 
-  if (state.memoryCache.filteredScenes) {
-    const idx = state.memoryCache.filteredScenes.findIndex((s) => s.id === sceneId);
-    if (idx !== -1) {
-      state.memoryCache.filteredScenes.splice(idx, 1);
-      console.log(
-        `[Stash Battle] 🗑️ Removed scene ${sceneId} from filtered pool (${state.memoryCache.filteredScenes.length} remaining, ${state.removedSceneIds.size} removed this session)`,
-      );
-    }
-  }
+  state.memoryCache.allScenes = without(state.memoryCache.allScenes);
+  state.memoryCache.filteredScenes = without(state.memoryCache.filteredScenes);
 
   const shuffleIdx = state.shuffledFilteredScenes.findIndex((s) => s.id === sceneId);
   if (shuffleIdx !== -1) {
     state.shuffledFilteredScenes.splice(shuffleIdx, 1);
-    if (shuffleIdx < state.shuffleIndex) {
-      state.shuffleIndex--;
+    if (shuffleIdx < state.shuffleIndex) state.shuffleIndex--;
+  }
+
+  for (const cacheKey of ["all-scenes", "filtered-scenes"]) {
+    const cached = await getCachedScenes(cacheKey);
+    if (cached && cached.scenes.some((s) => s.id === sceneId)) {
+      const scenes = cached.scenes.filter((s) => s.id !== sceneId);
+      await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey);
     }
   }
+  console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from caches`);
 }

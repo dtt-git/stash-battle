@@ -4,8 +4,8 @@
 // ES modules cannot reassign an imported binding from another module, so all shared
 // mutable values live on this single `state` object that every module imports.
 
-import { DEFAULT_FILTER_OPPONENTS, FILTER_OPPONENTS_KEY, MUTE_PREVIEWS_KEY } from "./constants";
-import type { Mode, Pair, Ranks, Scene } from "./types";
+import { DEFAULT_SETTINGS } from "./constants";
+import type { Mode, Pair, PlacementRun, Ranks, Scene, Settings } from "./types";
 
 export interface MemoryCache {
   allScenes: Scene[] | null; // All scenes (no filter)
@@ -26,29 +26,20 @@ export interface BattleState {
   gauntletDefeated: string[]; // IDs of scenes defeated in current run
   gauntletFalling: boolean; // True when climber lost and is finding their floor
   gauntletFallingScene: Scene | null; // The scene that's falling to find its position
+  // Placement run tracking
+  placement: PlacementRun | null;
   totalScenesCount: number; // Total scenes for position display
+  leftPoolSize: number | null; // Scenes on the "to rate" side (filter or whole library); null until loaded
   disableChoice: boolean; // Prevents multiple rapid choice events
   savedFilterParams: string; // Stored URL filter params to detect changes
-  // User toggles
-  filterOpponents: boolean;
-  mutePreviews: boolean;
-  // Shuffle state for filtered scenes (prevents duplicates when skipping)
+  // User settings (defaults until loadSettings() resolves)
+  settings: Settings;
+  // Shuffle state for the left-side pool (prevents repeats when skipping)
   shuffledFilteredScenes: Scene[];
   shuffleIndex: number;
   shuffleFilterKey: string | null;
-  removedSceneIds: Set<string>; // Scenes removed this session (survives background refresh)
   // Scene cache (memory tier)
   memoryCache: MemoryCache;
-}
-
-function readBooleanPref(key: string, fallback: boolean): boolean {
-  try {
-    const stored = localStorage.getItem(key);
-    if (stored !== null) return stored === "1";
-  } catch {
-    /* ignore */
-  }
-  return fallback;
 }
 
 export const state: BattleState = {
@@ -61,15 +52,15 @@ export const state: BattleState = {
   gauntletDefeated: [],
   gauntletFalling: false,
   gauntletFallingScene: null,
+  placement: null,
   totalScenesCount: 0,
+  leftPoolSize: null,
   disableChoice: false,
   savedFilterParams: "",
-  filterOpponents: readBooleanPref(FILTER_OPPONENTS_KEY, DEFAULT_FILTER_OPPONENTS),
-  mutePreviews: readBooleanPref(MUTE_PREVIEWS_KEY, false),
+  settings: { ...DEFAULT_SETTINGS },
   shuffledFilteredScenes: [],
   shuffleIndex: 0,
   shuffleFilterKey: null,
-  removedSceneIds: new Set<string>(),
   memoryCache: {
     allScenes: null,
     filteredScenes: null,
@@ -78,11 +69,33 @@ export const state: BattleState = {
   },
 };
 
-export function resetGauntletState(): void {
+/** Clear any gauntlet / champion / placement run in progress. */
+export function resetRunState(): void {
   state.gauntletClimber = null;
   state.gauntletWins = 0;
   state.gauntletClimberRank = 0;
   state.gauntletDefeated = [];
   state.gauntletFalling = false;
   state.gauntletFallingScene = null;
+  state.placement = null;
+}
+
+/** Forget the left-side shuffle so the next pick reshuffles from a fresh pool. */
+export function resetShuffle(): void {
+  state.shuffledFilteredScenes = [];
+  state.shuffleIndex = 0;
+  state.shuffleFilterKey = null;
+}
+
+/** True while a gauntlet/champion/placement run is under way (skip is disabled). */
+export function isRunActive(): boolean {
+  switch (state.currentMode) {
+    case "gauntlet":
+    case "champion":
+      return state.gauntletClimber !== null;
+    case "placement":
+      return (state.placement?.battles ?? 0) > 0;
+    default:
+      return false;
+  }
 }
