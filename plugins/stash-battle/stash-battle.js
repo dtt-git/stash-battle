@@ -175,9 +175,9 @@
   var DEFAULT_SETTINGS = {
     funMode: false,
     openInNewTab: false,
-    unratedRating: 0,
+    unratedRating: 50,
     previewVolume: 50,
-    autoplayPreviews: false,
+    autoplayPreviews: true,
     filterOpponents: false,
     cleanMode: false,
     pauseMediaOnOpen: true
@@ -1793,6 +1793,9 @@
     e.preventDefault();
     navigateToUrl(link.getAttribute("href") || "");
   }
+  function sliderToVolume(slider) {
+    return Math.pow(slider / 100, 3);
+  }
   function applyPreviewSettings() {
     const { previewVolume, autoplayPreviews } = state.settings;
     const battleVisible = getActiveTab() === "battle";
@@ -1801,7 +1804,7 @@
       const video = card.querySelector(".sb-hover-preview");
       if (!video) return;
       const active = card.matches(":hover") || card.classList.contains("sb-previewing");
-      video.volume = previewVolume / 100;
+      video.volume = sliderToVolume(previewVolume);
       video.muted = !active || previewVolume === 0;
       if (battleVisible && (autoplayPreviews || active)) {
         if (video.paused) video.play().catch(() => {
@@ -1818,7 +1821,7 @@
     card.addEventListener("mouseenter", () => {
       if (isTouchDevice()) return;
       if (!state.settings.autoplayPreviews) video.currentTime = 0;
-      video.volume = state.settings.previewVolume / 100;
+      video.volume = sliderToVolume(state.settings.previewVolume);
       video.muted = state.settings.previewVolume === 0;
       video.play().catch(() => {
       });

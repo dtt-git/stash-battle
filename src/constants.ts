@@ -14,9 +14,9 @@ export const PLUGIN_ID = "stash-battle";
 export const DEFAULT_SETTINGS: Settings = {
   funMode: false,
   openInNewTab: false,
-  unratedRating: 0,
+  unratedRating: 50,
   previewVolume: 50,
-  autoplayPreviews: false,
+  autoplayPreviews: true,
   filterOpponents: false,
   cleanMode: false,
   pauseMediaOnOpen: true,

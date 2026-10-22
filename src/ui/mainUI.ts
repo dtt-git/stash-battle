@@ -195,6 +195,14 @@ function handleSceneLinkClick(e: MouseEvent, link: HTMLAnchorElement): void {
   navigateToUrl(link.getAttribute("href") || "");
 }
 
+/**
+ * Slider (0-100) to media volume on a cubic curve, so the slider tracks perceived loudness.
+ * (Stash's player is linear, but generated preview clips are much louder than the source.)
+ */
+function sliderToVolume(slider: number): number {
+  return Math.pow(slider / 100, 3);
+}
+
 /** Apply volume/autoplay settings to the rendered preview videos (hovered card is audible). */
 export function applyPreviewSettings(): void {
   const { previewVolume, autoplayPreviews } = state.settings;
@@ -205,7 +213,7 @@ export function applyPreviewSettings(): void {
     const video = card.querySelector<HTMLVideoElement>(".sb-hover-preview");
     if (!video) return;
     const active = card.matches(":hover") || card.classList.contains("sb-previewing");
-    video.volume = previewVolume / 100;
+    video.volume = sliderToVolume(previewVolume);
     video.muted = !active || previewVolume === 0;
     if (battleVisible && (autoplayPreviews || active)) {
       if (video.paused) video.play().catch(() => {});
@@ -223,7 +231,7 @@ function bindPreview(card: HTMLElement): void {
   card.addEventListener("mouseenter", () => {
     if (isTouchDevice()) return;
     if (!state.settings.autoplayPreviews) video.currentTime = 0;
-    video.volume = state.settings.previewVolume / 100;
+    video.volume = sliderToVolume(state.settings.previewVolume);
     video.muted = state.settings.previewVolume === 0;
     video.play().catch(() => {});
   });

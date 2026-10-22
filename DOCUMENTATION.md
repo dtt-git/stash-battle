@@ -400,9 +400,9 @@ Stored in Stash's plugin config (`configuration.plugins["stash-battle"]`, writte
 |---|---|---|
 | `funMode` | false | No rating writes (see Fun mode above); badge at the top of the Battle tab (not the header, so toggling it doesn't move the tab bar) |
 | `openInNewTab` | false | Thumbnail opens the scene in a new tab |
-| `unratedRating` | 0 | What unrated scenes count as in Swiss |
-| `previewVolume` | 50 | Preview volume, 0 = muted (slider on the tab bar; the speaker icon mutes / restores the previous level) |
-| `autoplayPreviews` | false | Loop both previews muted; hover to hear |
+| `unratedRating` | 50 | What unrated scenes count as in Swiss |
+| `previewVolume` | 50 | Preview volume on a cubic curve (`video.volume = (v/100)³`, so 50 ≈ 0.125), 0 = muted. Deliberately not linear like Stash's player: generated preview clips are much louder than the source (slider on the tab bar; the speaker icon mutes / restores the previous level) |
+| `autoplayPreviews` | true | Loop both previews muted; hover to hear |
 | `filterOpponents` | false | Right side obeys the list filter too |
 | `cleanMode` | false | 🗑 delete button on each card |
 | `pauseMediaOnOpen` | **true** | Pause Stash's playing video/audio when Battle opens (applied after `loadSettings`). Stash's plugin settings page shows unset booleans as off, but a missing key means the default (on) |
