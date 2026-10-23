@@ -140,7 +140,7 @@ export function renderRatingPreview(start: EloStart, stashRatings: StashRatingsM
 
   return `
         <div class="sb-rating-preview">
-          <p class="sb-pv-legend">Above each square: ELO. Inside: Stash rating.</p>
+          <p class="sb-pv-legend">Each square below is an example scene: its ELO above, its Stash rating inside.</p>
           ${rowHtml("Now in Stash", now, "")}
           ${rowHtml("After setup", setUp, off ? unchangedNote : `${changedCount} of 10 change`, { muted: off, showChange: !off })}
           ${rowHtml("After lots of battles", later, laterNote, { muted: off })}

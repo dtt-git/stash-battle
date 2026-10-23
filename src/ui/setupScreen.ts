@@ -72,6 +72,25 @@ function radio(name: string, value: string, label: string, desc: string, checked
               </div>`;
 }
 
+/** What the second answer does to Stash ratings now: a warning when ratings change, else a calm line. */
+function ratingsMessage(start: EloStart, mode: StashRatingsMode, changes: number): string {
+  const backup = "Take a Stash backup first (Settings → Tasks → Backup).";
+  let text: string;
+  let warn = true;
+  if (mode === "off") {
+    text = "Stash ratings won't change.";
+    warn = false;
+  } else if (changes === 0) {
+    text = "No Stash ratings change now: every scene converts back to its current rating.";
+    warn = false;
+  } else if (start === "fresh") {
+    text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 50</strong>: ${plural(changes, "rating")} change, unrated scenes included. ${backup}`;
+  } else {
+    text = `⚠️ <strong>${plural(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 100 by hand may end up lower. ${backup}`;
+  }
+  return `<p class="sb-setup-message${warn ? " sb-setup-warning" : ""}">${text}</p>`;
+}
+
 function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): void {
   const total = scenes.length;
   const rated = scenes.filter((scene) => scene.rating100 != null).length;
@@ -122,7 +141,7 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
               "stashRatings",
               "percentile",
               "Percentile",
-              "Rating = rank in your library: top 100, middle 50, bottom 1.",
+              "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1.",
               false,
             )}
             ${radio(
@@ -135,7 +154,7 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
             <p class="sb-setup-note">You can change this later in Settings.${upgradeNote}</p>
           </fieldset>
         </div>
-        <p class="sb-setup-warning" data-role="ratings-warning" hidden></p>
+        <div class="sb-setup-message-slot" data-role="ratings-warning"></div>
         <h3 class="sb-setup-subtitle">Preview</h3>
         <div data-role="preview"></div>
         <div class="sb-setup-actions">
@@ -143,21 +162,37 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
         </div>
       </div>`;
 
-  const warning = area.querySelector<HTMLElement>('[data-role="ratings-warning"]') as HTMLElement;
+  const slot = area.querySelector<HTMLElement>('[data-role="ratings-warning"]') as HTMLElement;
   const preview = area.querySelector<HTMLElement>('[data-role="preview"]') as HTMLElement;
   const startBtn = area.querySelector<HTMLButtonElement>('[data-role="start"]') as HTMLButtonElement;
 
+  // Every answer's message sits in the slot at once, stacked in one grid cell, so the slot is
+  // always as tall as the longest and switching answers never moves the layout below it.
+  // Answers with the same message share one element, so switching between them doesn't fade.
+  const changeCounts = new Map<string, number>();
+  const messageFor = new Map<string, Element>();
+  const messageByHtml = new Map<string, Element>();
+  for (const start of ["ratings", "fresh"] as const) {
+    for (const mode of ["off", "percentile", "linear"] as const) {
+      const changes = setupRatingChanges(scenes, start, mode).size;
+      const html = ratingsMessage(start, mode, changes);
+      let message = messageByHtml.get(html);
+      if (!message) {
+        slot.insertAdjacentHTML("beforeend", html);
+        message = slot.lastElementChild as Element;
+        messageByHtml.set(html, message);
+      }
+      changeCounts.set(`${start}:${mode}`, changes);
+      messageFor.set(`${start}:${mode}`, message);
+    }
+  }
+
   const update = (): void => {
     showRatingPreview(preview, choice.start, choice.stashRatings);
-    const changes = setupRatingChanges(scenes, choice.start, choice.stashRatings).size;
-    warning.hidden = choice.stashRatings === "off";
-    if (choice.start === "fresh" && changes > 0) {
-      warning.innerHTML = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 50</strong>: ${plural(changes, "rating")} change, unrated scenes included. Take a Stash backup first (Settings → Tasks → Backup).`;
-    } else if (changes > 0) {
-      warning.innerHTML = `⚠️ <strong>${plural(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 100 by hand may end up lower. Take a Stash backup first (Settings → Tasks → Backup).`;
-    } else {
-      warning.innerHTML = "No Stash ratings change now: every scene converts back to its current rating.";
-    }
+    const key = `${choice.start}:${choice.stashRatings}`;
+    const shown = messageFor.get(key);
+    for (const message of slot.children) message.classList.toggle("sb-shown", message === shown);
+    const changes = changeCounts.get(key) ?? 0;
     startBtn.textContent = changes > 0 ? `Start ELO and change ${plural(changes, "rating")}` : "Start ELO";
   };
 

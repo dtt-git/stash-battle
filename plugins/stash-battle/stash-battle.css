@@ -1359,6 +1359,8 @@ body.sb-battle-open > .modal {
 .sb-setup {
   max-width: 960px;
   margin: 0 auto;
+  /* The container has no bottom padding; match its 24px sides */
+  padding-bottom: 24px;
   text-align: left;
   line-height: 1.45;
 }
@@ -1431,6 +1433,47 @@ body.sb-battle-open > .modal {
   background: rgba(255, 193, 7, 0.12);
   border: 1px solid rgba(255, 193, 7, 0.35);
   border-radius: 6px;
+}
+
+/* The Stash ratings message: every variant stacked in one grid cell, so the slot keeps the
+   height of the longest and switching answers doesn't shift the preview below */
+.sb-setup-message-slot {
+  display: grid;
+  margin-top: 12px;
+}
+
+.sb-setup-message-slot > .sb-setup-message {
+  grid-area: 1 / 1;
+  /* Each box fits its own text; the slot alone keeps the reserved height */
+  align-self: start;
+  justify-self: start;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #aaa;
+  font-size: 0.9rem;
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    visibility 0.2s ease;
+}
+
+.sb-setup-message-slot > .sb-setup-warning {
+  color: #ddd;
+  border-color: rgba(255, 193, 7, 0.35);
+}
+
+.sb-setup-message-slot > .sb-shown {
+  visibility: visible;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-setup-message-slot > .sb-setup-message {
+    transition: none;
+  }
 }
 
 .sb-setup-actions {
