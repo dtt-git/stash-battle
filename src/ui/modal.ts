@@ -1,12 +1,15 @@
 // The battle modal: opens/closes, wires controls and keyboard shortcuts.
 
-import { clearSceneCache, resetSandbox } from "../cache";
-import { getSceneIdFromUrl } from "../graphql";
-import { SCENE_MISSING_EVENT } from "../rating";
+import { clearSceneCache } from "../cache";
+import { fetchSetupScenes } from "../eloSetup";
+import { getSceneIdFromUrl, holdStashListRefresh, sceneCustomFieldsSupported } from "../graphql";
+import { applyStashRatings, queueRatingWrite, SCENE_MISSING_EVENT, scheduleStashRatingSync, writeStashRatings } from "../rating";
+import { stashRatingChanges } from "../score";
 import { loadSettings } from "../settings";
-import { resetRunState, resetShuffle, state } from "../state";
+import { isEloSetupPending, resetRunState, resetShuffle, state } from "../state";
 import { loadState, saveState } from "../storage";
-import type { Mode, Settings } from "../types";
+import type { Mode, Settings, StashRatingsMode } from "../types";
+import { cancelConfirmDialog, confirmDialog, isConfirmDialogOpen } from "./confirmDialog";
 import { cancelDeleteDialog, isDeleteDialogOpen } from "./deleteDialog";
 import {
   applyPreviewSettings,
@@ -17,11 +20,14 @@ import {
   restoreCurrentPair,
   skipPair,
   updateClimbPoolWarning,
-  updateFunBadge,
   updateModeInfo,
+  updateRatingsNote,
   verifyCurrentPair,
 } from "./mainUI";
 import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
+import { refreshSceneElo } from "./sceneElo";
+import { hideSetupScreen, isSetupRunning, showSetupScreen } from "./setupScreen";
+import { stashRatingsOption } from "./stashRatingsText";
 
 // Track keyboard handler so we can remove it on close
 let modalKeyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -39,8 +45,92 @@ function rerenderCurrentPair(): void {
   renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
 }
 
+/**
+ * Before the "Stash ratings" dropdown changes: switching to Percentile or Straight-line warns how
+ * many Stash ratings change and syncs them all on confirm (false puts the dropdown back).
+ * Switching to Don't update, or a switch that changes nothing, needs no warning.
+ */
+async function confirmSettingChange(key: keyof Settings, value: string): Promise<boolean> {
+  if (key !== "stashRatings") return true;
+  const next = value as StashRatingsMode;
+  if (next === "off" || next === state.settings.stashRatings) return true;
+
+  let changes: Map<string, number>;
+  try {
+    changes = stashRatingChanges(await fetchSetupScenes(), next);
+  } catch (e) {
+    console.error("[Stash Battle] Couldn't load scenes to switch Stash ratings:", e);
+    await confirmDialog({
+      title: "Couldn't load your scenes",
+      body: "<p>Stash Battle needs your whole library to work out the new Stash ratings. Nothing was changed; try again.</p>",
+      confirmLabel: "OK",
+    });
+    return false;
+  }
+  if (changes.size === 0) return true;
+
+  const { label, desc } = stashRatingsOption(next);
+  const count = `${changes.size} Stash rating${changes.size === 1 ? "" : "s"}`;
+  return confirmDialog({
+    title: `Switch Stash ratings update mode to ${label}?`,
+    body: `
+        <p>${desc}</p>
+        <p><strong>${count} change now.</strong> After that, battles keep Stash ratings in step with
+        ELO, and a star rating you change by hand in Stash is overwritten the next time Stash Battle
+        writes that scene.</p>
+        <p>Take a Stash backup first (Settings → Tasks → Backup).</p>`,
+    confirmLabel: `Update ${count}`,
+    workingLabel: "Updating...",
+    action: () =>
+      queueRatingWrite(async () => {
+        await writeStashRatings(changes);
+        applyStashRatings(changes);
+      }),
+  });
+}
+
+/** Settings → Reset ELO: confirm, then show the setup choices again (Cancel goes back). */
+async function startResetElo(modal: HTMLElement): Promise<void> {
+  const ratingsOn = state.settings.stashRatings !== "off";
+  const ok = await confirmDialog({
+    title: "Reset ELO?",
+    body: `
+        <p>Every scene's ELO and battle count will be overwritten. Next you choose how ELO starts
+        again: from your Stash ratings, or 1500 for everyone.${ratingsOn ? " Stash ratings are then updated from the new ELO." : ""}</p>
+        <p>Nothing changes until you press Start on the next screen.</p>`,
+    confirmLabel: "Continue",
+  });
+  if (!ok) return;
+
+  state.resettingElo = true;
+  showTab(modal, "battle");
+  modal.querySelectorAll<HTMLVideoElement>(".sb-hover-preview").forEach((v) => v.pause());
+  showSetupScreen(modal, () => afterSetup(modal), {
+    reset: true,
+    onCancel: () => {
+      state.resettingElo = false;
+      hideSetupScreen(modal);
+      if (state.currentPair.left && state.currentPair.right) void restoreCurrentPair();
+      else void loadNewPair();
+    },
+  });
+}
+
+/** Setup (first time or Reset ELO) finished: settings it saved show, then battles start. */
+function afterSetup(modal: HTMLElement): void {
+  state.resettingElo = false;
+  syncSettingsControls(modal);
+  updateRatingsNote();
+  void loadNewPair(getSceneIdFromUrl());
+}
+
 function onSettingChanged(key: keyof Settings): void {
   switch (key) {
+    case "stashRatings":
+      updateRatingsNote();
+      // Catch anything a per-battle sync under the old mode changed after the switch was counted
+      scheduleStashRatingSync();
+      break;
     case "filterOpponents":
       // switching the toggle counts as changing filters: reset any run
       if (state.currentMode !== "swiss") resetRunState();
@@ -48,22 +138,22 @@ function onSettingChanged(key: keyof Settings): void {
       loadNewPair();
       updateClimbPoolWarning();
       break;
-    case "funMode":
-      // Switching between real and sandbox ratings mid-run would mix the two: start fresh
-      resetSandbox();
-      resetShuffle();
-      resetRunState();
-      saveState();
-      updateFunBadge();
-      loadNewPair();
+    case "placementFromBottom": {
+      // Restart the scene's run from the new start point (nothing is written until it lands)
+      const sceneId = state.currentMode === "placement" ? state.placement?.scene.id : undefined;
+      if (sceneId) {
+        resetRunState();
+        saveState();
+        void loadNewPair(sceneId);
+      }
       break;
+    }
     case "previewVolume":
     case "autoplayPreviews":
       applyPreviewSettings();
       break;
     case "openInNewTab":
     case "cleanMode":
-    case "unratedRating":
       rerenderCurrentPair();
       break;
   }
@@ -72,8 +162,21 @@ function onSettingChanged(key: keyof Settings): void {
 export async function openModal(): Promise<void> {
   console.log("[Stash Battle] 🎯 Opening modal...");
 
-  await loadSettings();
+  const [settingsOk, customFieldsOk] = await Promise.all([loadSettings(), sceneCustomFieldsSupported()]);
+  if (!customFieldsOk) {
+    showMessageModal(
+      "Stash Battle needs a newer version of Stash: it stores each scene's ELO in scene custom fields, which this Stash doesn't have. Update Stash to use Stash Battle.",
+    );
+    return;
+  }
+  // Without settings, Battle can't tell whether the one-time ELO setup already ran (and running
+  // it again would overwrite every scene's ELO)
+  if (!settingsOk && isEloSetupPending()) {
+    showMessageModal("Stash Battle couldn't load its settings from Stash. Close Stash Battle and try again.");
+    return;
+  }
   addKeySwallowers();
+  holdStashListRefresh(true);
 
   // Optionally pause whatever Stash is playing so it doesn't overlap the battle previews
   if (state.settings.pauseMediaOnOpen) {
@@ -127,9 +230,13 @@ export async function openModal(): Promise<void> {
     state.currentRanks = { left: null, right: null };
   }
 
-  // Check for existing hidden modal - reuse it
+  // Check for existing hidden modal - reuse it (unless it's a message modal, see showMessageModal)
   const existingModal = document.getElementById("sb-modal");
-  if (existingModal && existingModal.classList.contains("sb-modal-hidden")) {
+  if (
+    existingModal &&
+    existingModal.classList.contains("sb-modal-hidden") &&
+    existingModal.querySelector("#stash-battle-container")
+  ) {
     console.log("[Stash Battle] ♻️ Reusing existing modal");
     existingModal.classList.remove("sb-modal-hidden", "sb-modal-closing");
     document.body.classList.add(BATTLE_OPEN_CLASS);
@@ -137,7 +244,7 @@ export async function openModal(): Promise<void> {
     // Always reopen on the Battle tab; settings may have changed elsewhere meanwhile
     showTab(existingModal, "battle");
     syncSettingsControls(existingModal);
-    updateFunBadge();
+    updateRatingsNote();
 
     // Re-register keyboard handler
     if (modalKeyHandler) {
@@ -149,11 +256,21 @@ export async function openModal(): Promise<void> {
     const modalContent = existingModal.querySelector<HTMLElement>(".sb-modal-content");
     if (modalContent) modalContent.focus();
 
+    // The one-time ELO setup shows in place of the battle until it's done
+    if (isEloSetupPending()) {
+      showSetupScreen(existingModal, () => afterSetup(existingModal));
+      return;
+    }
+    hideSetupScreen(existingModal);
+
     // If filters changed, no pair, or forced scene, load new content
     if (forceSceneBattle) {
       loadNewPair(scenePageId);
-    } else if (filtersChanged || !state.currentPair.left || !state.currentPair.right) {
+    } else if (filtersChanged) {
       loadNewPair();
+    } else if (!state.currentPair.left || !state.currentPair.right) {
+      // A finished run's end screen stays until "Start New Run" (the run cleared its pair)
+      if (!document.querySelector("#sb-comparison-area .sb-end-screen")) loadNewPair();
     } else if (document.querySelector("#sb-comparison-area .sb-vs-container")) {
       // Existing pair is still valid unless a scene was deleted elsewhere meanwhile
       applyPreviewSettings();
@@ -163,7 +280,7 @@ export async function openModal(): Promise<void> {
     return;
   }
 
-  // Remove any non-hidden existing modal (shouldn't happen, but safety)
+  // Remove any other existing modal (a message modal, or a visible one, which shouldn't happen)
   if (existingModal) existingModal.remove();
 
   // Initialize filter params tracking
@@ -230,7 +347,16 @@ export async function openModal(): Promise<void> {
 
   // Battle / Settings tabs, settings controls, volume
   showTab(modal, "battle");
-  bindSettingsControls(modal, onSettingChanged, () => applyPreviewSettings());
+  bindSettingsControls(modal, onSettingChanged, () => applyPreviewSettings(), confirmSettingChange);
+  updateRatingsNote();
+
+  modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));
+  // Battle tab note's "change in Settings" link
+  modal.querySelector('[data-action="open-settings"]')?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showTab(modal, "settings");
+    applyPreviewSettings();
+  });
 
   // Skip button
   modal.querySelector("#sb-skip-btn")?.addEventListener("click", skipPair);
@@ -247,7 +373,6 @@ export async function openModal(): Promise<void> {
 
       try {
         await clearSceneCache();
-        resetSandbox();
 
         // Reset shuffle state since scene list is being refreshed
         resetShuffle();
@@ -266,8 +391,11 @@ export async function openModal(): Promise<void> {
     });
   }
 
-  // Load initial comparison or restore saved pair
-  if (forceSceneBattle) {
+  // Load initial comparison or restore saved pair, after the one-time ELO setup if it's pending
+  if (isEloSetupPending()) {
+    console.log("[Stash Battle] 🧭 ELO setup not done yet, showing setup");
+    showSetupScreen(modal, () => afterSetup(modal));
+  } else if (forceSceneBattle) {
     console.log(`[Stash Battle] 🎯 Starting battle with scene ${scenePageId} from scene page`);
     loadNewPair(scenePageId);
   } else if (hasState && state.currentPair.left && state.currentPair.right && !filtersChanged) {
@@ -306,6 +434,15 @@ export async function openModal(): Promise<void> {
     // slider arrows, checkbox Space) still happen since only propagation is stopped here.
     e.stopImmediatePropagation();
 
+    // A confirmation dialog is open: Escape cancels it, other keys are its own (Tab, Enter)
+    if (isConfirmDialogOpen()) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cancelConfirmDialog();
+      }
+      return;
+    }
+
     // Escape to close
     if (e.key === "Escape") {
       e.preventDefault();
@@ -313,8 +450,8 @@ export async function openModal(): Promise<void> {
       return;
     }
 
-    // Battle shortcuts only apply on the Battle tab
-    if (getActiveTab() !== "battle") return;
+    // Battle shortcuts only apply on the Battle tab, once ELO setup is done
+    if (getActiveTab() !== "battle" || isEloSetupPending()) return;
 
     // Let the volume slider / number input keep their own arrow keys (checkboxes don't need them)
     const active = document.activeElement as HTMLInputElement | null;
@@ -346,6 +483,27 @@ export async function openModal(): Promise<void> {
   document.addEventListener("keydown", modalKeyHandler, true);
 }
 
+/** A modal with just a message, shown instead of Battle (e.g. this Stash lacks custom fields). */
+function showMessageModal(message: string): void {
+  document.getElementById("sb-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "sb-modal";
+  modal.innerHTML = `
+      <div class="sb-modal-backdrop"></div>
+      <div class="sb-modal-content">
+        <button class="sb-modal-close" aria-label="Close">✕</button>
+        <div class="sb-error-screen">
+          <div class="sb-error-icon">⚠️</div>
+          <p class="sb-error-message">${message}</p>
+        </div>
+      </div>
+    `;
+  document.body.appendChild(modal);
+  document.body.classList.add(BATTLE_OPEN_CLASS);
+  modal.querySelector(".sb-modal-backdrop")?.addEventListener("click", closeModal);
+  modal.querySelector(".sb-modal-close")?.addEventListener("click", closeModal);
+}
+
 /** True while the battle modal is on screen (it stays in the DOM, hidden, after closing). */
 function isModalVisible(): boolean {
   const modal = document.getElementById("sb-modal");
@@ -370,6 +528,15 @@ export function closeModal(): void {
   if (!modal || modal.classList.contains("sb-modal-hidden")) return;
 
   cancelDeleteDialog();
+  cancelConfirmDialog();
+  // Stash's scene lists show the ratings written while Stash Battle was open, and a scene page its ELO
+  holdStashListRefresh(false);
+  refreshSceneElo();
+  // Closing Stash Battle on Reset ELO's choices (before Start) cancels the reset
+  if (state.resettingElo && !isSetupRunning()) {
+    state.resettingElo = false;
+    hideSetupScreen(modal);
+  }
 
   // Stop previews (autoplay keeps them running otherwise)
   modal.querySelectorAll<HTMLVideoElement>(".sb-hover-preview").forEach((v) => v.pause());

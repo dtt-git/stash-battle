@@ -8,8 +8,9 @@ import {
 } from "./constants";
 import { getFindFilter, type ListFilters } from "./filters";
 import { FIND_SCENES_QUERY, graphqlQuery } from "./graphql";
+import { eloFields, eloInsertionIndex, sortByElo, withEloFields } from "./score";
 import { state } from "./state";
-import type { CacheEntry, FindScenesResult, Scene } from "./types";
+import type { CacheEntry, EloFields, FindScenesResult, Scene } from "./types";
 
 // Open IndexedDB database
 function openCacheDB(): Promise<IDBDatabase> {
@@ -27,9 +28,9 @@ function openCacheDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
-        db.createObjectStore(CACHE_STORE_NAME, { keyPath: "cacheKey" });
-      }
+      // Any older store holds scenes without ELO (or in rating order): start it over
+      if (db.objectStoreNames.contains(CACHE_STORE_NAME)) db.deleteObjectStore(CACHE_STORE_NAME);
+      db.createObjectStore(CACHE_STORE_NAME, { keyPath: "cacheKey" });
     };
   });
 }
@@ -159,7 +160,7 @@ async function backgroundRefreshAllScenes(): Promise<void> {
       scene_filter: null,
     });
 
-    const scenes = result.findScenes.scenes || [];
+    const scenes = sortByElo(result.findScenes.scenes || []);
     const count = result.findScenes.count || scenes.length;
     const fetchTime = Date.now() - startTime;
 
@@ -236,7 +237,7 @@ export async function getAllScenesCached(): Promise<{ scenes: Scene[]; count: nu
     scene_filter: null,
   });
 
-  const scenes = result.findScenes.scenes || [];
+  const scenes = sortByElo(result.findScenes.scenes || []);
   const count = result.findScenes.count || scenes.length;
   const fetchTime = Date.now() - startTime;
 
@@ -265,7 +266,7 @@ async function backgroundRefreshFilteredScenes(filters: ListFilters): Promise<vo
       scene_filter: filters.sceneFilter,
     });
 
-    const scenes = result.findScenes.scenes || [];
+    const scenes = sortByElo(result.findScenes.scenes || []);
     const count = result.findScenes.count || scenes.length;
     const fetchTime = Date.now() - startTime;
 
@@ -360,7 +361,7 @@ export async function getFilteredScenesCached(
     scene_filter: sceneFilter,
   });
 
-  const scenes = result.findScenes.scenes || [];
+  const scenes = sortByElo(result.findScenes.scenes || []);
   const count = result.findScenes.count || scenes.length;
   const fetchTime = Date.now() - startTime;
 
@@ -373,61 +374,97 @@ export async function getFilteredScenesCached(
   return { scenes, count };
 }
 
-// Update a scene's rating and reposition it in the sorted array to keep ranks accurate
-function repositionSceneInArray(arr: Scene[], sceneId: string, newRating: number): boolean {
-  const idx = arr.findIndex((s) => s.id === sceneId);
-  if (idx === -1) return false;
-
-  const scene = arr[idx];
-  scene.rating100 = newRating;
-
-  // Remove from current position
-  arr.splice(idx, 1);
-
-  // Find correct position (array is sorted by rating DESC)
-  const newIdx = arr.findIndex((s) => (s.rating100 || 0) < newRating);
-
-  if (newIdx === -1) {
-    arr.push(scene); // Lowest rated, goes at end
-  } else {
-    arr.splice(newIdx, 0, scene);
-  }
-
-  return true;
+/** Set (or with null, remove) the ELO fields on one scene object. */
+function applyElo(scene: Scene, value: EloFields | null): void {
+  scene.custom_fields = withEloFields(scene.custom_fields, value);
 }
 
-// Clear a scene's rating in the memory cache and move it to the bottom of the sorted pool
-export function clearSceneInCache(sceneId: string): void {
-  if (state.memoryCache.allScenes) {
-    const idx = state.memoryCache.allScenes.findIndex((s) => s.id === sceneId);
-    if (idx !== -1) {
-      const scene = state.memoryCache.allScenes[idx];
-      scene.rating100 = null;
-      state.memoryCache.allScenes.splice(idx, 1);
-      state.memoryCache.allScenes.push(scene);
-      console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} rating in memory cache`);
-    }
-  }
-
-  if (state.memoryCache.filteredScenes) {
-    const scene = state.memoryCache.filteredScenes.find((s) => s.id === sceneId);
-    if (scene) {
-      scene.rating100 = null;
-    }
-  }
+/**
+ * The cached copy of a scene (all scenes first, then the filtered ones), or the scene itself if
+ * neither has it. Scene objects held across battles (the shuffle, a saved pair, a Champion or
+ * Placement run) go stale once a background refresh swaps in new copies, so battle math reads
+ * ELO and battles from this instead.
+ */
+export function latestScene(scene: Scene): Scene {
+  return (
+    state.memoryCache.allScenes?.find((s) => s.id === scene.id) ??
+    state.memoryCache.filteredScenes?.find((s) => s.id === scene.id) ??
+    scene
+  );
 }
 
-// Update a scene's rating in the memory cache (keeps cache in sync after rating changes)
-export function updateSceneInCache(sceneId: string, newRating: number): void {
-  // Reposition in allScenes (keeps rankings accurate, scene stays for opponent pool)
-  if (state.memoryCache.allScenes) {
-    repositionSceneInArray(state.memoryCache.allScenes, sceneId, newRating);
-    console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
+/**
+ * Set (or with null, remove) a scene's ELO on `scene` itself and on its cached copies, and move
+ * the cached copies to their new place in the ELO order so ranks stay right.
+ */
+export function setEloInCache(scene: Scene, value: EloFields | null): void {
+  applyElo(scene, value);
+  for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+    const idx = pool ? pool.findIndex((s) => s.id === scene.id) : -1;
+    if (!pool || idx === -1) continue;
+    const [cached] = pool.splice(idx, 1);
+    if (cached !== scene) applyElo(cached, value);
+    pool.splice(value ? eloInsertionIndex(pool, value.elo) : pool.length, 0, cached);
   }
+  persistCacheSoon();
+}
 
-  // Also reposition in filteredScenes (it doubles as the opponent pool when filtering both sides)
-  if (state.memoryCache.filteredScenes) {
-    repositionSceneInArray(state.memoryCache.filteredScenes, sceneId, newRating);
+/** Set the Stash rating on cached scenes (after Stash Battle wrote them). Order is ELO, so unchanged. */
+export function setRatingsInCache(ratings: Map<string, number>): void {
+  for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+    for (const scene of pool ?? []) {
+      const rating = ratings.get(scene.id);
+      if (rating !== undefined) scene.rating100 = rating;
+    }
+  }
+  persistCacheSoon();
+}
+
+/**
+ * Bring a scene's cached copies in line with fresh values from Stash (its ELO fields and Stash
+ * rating), moving them to their place in the ELO order. For scenes fetched on their own (a
+ * restored pair, a scene page battle), which may be newer than the cache: changed in another
+ * tab, say.
+ */
+export function refreshSceneInCache(fresh: Scene): void {
+  for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+    const cached = pool?.find((s) => s.id === fresh.id);
+    if (cached) cached.rating100 = fresh.rating100 ?? null;
+  }
+  setEloInCache(fresh, eloFields(fresh));
+}
+
+/** Write the in-memory scene lists back to IndexedDB this long after the last change. */
+const PERSIST_DEBOUNCE_MS = 1000;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Battles change the in-memory lists only; without this, a reload within CACHE_MAX_AGE_MS would
+ * read the IndexedDB copy from before them (old ELO, old order). Debounced, so a pick's writes
+ * and its Stash rating sync are saved together.
+ */
+function persistCacheSoon(): void {
+  if (typeof indexedDB === "undefined") return;
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void persistCache();
+  }, PERSIST_DEBOUNCE_MS);
+}
+
+/** Save the in-memory lists over their IndexedDB entries, keeping each entry's timestamp. */
+async function persistCache(): Promise<void> {
+  const lists: [string, Scene[] | null][] = [
+    ["all-scenes", state.memoryCache.allScenes],
+    ["filtered-scenes", state.memoryCache.filteredScenes],
+  ];
+  for (const [cacheKey, scenes] of lists) {
+    if (!scenes) continue;
+    const cached = await getCachedScenes(cacheKey);
+    // Missing or expired: the next load fetches fresh anyway. A different filter: not this list.
+    if (!cached) continue;
+    if (cacheKey === "filtered-scenes" && cached.filterKey !== state.memoryCache.filterKey) continue;
+    await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey, cached.timestamp);
   }
 }
 
@@ -454,46 +491,4 @@ export async function removeSceneEverywhere(sceneId: string): Promise<void> {
     }
   }
   console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from caches`);
-}
-
-// --- Fun mode sandbox ---
-//
-// In fun mode, battles run their normal logic but ratings live only in memory: pools are served
-// as copies of the cached scenes (one copy per scene id), re-sorted by those copies' ratings, and
-// rating writes update the copies instead of Stash or the real cache.
-
-const funSandbox = new Map<string, Scene>();
-
-/** Fun-mode copy of a scene, created from the real one on first use. */
-export function sandboxScene(scene: Scene): Scene {
-  let copy = funSandbox.get(scene.id);
-  if (!copy) {
-    copy = { ...scene };
-    funSandbox.set(scene.id, copy);
-  }
-  return copy;
-}
-
-/** A real (rating-sorted) pool as sandbox copies, re-sorted by their in-memory ratings. */
-export function sandboxPool(pool: Scene[]): Scene[] {
-  // Stable sort: ties keep the real cache's order, unrated (0) stay last
-  return pool.map(sandboxScene).sort((a, b) => (b.rating100 ?? 0) - (a.rating100 ?? 0));
-}
-
-/** Fun-mode rating write: updates the in-memory copy only. */
-export function setSandboxRating(sceneId: string, rating100: number | null): void {
-  const real = funSandbox.has(sceneId) ? null : state.memoryCache.allScenes?.find((s) => s.id === sceneId);
-  const copy = funSandbox.get(sceneId) ?? (real ? sandboxScene(real) : null);
-  if (copy) copy.rating100 = rating100;
-}
-
-/** Forget all fun-mode ratings (fun mode toggled, cache refreshed). */
-export function resetSandbox(): void {
-  funSandbox.clear();
-}
-
-/** The scene's saved rating (from the real cache), for display while fun mode shows sandbox copies. */
-export function savedRating(scene: Scene): number | null | undefined {
-  const real = state.memoryCache.allScenes?.find((s) => s.id === scene.id);
-  return real ? real.rating100 : scene.rating100;
 }

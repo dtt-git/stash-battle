@@ -1,6 +1,7 @@
 // Renders an individual scene card (returns an HTML string).
 
-import { savedRating } from "../cache";
+import { CHAMPION_UNRATED_ELO, ELO_START } from "../constants";
+import { battles, elo } from "../score";
 import { state } from "../state";
 import { isStashDeleteDialogAvailable } from "./deleteDialog";
 import type { Rank, Scene } from "../types";
@@ -36,18 +37,21 @@ export function createSceneCard(
 
   const screenshotPath = scene.paths ? scene.paths.screenshot : null;
   const previewPath = scene.paths ? scene.paths.preview : null;
-  const { unratedRating, openInNewTab, cleanMode } = state.settings;
-  const unratedLabel =
-    state.currentMode === "swiss" && unratedRating > 1 ? `Unrated (counts as ${unratedRating})` : "Unrated";
-  // Fun mode battles sandbox copies whose ratings move in memory; cards keep showing the saved one
-  const shownRating = state.settings.funMode ? savedRating(scene) : scene.rating100;
-  const stashRating = shownRating ? `${shownRating}/100` : unratedLabel;
+  const { openInNewTab, cleanMode } = state.settings;
+  const stashRating = scene.rating100 ? `${scene.rating100}/100` : "None";
 
-  // Numeric rank badge (#N), omitted when null
-  let rankDisplay = "";
-  if (rank !== null && rank !== undefined) {
-    rankDisplay = `<span class="sb-scene-rank">#${rank}</span>`;
+  // ELO badge: "ELO 1740 · #50" when rated (rank when known). Unrated scenes show the ELO they
+  // count as in this mode in the same order, "ELO 1500 · Unrated" (Placement has none: "Unrated").
+  const eloValue = elo(scene);
+  const unratedAs =
+    state.currentMode === "swiss" ? ELO_START : state.currentMode === "champion" ? CHAMPION_UNRATED_ELO : null;
+  let eloLabel: string;
+  if (eloValue !== null) {
+    eloLabel = `ELO ${Math.round(eloValue)}${rank !== null && rank !== undefined ? ` · #${rank}` : ""}`;
+  } else {
+    eloLabel = unratedAs !== null ? `ELO ${unratedAs} · Unrated` : "Unrated";
   }
+  const rankDisplay = `<span class="sb-scene-rank">${eloLabel}</span>`;
 
   // Status badge: win-streak count (formatted) or custom label (e.g. falling mode)
   let statusBadgeHtml = "";
@@ -93,7 +97,8 @@ export function createSceneCard(
               <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
               <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="sb-meta-item sb-meta-rating"><strong>Rating:</strong> ${stashRating}</div>
+              <div class="sb-meta-item sb-meta-battles"><strong>Battles:</strong> ${battles(scene)}</div>
+              <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
           </div>

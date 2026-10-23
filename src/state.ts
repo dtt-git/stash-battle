@@ -19,13 +19,10 @@ export interface BattleState {
   currentPair: Pair;
   currentRanks: Ranks;
   currentMode: Mode;
-  // Gauntlet / champion run tracking
-  gauntletClimber: Scene | null; // The scene currently climbing (on a win streak)
-  gauntletWins: number; // Current win streak
-  gauntletClimberRank: number; // Climber's current rank position (1 = top)
-  gauntletDefeated: string[]; // IDs of scenes defeated in current run
-  gauntletFalling: boolean; // True when climber lost and is finding their floor
-  gauntletFallingScene: Scene | null; // The scene that's falling to find its position
+  // Champion run tracking
+  championScene: Scene | null; // The scene defending (winner stays on)
+  championWins: number; // Its current win streak
+  championDefeated: string[]; // IDs of scenes it has beaten in this run
   // Placement run tracking
   placement: PlacementRun | null;
   totalScenesCount: number; // Total scenes for position display
@@ -34,6 +31,7 @@ export interface BattleState {
   savedFilterParams: string; // Stored URL filter params to detect changes
   // User settings (defaults until loadSettings() resolves)
   settings: Settings;
+  resettingElo: boolean; // Reset ELO's setup screen is showing (battles wait, like a first setup)
   // Shuffle state for the left-side pool (prevents repeats when skipping)
   shuffledFilteredScenes: Scene[];
   shuffleIndex: number;
@@ -46,18 +44,16 @@ export const state: BattleState = {
   currentPair: { left: null, right: null },
   currentRanks: { left: null, right: null },
   currentMode: "swiss",
-  gauntletClimber: null,
-  gauntletWins: 0,
-  gauntletClimberRank: 0,
-  gauntletDefeated: [],
-  gauntletFalling: false,
-  gauntletFallingScene: null,
+  championScene: null,
+  championWins: 0,
+  championDefeated: [],
   placement: null,
   totalScenesCount: 0,
   leftPoolSize: null,
   disableChoice: false,
   savedFilterParams: "",
   settings: { ...DEFAULT_SETTINGS },
+  resettingElo: false,
   shuffledFilteredScenes: [],
   shuffleIndex: 0,
   shuffleFilterKey: null,
@@ -69,14 +65,11 @@ export const state: BattleState = {
   },
 };
 
-/** Clear any gauntlet / champion / placement run in progress. */
+/** Clear any Champion / Placement run in progress. */
 export function resetRunState(): void {
-  state.gauntletClimber = null;
-  state.gauntletWins = 0;
-  state.gauntletClimberRank = 0;
-  state.gauntletDefeated = [];
-  state.gauntletFalling = false;
-  state.gauntletFallingScene = null;
+  state.championScene = null;
+  state.championWins = 0;
+  state.championDefeated = [];
   state.placement = null;
 }
 
@@ -87,15 +80,19 @@ export function resetShuffle(): void {
   state.shuffleFilterKey = null;
 }
 
-/** True while a gauntlet/champion/placement run is under way (skip is disabled). */
+/** True while a Champion / Placement run is under way (skip is disabled). */
 export function isRunActive(): boolean {
   switch (state.currentMode) {
-    case "gauntlet":
     case "champion":
-      return state.gauntletClimber !== null;
+      return state.championScene !== null;
     case "placement":
       return (state.placement?.battles ?? 0) > 0;
     default:
       return false;
   }
+}
+
+/** ELO setup hasn't finished (or Reset ELO is showing it), so it shows instead of loading pairs. */
+export function isEloSetupPending(): boolean {
+  return !state.settings.eloSetupAt || state.resettingElo;
 }

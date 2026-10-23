@@ -1,6 +1,6 @@
 name: Stash Battle
 description: Adds an ELO based ranking system for scenes
-version: 2.7.0
+version: 3.0.0
 url: https://github.com/dtt-git/stash-battle
 ui:
   javascript:
@@ -8,18 +8,14 @@ ui:
   css:
     - stash-battle.css
 settings:
-  funMode:
-    displayName: Fun mode
-    description: Battle without changing any ratings.
-    type: BOOLEAN
   openInNewTab:
     displayName: Open scenes in a new tab
     description: Clicking a battle thumbnail opens the scene in a new browser tab.
     type: BOOLEAN
-  unratedRating:
-    displayName: Unrated scene rating (0-100)
-    description: Rating unrated scenes count as in Swiss mode. 0 keeps the old behavior; 50 is closer to a classic ELO start.
-    type: NUMBER
+  placementFromBottom:
+    displayName: "Placement: start from the bottom"
+    description: Placement ignores the scene's current ELO, starts against the bottom scene and climbs, jumping further with each win. This replaces Gauntlet.
+    type: BOOLEAN
   previewVolume:
     displayName: Preview volume (0-100)
     description: Volume of hover previews. 0 mutes them.
@@ -37,6 +33,6 @@ settings:
     description: Show a delete button on each battle card to remove scenes from Stash.
     type: BOOLEAN
   pauseMediaOnOpen:
-    displayName: Pause playing video when Battle opens
+    displayName: Pause playing video when Stash Battle opens
     description: Stop the scene you're watching so its audio doesn't overlap the battle previews. On by default.
     type: BOOLEAN

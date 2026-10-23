@@ -1,25 +1,24 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
-import { clearFilteredCache, removeSceneEverywhere, sandboxScene } from "../cache";
-import { calculateRatingChanges, effectiveRating } from "../elo";
-import { CLIMB_K_PLAY_COUNT, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
+import { clearFilteredCache, latestScene, refreshSceneInCache, removeSceneEverywhere } from "../cache";
+import { CHAMPION_UNRATED_ELO, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
+import { eloResult } from "../elo";
 import { readFilters } from "../filters";
 import { fetchSceneById } from "../graphql";
 import { navigateToUrl } from "../navigation";
 import {
-  applyClimbWinRating,
   fetchChampionPair,
-  fetchGauntletPair,
   fetchPlacementPair,
   fetchSwissPair,
-  loadPoolSize,
-  recordPlacementResult,
+  pairRanks,
 } from "../pairs";
-import { ratingsEnabled, updateSceneRating } from "../rating";
-import { findExistingSceneIds } from "../sceneActions";
-import { isRunActive, resetRunState, resetShuffle, state } from "../state";
+import { recordPlacementResult } from "../placement";
+import { writeElo } from "../rating";
+import { fetchSceneFields } from "../sceneActions";
+import { battles, effectiveElo, kGames } from "../score";
+import { isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { saveState } from "../storage";
-import type { BattleSide, ComparisonDeltas, Mode, Rank, Scene } from "../types";
+import type { Mode, Rank, Scene } from "../types";
 import { confirmDeleteScene } from "./deleteDialog";
 import { createSceneCard } from "./sceneCard";
 import { showPlacementScreen, showVictoryScreen } from "./screens";
@@ -31,28 +30,21 @@ const MODES: { mode: Mode; icon: string; title: string; desc: string; tip: strin
     icon: "⚖️",
     title: "Swiss",
     desc: "Fair matchups",
-    tip: "Each scene faces an opponent with a similar rating. Both ratings change after every pick, and every scene stays in the rotation.",
+    tip: "Each scene faces an opponent with a similar ELO. Both scenes' ELO changes after every pick, and every scene stays in the rotation.",
   },
   {
     mode: "placement",
     icon: "📍",
     title: "Placement",
     desc: "Place a scene",
-    tip: "Finds where one scene belongs. Each pick narrows the range of ranks it could land in (shown on its card) until its spot is found, about 10 picks for an unrated scene. Only its rating changes, once at the end.",
-  },
-  {
-    mode: "gauntlet",
-    icon: "🎯",
-    title: "Gauntlet",
-    desc: "Climb the ladder",
-    tip: "A scene starts at the bottom and climbs by beating the scenes above it. When it loses, it falls until it finds its floor. Only the climber's rating changes.",
+    tip: "Finds where one scene belongs. Each pick narrows the range of ranks it could land in (shown on its card) until its spot is found, about 10 picks for an unrated scene.\n\nLooking for Gauntlet? Turn on “Placement: start from the bottom” in Settings to make a scene climb the ladder from the bottom.",
   },
   {
     mode: "champion",
     icon: "🏆",
     title: "Champion",
     desc: "Winner stays on",
-    tip: "Winner stays on: the scene you pick keeps defending against new challengers until it's beaten, then the winner takes over.",
+    tip: "Winner stays on: the scene you pick keeps defending against new challengers until it's beaten, then the winner takes over. Both scenes' ELO changes after every pick.",
   },
 ];
 
@@ -75,7 +67,7 @@ export function createMainUI(): string {
         </div>
 
         <div class="sb-tab-panel" data-panel="battle">
-          <p id="sb-fun-badge" class="sb-fun-badge" ${state.settings.funMode ? "" : "hidden"}>🎈 Fun mode: ratings are not saved</p>
+          <div id="sb-setup-area" class="sb-setup-area" hidden></div>
           <div class="sb-mode-row">
             <div class="sb-mode-toggle">${modeButtons}
             </div>
@@ -84,12 +76,15 @@ export function createMainUI(): string {
           <p id="sb-mode-info" class="sb-mode-info" hidden></p>
 
           <p id="sb-climb-pool-warning" class="sb-climb-warning" hidden>
-            Gauntlet and Champion can behave oddly with small filtered pools when both sides use the filter
+            Champion can behave oddly with small filtered pools when both sides use the filter
             (fewer than ${CLIMB_SMALL_POOL_WARN_AT} scenes). Use a larger filter, or turn off
             "Use filtered scenes for both sides" in Settings.
           </p>
 
           <p id="sb-pool-status" class="sb-pool-status" hidden></p>
+          <p id="sb-ratings-note" class="sb-pool-status sb-ratings-note" hidden>
+            Stash ratings aren't being changed · <a href="#" data-action="open-settings">change in Settings</a>
+          </p>
 
           <div class="sb-content">
             <div id="sb-comparison-area" class="sb-comparison-area">
@@ -118,7 +113,13 @@ export function createMainUI(): string {
 export function updateModeInfo(): void {
   const info = document.getElementById("sb-mode-info");
   const mode = MODES.find((m) => m.mode === state.currentMode);
-  if (info && mode) info.innerHTML = `<strong>${mode.icon} ${mode.title}:</strong> ${mode.tip}`;
+  if (info && mode) info.innerHTML = `<strong>${mode.icon} ${mode.title}:</strong> ${mode.tip.replace(/\n/g, "<br>")}`;
+}
+
+/** Battle tab note while the "Stash ratings" setting is "Don't update". */
+export function updateRatingsNote(): void {
+  const note = document.getElementById("sb-ratings-note");
+  if (note) note.hidden = state.settings.stashRatings !== "off";
 }
 
 /** "Which scenes am I rating?" line above the cards: the Scenes page filter or the whole library. */
@@ -138,24 +139,18 @@ export function updatePoolStatus(): void {
   status.hidden = false;
 }
 
-/** Show/hide the fun mode badge to match the setting. */
-export function updateFunBadge(): void {
-  const badge = document.getElementById("sb-fun-badge");
-  if (badge) badge.hidden = !state.settings.funMode;
-}
-
+/** Card badge: the win streak while climbing or defending, or Placement's narrowing range. */
 function climbStatusBadge(scene: Scene): number | string | null {
   if (state.currentMode === "placement") {
     const run = state.placement;
-    if (run?.scene.id !== scene.id || run.rangeHi === run.rangeLo) return null;
+    if (run?.scene.id !== scene.id) return null;
+    // "Start from the bottom" runs show the streak until the first loss
+    if (run.fromBottom && run.battles > 0 && run.streak === run.battles) return run.streak;
+    if (run.rangeHi === run.rangeLo) return null;
     return `📍 Narrowing between #${run.rangeLo + 1} and #${run.rangeHi + 1}`;
   }
-  if (state.currentMode !== "gauntlet" && state.currentMode !== "champion") return null;
-  if (state.gauntletFalling && state.gauntletFallingScene?.id === scene.id) {
-    return "📍 Finding final placement...";
-  }
-  if (state.gauntletClimber?.id === scene.id) {
-    return state.gauntletWins;
+  if (state.currentMode === "champion" && state.championScene?.id === scene.id) {
+    return state.championWins;
   }
   return null;
 }
@@ -342,6 +337,8 @@ export function skipPair(): void {
 }
 
 export async function loadNewPair(forcedLeftSceneId: string | null = null): Promise<void> {
+  // No pool loads before the one-time ELO setup has run (it shows in place of the battle)
+  if (isEloSetupPending()) return;
   state.disableChoice = false;
   const comparisonArea = document.getElementById("sb-comparison-area");
   if (!comparisonArea) return;
@@ -362,8 +359,8 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     let forcedLeftScene: Scene | null = null;
     if (forcedLeftSceneId) {
       forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
-      // Fun mode battles only ever touch sandbox copies (see cache.ts)
-      if (forcedLeftScene && !ratingsEnabled()) forcedLeftScene = sandboxScene(forcedLeftScene);
+      // Fresh from Stash: the cache may be older (another tab), and ranks and battle math read it
+      if (forcedLeftScene) refreshSceneInCache(forcedLeftScene);
       if (!forcedLeftScene) {
         console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
       }
@@ -376,39 +373,23 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
       const placementResult = await fetchPlacementPair(forcedLeftScene);
 
       if (placementResult.done) {
-        showPlacementScreen(placementResult.scene, placementResult.rank, placementResult.rating);
+        // A climb from the bottom that never lost has beaten the top scene
+        if (placementResult.fromBottom && placementResult.rank === 1) {
+          showVictoryScreen(placementResult.scene, placementResult.streak);
+        } else {
+          showPlacementScreen(placementResult);
+        }
         return;
       }
 
       scenes = placementResult.scenes;
       ranks = placementResult.ranks;
-    } else if (state.currentMode === "gauntlet") {
-      const gauntletResult = await fetchGauntletPair(forcedLeftScene);
-
-      // Check for victory (champion reached #1)
-      if (gauntletResult.isVictory) {
-        showVictoryScreen(gauntletResult.scenes[0]);
-        return;
-      }
-
-      // Check for placement (falling scene hit bottom)
-      if (gauntletResult.isPlacement) {
-        showPlacementScreen(
-          gauntletResult.scenes[0],
-          gauntletResult.placementRank,
-          gauntletResult.placementRating,
-        );
-        return;
-      }
-
-      scenes = gauntletResult.scenes;
-      ranks = gauntletResult.ranks;
     } else if (state.currentMode === "champion") {
       const championResult = await fetchChampionPair(forcedLeftScene);
 
       // Check for victory (champion beat everyone)
       if (championResult.isVictory) {
-        showVictoryScreen(championResult.scenes[0]);
+        showVictoryScreen(championResult.scenes[0], state.championWins);
         return;
       }
 
@@ -474,38 +455,70 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
 }
 
 /** Render the saved pair, unless one of its scenes was deleted in Stash meanwhile. */
+/**
+ * Whether the saved pair belongs to the current run. A Placement pair is its run's scene against
+ * an opponent, and a Champion pair includes the champion; without that, picks have nothing to
+ * act on (a run that ended, say).
+ */
+function pairMatchesRun(left: Scene, right: Scene): boolean {
+  if (state.currentMode === "placement") return state.placement?.scene.id === left.id;
+  if (state.currentMode === "champion" && state.championScene) {
+    return state.championScene.id === left.id || state.championScene.id === right.id;
+  }
+  return true;
+}
+
 export async function restoreCurrentPair(): Promise<void> {
-  state.disableChoice = false;
+  if (isEloSetupPending()) return;
   const left = state.currentPair.left as Scene;
   const right = state.currentPair.right as Scene;
+  if (!pairMatchesRun(left, right)) {
+    console.log("[Stash Battle] 📂 Saved pair doesn't belong to the current run, loading a new pair");
+    await loadNewPair();
+    return;
+  }
+  state.disableChoice = false;
 
-  // Load the (cached) pools in the background: pre-warms them for the next choice and fills in
-  // the pool size on the status line, which a restored pair otherwise doesn't know yet
-  void loadPoolSize()
-    .then(updatePoolStatus)
-    .catch((e) => console.warn("[Stash Battle] Could not load scene pools for the status line:", e));
-
+  // Also brings the pair's ELO and Stash rating up to date (they may have changed since it was saved)
   if (!(await verifyCurrentPair())) return;
 
-  console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
-  renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
+  // Ranks from the current pools, not the saved ones: battles since may have moved them. Loading
+  // the pools also pre-warms them for the next choice and fills in the status line's pool size.
+  let ranks: [Rank, Rank] = [state.currentRanks.left, state.currentRanks.right];
+  try {
+    ranks = await pairRanks(left, right);
+    state.currentRanks = { left: ranks[0], right: ranks[1] };
+  } catch (e) {
+    console.warn("[Stash Battle] Could not load scene pools for the saved pair's ranks:", e);
+  }
+
+  console.log("[Stash Battle] 📂 Rendering saved pair");
+  renderPair([left, right], ranks);
   updatePoolStatus();
 }
 
 /**
  * Check the current pair still exists in Stash (scenes may be deleted elsewhere). If one is gone,
- * continue without it and return false. Network errors count as "still there".
+ * continue without it and return false. Otherwise the pair's ELO and Stash rating are brought up
+ * to date from Stash, in its objects and the cache. Network errors count as "still there".
  */
 export async function verifyCurrentPair(): Promise<boolean> {
   const { left, right } = state.currentPair;
   if (!left || !right) return true;
   try {
-    const existing = await findExistingSceneIds([left.id, right.id]);
-    const gone = [left, right].find((s) => !existing.has(s.id));
+    const fresh = await fetchSceneFields([left.id, right.id]);
+    const gone = [left, right].find((s) => !fresh.has(s.id));
     if (gone) {
       console.log(`[Stash Battle] 👻 Scene ${gone.id} in the current pair no longer exists`);
       await handleSceneGone(gone.id);
       return false;
+    }
+    for (const scene of [left, right]) {
+      const fields = fresh.get(scene.id);
+      if (!fields) continue;
+      scene.rating100 = fields.rating100 ?? null;
+      scene.custom_fields = fields.custom_fields ?? {};
+      refreshSceneInCache(scene);
     }
   } catch (e) {
     console.warn("[Stash Battle] Could not verify current pair:", e);
@@ -515,7 +528,7 @@ export async function verifyCurrentPair(): Promise<boolean> {
 
 /** Forget a scene id referenced by the current run (it no longer exists). */
 function dropFromRun(sceneId: string): void {
-  state.gauntletDefeated = state.gauntletDefeated.filter((id) => id !== sceneId);
+  state.championDefeated = state.championDefeated.filter((id) => id !== sceneId);
   const run = state.placement;
   if (!run) return;
   if (run.aboveId === sceneId) run.aboveId = null;
@@ -534,7 +547,7 @@ export async function handleSceneGone(sceneId: string): Promise<void> {
   await removeSceneEverywhere(sceneId);
 
   const { left, right } = state.currentPair;
-  const runSceneIds = [left?.id, state.placement?.scene.id, state.gauntletClimber?.id, state.gauntletFallingScene?.id];
+  const runSceneIds = [left?.id, state.placement?.scene.id, state.championScene?.id];
 
   if (runSceneIds.includes(sceneId)) {
     resetRunState();
@@ -545,7 +558,7 @@ export async function handleSceneGone(sceneId: string): Promise<void> {
 
   dropFromRun(sceneId);
   saveState();
-  // Forced left only applies when no run is under way (Swiss, or before a climb starts)
+  // Forced left only applies when no run is under way (Swiss, or before a Champion run starts)
   const keepId = right?.id === sceneId ? left?.id : null;
   await loadNewPair(keepId ?? null);
 }
@@ -560,80 +573,40 @@ async function deleteFromBattle(scene: Scene): Promise<void> {
   await handleSceneGone(scene.id);
 }
 
-function activeClimberId(): string | null {
-  if (state.gauntletFalling && state.gauntletFallingScene) {
-    return state.gauntletFallingScene.id;
-  }
-  return state.gauntletClimber?.id ?? null;
+/** ELO used in battle math: unrated scenes count as ELO_START (1500) in Swiss, CHAMPION_UNRATED_ELO in Champion. */
+function battleElo(scene: Scene): number {
+  return state.currentMode === "champion" ? effectiveElo(scene, CHAMPION_UNRATED_ELO) : effectiveElo(scene);
 }
 
-function battleRoleFor(sceneId: string, mode: Mode): BattleSide["role"] {
-  if (mode === "swiss") return "combatant";
-  const climberId = activeClimberId();
-  return climberId !== null && sceneId === climberId ? "climber" : "benchmark";
+interface EloChange {
+  from: number;
+  to: number;
 }
 
-/** Rating used in ELO math. The unrated-rating setting applies to Swiss; climbs start from the bottom. */
-function battleRating(scene: Scene): number {
-  const unrated = state.currentMode === "swiss" ? state.settings.unratedRating : 0;
-  return effectiveRating(scene.rating100, unrated);
+/** Two-sided ELO for a pick (Swiss and Champion): both scenes' ELO and battles change and are saved. */
+function resolveComparison(winner: Scene, loser: Scene): { winner: EloChange; loser: EloChange } {
+  // The math reads the cached copies: the pair's own objects may predate a background refresh
+  const latestWinner = latestScene(winner);
+  const latestLoser = latestScene(loser);
+  const winnerSide = { elo: battleElo(latestWinner), kGames: kGames(latestWinner) };
+  const loserSide = { elo: battleElo(latestLoser), kGames: kGames(latestLoser) };
+  const result = eloResult(winnerSide, loserSide);
+
+  void writeElo(winner, result.winner, battles(latestWinner) + 1);
+  void writeElo(loser, result.loser, battles(latestLoser) + 1);
+
+  return {
+    winner: { from: winnerSide.elo, to: result.winner },
+    loser: { from: loserSide.elo, to: result.loser },
+  };
 }
 
-/** Apply climb/champion rules on top of raw two-sided ELO. Swiss uses the raw result as-is. */
-function applyModePolicy(
-  winner: Scene,
-  loser: Scene,
-  mode: Mode,
-  raw: ComparisonDeltas,
-): ComparisonDeltas {
-  if (mode === "swiss") return raw;
-
-  let winnerDelta = 0;
-  let loserDelta = 0;
-
-  if (battleRoleFor(winner.id, mode) === "climber") {
-    winnerDelta = raw.winner;
-  }
-
-  const loserRating = loser.rating100 || 1;
-  // Special case: if 100 rated benchmark loses, they drop to 99 so its funner to see a champion emerge
-  if (battleRoleFor(loser.id, mode) === "benchmark" && loserRating === 100) {
-    loserDelta = -1;
-  }
-
-  return { winner: winnerDelta, loser: loserDelta };
-}
-
-/** Run pure ELO math and write any rating changes (to Stash, or in fun mode to the in-memory sandbox). */
-function resolveComparison(winner: Scene, loser: Scene): ComparisonDeltas {
-  const mode = state.currentMode;
-  const winnerRating = battleRating(winner);
-  const loserRating = battleRating(loser);
-
-  const climberId = activeClimberId();
-  const winnerPlayCount =
-    mode !== "swiss" && climberId === winner.id
-      ? CLIMB_K_PLAY_COUNT
-      : (winner.play_count ?? 0);
-
-  const raw = calculateRatingChanges({
-    winner: { rating: winnerRating, playCount: winnerPlayCount },
-    loser: { rating: loserRating, playCount: loser.play_count ?? 0 },
-  });
-  const deltas = applyModePolicy(winner, loser, mode, raw);
-
-  if (deltas.winner !== 0) updateSceneRating(winner.id, winnerRating + deltas.winner);
-  if (deltas.loser !== 0) updateSceneRating(loser.id, loserRating + deltas.loser);
-
-  return deltas;
-}
-
-/** Show when gauntlet/champion + filter opponents + small filtered pool. */
+/** Show when Champion + filter opponents + small filtered pool. */
 export function updateClimbPoolWarning(): void {
   const warning = document.getElementById("sb-climb-pool-warning");
   if (!warning) return;
 
-  const isClimb = state.currentMode === "gauntlet" || state.currentMode === "champion";
+  const isClimb = state.currentMode === "champion";
   const filters = readFilters();
   const smallPool =
     state.totalScenesCount > 0 && state.totalScenesCount < CLIMB_SMALL_POOL_WARN_AT;
@@ -655,7 +628,7 @@ function handlePlacementChoice(choice: SceneChoice): void {
   }
 
   const won = choice.winner.id === run.scene.id;
-  recordPlacementResult(won, won ? choice.loser.id : choice.winner.id);
+  recordPlacementResult(run, won, won ? choice.loser.id : choice.winner.id);
   saveState();
 
   choice.winnerCard.classList.add("sb-winner");
@@ -663,146 +636,28 @@ function handlePlacementChoice(choice: SceneChoice): void {
   setTimeout(() => loadNewPair(), 600);
 }
 
-/** Gauntlet climb / first-battle path (after falling-mode branch). */
-async function handleGauntletClimbChoice(choice: SceneChoice): Promise<void> {
-  const {
-    winner: winnerScene,
-    loser: loserScene,
-    left,
-    winnerCard,
-    loserCard,
-  } = choice;
+/** Champion: two-sided ELO every pick; the winner defends next (a new winner takes over). */
+function handleChampionChoice(choice: SceneChoice): void {
+  const { winner: winnerScene, loser: loserScene, left, winnerCard, loserCard } = choice;
 
-  const winnerId = winnerScene.id;
-  const loserId = loserScene.id;
+  if (!state.championScene) state.championScene = left;
+  const change = resolveComparison(winnerScene, loserScene);
 
-  const isFirstBattle = !state.gauntletClimber;
-
-  // Re-verify from the bottom: clear existing rating on first choice, not on pair load
-  if (isFirstBattle && left.rating100 != null) {
-    console.log(
-      `[Stash Battle] 📊 Gauntlet: clearing rating ${left.rating100} for scene ${left.id} on first choice`,
-    );
-    await updateSceneRating(left.id, null);
-    left.rating100 = null;
-  }
-
-  if (isFirstBattle) {
-    state.gauntletClimber = left;
-  }
-  const climber = state.gauntletClimber as Scene;
-
-  const winnerRating = winnerScene.rating100 || 1;
-  const winnerAnimStart = winnerScene.rating100 ?? 0;
-  const loserDisplayRating = loserScene.rating100 ?? 0;
-
-  const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
-  const newWinnerRating = winnerRating + winnerDelta;
-  const newLoserRating = loserDisplayRating + loserDelta;
-
-  let winnerDisplayRating = newWinnerRating;
-
-  if (winnerId === climber.id) {
-    state.gauntletDefeated.push(loserId);
-    state.gauntletWins++;
-    winnerDisplayRating = await applyClimbWinRating(climber, loserScene, newWinnerRating);
-    console.log(
-      `[Stash Battle] 📊 Gauntlet: climber ${winnerId} won (streak=${state.gauntletWins}), rating → ${winnerDisplayRating}`,
-    );
-  } else if (isFirstBattle) {
-    const finalRank = state.totalScenesCount;
-    const finalRating = Math.max(1, (winnerScene.rating100 || 1) - 1);
-    console.log(
-      `[Stash Battle] 📊 Gauntlet: first battle, challenger ${loserId} lost to floor → rank #${finalRank}, rating ${finalRating}`,
-    );
-    void updateSceneRating(loserScene.id, finalRating);
-
-    winnerCard.classList.add("sb-winner");
-    if (loserCard) loserCard.classList.add("sb-loser");
-
-    setTimeout(() => {
-      showPlacementScreen(loserScene, finalRank, finalRating);
-    }, 800);
-    return;
+  if (winnerScene.id === state.championScene.id) {
+    state.championDefeated.push(loserScene.id);
+    state.championWins++;
   } else {
-    console.log(
-      `[Stash Battle] 📊 Gauntlet: climber ${climber.id}(rating=${climber.rating100}) LOST to ${winnerId}(rating=${newWinnerRating}), entering falling mode`,
-    );
-    state.gauntletFalling = true;
-    state.gauntletFallingScene = loserScene;
-    state.gauntletDefeated = [winnerId];
+    state.championScene = winnerScene;
+    state.championDefeated = [loserScene.id];
+    state.championWins = 1;
   }
 
   saveState();
 
   winnerCard.classList.add("sb-winner");
-  if (loserCard) loserCard.classList.add("sb-loser");
-
-  showRatingAnimation(winnerCard, winnerAnimStart, winnerDisplayRating, true);
-  if (loserCard) {
-    showRatingAnimation(
-      loserCard,
-      loserDisplayRating,
-      loserDelta !== 0 ? newLoserRating : loserDisplayRating,
-      false,
-    );
-  }
-  scheduleNextPairAfterAnimations();
-}
-
-/** Champion mode climb path. */
-async function handleChampionChoice(choice: SceneChoice): Promise<void> {
-  const {
-    winner: winnerScene,
-    loser: loserScene,
-    left,
-    winnerCard,
-    loserCard,
-  } = choice;
-
-  const winnerId = winnerScene.id;
-  const loserId = loserScene.id;
-  const winnerRating = winnerScene.rating100 || 1;
-  const winnerAnimStart = winnerScene.rating100 ?? 0;
-  const loserDisplayRating = loserScene.rating100 ?? 0;
-
-  const isFirstBattle = !state.gauntletClimber;
-  if (isFirstBattle) {
-    state.gauntletClimber = left;
-  }
-  const climber = state.gauntletClimber as Scene;
-
-  const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
-  const newWinnerRating = winnerRating + winnerDelta;
-  const newLoserRating = loserDisplayRating + loserDelta;
-
-  let winnerDisplayRating = newWinnerRating;
-
-  if (winnerId === climber.id) {
-    state.gauntletDefeated.push(loserId);
-    state.gauntletWins++;
-    winnerDisplayRating = await applyClimbWinRating(climber, loserScene, newWinnerRating);
-  } else {
-    state.gauntletClimber = winnerScene;
-    winnerScene.rating100 = newWinnerRating;
-    state.gauntletDefeated = [loserId];
-    state.gauntletWins = 1;
-  }
-
-  saveState();
-
-  winnerCard.classList.add("sb-winner");
-  if (loserCard) loserCard.classList.add("sb-loser");
-
-  showRatingAnimation(winnerCard, winnerAnimStart, winnerDisplayRating, true);
-  if (loserCard) {
-    showRatingAnimation(
-      loserCard,
-      loserDisplayRating,
-      loserDelta !== 0 ? newLoserRating : loserDisplayRating,
-      false,
-    );
-  }
+  loserCard.classList.add("sb-loser");
+  showRatingAnimation(winnerCard, change.winner.from, change.winner.to, true);
+  showRatingAnimation(loserCard, change.loser.from, change.loser.to, false);
   scheduleNextPairAfterAnimations();
 }
 
@@ -810,93 +665,27 @@ function handleSceneChoice(choice: SceneChoice): void {
   if (state.disableChoice) return;
   state.disableChoice = true;
 
-  const {
-    winner: winnerScene,
-    loser: loserScene,
-    winnerCard,
-    loserCard,
-    loserRank,
-  } = choice;
-
-  const winnerId = winnerScene.id;
-  const loserId = loserScene.id;
+  const { winner: winnerScene, loser: loserScene, winnerCard, loserCard } = choice;
 
   if (state.currentMode === "placement") {
     handlePlacementChoice(choice);
     return;
   }
 
-  // Handle gauntlet mode (climber tracking)
-  if (state.currentMode === "gauntlet") {
-    // Check if we're in falling mode (finding floor after a loss)
-    if (state.gauntletFalling && state.gauntletFallingScene) {
-      const fallingScene = state.gauntletFallingScene;
-      const loserRating = loserScene.rating100 || 1;
-      console.log(
-        `[Stash Battle] 📊 Falling mode: fallingScene=${fallingScene.id} winnerId=${winnerId} loserId=${loserId} loserRating=${loserRating}`,
-      );
-      if (winnerId === fallingScene.id) {
-        // Falling scene won - found their floor!
-        const finalRating = Math.min(100, loserRating + 1);
-        const fallingAnimStart = fallingScene.rating100 ?? 0;
-        console.log(
-          `[Stash Battle] 📊 Falling scene found floor: loserRating=${loserRating} → finalRating=${finalRating}`,
-        );
-        void updateSceneRating(fallingScene.id, finalRating);
-        fallingScene.rating100 = finalRating;
-
-        // Final rank is one above the opponent (we beat them, so we're above them)
-        const finalRank = Math.max(1, (loserRank ?? 1) - 1);
-
-        winnerCard.classList.add("sb-winner");
-        if (loserCard) loserCard.classList.add("sb-loser");
-
-        showRatingAnimation(winnerCard, fallingAnimStart, finalRating, true);
-
-        setTimeout(() => {
-          showPlacementScreen(fallingScene, finalRank, finalRating);
-        }, 1500);
-        return;
-      } else {
-        // Falling scene lost again - keep falling
-        state.gauntletDefeated.push(winnerId);
-        saveState();
-
-        winnerCard.classList.add("sb-winner");
-        if (loserCard) loserCard.classList.add("sb-loser");
-
-        setTimeout(() => {
-          loadNewPair();
-        }, 800);
-        return;
-      }
-    }
-
-    // Climb / first battle (falling handled above)
-    void handleGauntletClimbChoice(choice);
-    return;
-  }
-
-  // Handle champion mode (like gauntlet but winner always takes over)
   if (state.currentMode === "champion") {
-    void handleChampionChoice(choice);
+    handleChampionChoice(choice);
     return;
   }
 
-  // Swiss: calculate and show rating changes (both scenes stay in the pool)
-  const winnerStart = battleRating(winnerScene);
-  const loserStart = battleRating(loserScene);
-  const { winner: winnerDelta, loser: loserDelta } = resolveComparison(winnerScene, loserScene);
+  // Swiss: both scenes' ELO changes (both stay in the pool)
+  const change = resolveComparison(winnerScene, loserScene);
 
   saveState();
 
   winnerCard.classList.add("sb-winner");
-  if (loserCard) loserCard.classList.add("sb-loser");
-
-  showRatingAnimation(winnerCard, winnerStart, winnerStart + winnerDelta, true);
-  if (loserCard) {
-    showRatingAnimation(loserCard, loserStart, loserStart + loserDelta, false);
-  }
+  loserCard.classList.add("sb-loser");
+  showRatingAnimation(winnerCard, change.winner.from, change.winner.to, true);
+  showRatingAnimation(loserCard, change.loser.from, change.loser.to, false);
   scheduleNextPairAfterAnimations();
 }
 
@@ -907,18 +696,18 @@ const RATING_ANIM_DEFAULT_STEP_MS = 50;
 const RATING_ANIM_MIN_STEP_MS = 8;
 
 function scheduleNextPairAfterAnimations(): void {
-  // Fun mode has no rating animation to wait for
-  setTimeout(() => loadNewPair(), ratingsEnabled() ? 1500 : 600);
+  setTimeout(() => loadNewPair(), 1500);
 }
 
-/** Count-up/down overlay; large jumps speed up so the full count fits within 1400ms. */
+/** ELO count-up/down overlay (whole numbers); large jumps speed up so the count fits within 1400ms. */
 function showRatingAnimation(
   card: HTMLElement,
-  oldRating: number,
-  newRating: number,
+  oldElo: number,
+  newElo: number,
   isWinner: boolean,
 ): void {
-  if (!ratingsEnabled()) return;
+  const oldRating = Math.round(oldElo);
+  const newRating = Math.round(newElo);
   const change = newRating - oldRating;
   // Create overlay
   const overlay = document.createElement("div");

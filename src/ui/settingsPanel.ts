@@ -1,34 +1,45 @@
 // Battle / Settings tabs (Stash's own nav-tabs + .setting rows, like Stash-TCode), plus the
 // preview volume control that sits on the tab bar. Every control carries data-setting="<key>";
-// values persist via updateSettings().
+// values persist via updateSettings(). Action rows (Reset ELO) carry data-action instead.
 
 import { updateSettings } from "../settings";
 import { state } from "../state";
-import type { Settings } from "../types";
+import type { Settings, StashRatingsMode } from "../types";
+import { STASH_RATINGS_OPTIONS, stashRatingsOption } from "./stashRatingsText";
 
 type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
 export type TabId = "battle" | "settings";
 
-interface SettingRow {
-  key: keyof Settings;
-  title: string;
-  hint: string;
-}
+type SettingRow =
+  | { key: keyof Settings; title: string; hint: string }
+  | { action: "reset-elo"; title: string; hint: string; button: string };
 
 const SECTIONS: { title: string; rows: SettingRow[] }[] = [
+  {
+    title: "ELO",
+    rows: [
+      // The hint is the selected option's description (kept current by syncSettingsControls)
+      { key: "stashRatings", title: "Stash ratings update mode", hint: "" },
+      {
+        action: "reset-elo",
+        title: "Reset ELO",
+        hint: "Start every scene's ELO over, from its Stash rating or at 1500",
+        button: "Reset ELO…",
+      },
+    ],
+  },
   {
     title: "Battles",
     rows: [
       { key: "filterOpponents", title: "Use filtered scenes for both sides", hint: "Opponents also come from the current scene list filter instead of your whole rated library" },
-      { key: "unratedRating", title: "Unrated scene rating", hint: "What unrated scenes count as in Swiss. 0 starts them at the bottom; 50 is closer to a classic ELO start" },
-      { key: "funMode", title: "Fun mode", hint: "Battle without changing any ratings" },
+      { key: "placementFromBottom", title: "Placement: start from the bottom", hint: "Placement ignores the scene's current ELO: it starts against the bottom scene and climbs, jumping further with each win (this replaces Gauntlet)" },
     ],
   },
   {
     title: "Scenes",
     rows: [
       { key: "autoplayPreviews", title: "Autoplay previews", hint: "Loop both previews silently; hover a card to hear it" },
-      { key: "pauseMediaOnOpen", title: "Pause playing video when Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
+      { key: "pauseMediaOnOpen", title: "Pause playing video when Stash Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
       { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
       { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" },
     ],
@@ -51,8 +62,12 @@ function volumeIcon(volume: number): string {
 }
 
 function settingControl(key: keyof Settings): string {
-  if (key === "unratedRating") {
-    return `<input type="number" min="0" max="100" step="1" data-setting="${key}" value="${state.settings[key]}" class="form-control form-control-sm input-control sb-setting-number">`;
+  if (key === "stashRatings") {
+    const options = STASH_RATINGS_OPTIONS.map(
+      ({ value, label }) =>
+        `<option value="${value}" ${value === state.settings.stashRatings ? "selected" : ""}>${label}</option>`,
+    ).join("");
+    return `<select data-setting="${key}" class="form-control form-control-sm sb-setting-select" aria-label="Stash ratings update mode">${options}</select>`;
   }
   const id = `sb-setting-${key}`;
   return `
@@ -80,24 +95,30 @@ export function createTabBar(): string {
     `;
 }
 
+function settingRowHtml(row: SettingRow): string {
+  const hint = "key" in row && row.key === "stashRatings" ? stashRatingsOption(state.settings.stashRatings).desc : row.hint;
+  const hintFor = "key" in row ? ` data-hint-for="${row.key}"` : "";
+  const control =
+    "key" in row
+      ? settingControl(row.key)
+      : `<button type="button" class="btn btn-secondary btn-sm" data-action="${row.action}">${row.button}</button>`;
+  return `
+            <div class="setting">
+              <div>
+                <h3>${row.title}</h3>
+                <div class="sub-heading"${hintFor}>${hint}</div>
+              </div>
+              <div>${control}</div>
+            </div>`;
+}
+
 export function createSettingsTab(): string {
   const sections = SECTIONS.map(
     ({ title, rows }) => `
         <div class="setting-section">
           <h1>${title}</h1>
           <div class="card">
-            ${rows
-              .map(
-                ({ key, title: rowTitle, hint }) => `
-            <div class="setting">
-              <div>
-                <h3>${rowTitle}</h3>
-                <div class="sub-heading">${hint}</div>
-              </div>
-              <div>${settingControl(key)}</div>
-            </div>`,
-              )
-              .join("")}
+            ${rows.map(settingRowHtml).join("")}
           </div>
         </div>`,
   ).join("");
@@ -117,6 +138,12 @@ export function syncSettingsControls(root: ParentNode): void {
     const value = state.settings[key];
     if (input.type === "checkbox") input.checked = Boolean(value);
     else input.value = String(value);
+  });
+  root.querySelectorAll<HTMLSelectElement>("select[data-setting]").forEach((select) => {
+    select.value = String(state.settings[select.dataset.setting as keyof Settings]);
+  });
+  root.querySelectorAll<HTMLElement>('[data-hint-for="stashRatings"]').forEach((hint) => {
+    hint.textContent = stashRatingsOption(state.settings.stashRatings).desc;
   });
   const volume = state.settings.previewVolume;
   root.querySelectorAll(".sb-volume-icon").forEach((el) => {
@@ -141,12 +168,14 @@ export function showTab(root: ParentNode, tab: TabId): void {
 
 /**
  * Wire every data-setting control, the tabs and the mute button.
- * onChange runs after a value is stored; onTabChange after a tab switch.
+ * onChange runs after a value is stored; onTabChange after a tab switch. A dropdown change
+ * first awaits beforeChange (a warning, say): false puts the dropdown back and stores nothing.
  */
 export function bindSettingsControls(
   root: ParentNode,
   onChange: (key: keyof Settings) => void,
   onTabChange: (tab: TabId) => void,
+  beforeChange: (key: keyof Settings, value: string) => Promise<boolean> = async () => true,
 ): void {
   const apply = (patch: Partial<Settings>, key: keyof Settings): void => {
     updateSettings(patch);
@@ -161,6 +190,20 @@ export function bindSettingsControls(
     input.addEventListener(eventName, () => {
       const value = input.type === "checkbox" ? input.checked : Number(input.value);
       apply({ [key]: value } as Partial<Settings>, key);
+    });
+  });
+
+  root.querySelectorAll<HTMLSelectElement>("select[data-setting]").forEach((select) => {
+    const key = select.dataset.setting as keyof Settings;
+    select.addEventListener("change", async () => {
+      const value = select.value;
+      select.disabled = true;
+      try {
+        if (await beforeChange(key, value)) apply({ [key]: value as StashRatingsMode } as Partial<Settings>, key);
+        else syncSettingsControls(root);
+      } finally {
+        select.disabled = false;
+      }
     });
   });
 

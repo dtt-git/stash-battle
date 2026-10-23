@@ -1,20 +1,18 @@
 // Matchmaking: build the scene pairs for each comparison mode.
 
-import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached, sandboxPool } from "./cache";
-import { CLIMB_OPPONENT_PICK_WINDOW, SWISS_OPPONENT_REACH_INITIAL, SWISS_OPPONENT_REACH_MULTIPLIER } from "./constants";
-import { effectiveRating } from "./elo";
+import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached, latestScene } from "./cache";
+import {
+  CHAMPION_UNRATED_ELO,
+  CLIMB_OPPONENT_PICK_WINDOW,
+  SWISS_OPPONENT_REACH_INITIAL,
+  SWISS_OPPONENT_REACH_MULTIPLIER,
+} from "./constants";
 import { readFilters, type ListFilters } from "./filters";
-import { updateSceneRating } from "./rating";
+import { landingElo, newPlacementRun, placementStep } from "./placement";
+import { writeElo } from "./rating";
+import { battles, effectiveElo, elo, eloInsertionIndex, isRated } from "./score";
 import { state } from "./state";
-import type {
-  ChampionPairResult,
-  GauntletPairResult,
-  PlacementPairResult,
-  PlacementRun,
-  Rank,
-  Scene,
-  SwissPairResult,
-} from "./types";
+import type { ChampionPairResult, PlacementPairResult, Rank, Scene, SwissPairResult } from "./types";
 
 function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array];
@@ -76,7 +74,9 @@ function getNextFilteredScene(leftPool: Scene[], filterKey: string): Scene | nul
     startNewPass(leftPool);
   }
 
-  const scene = state.shuffledFilteredScenes[state.shuffleIndex];
+  const shuffled = state.shuffledFilteredScenes[state.shuffleIndex];
+  // The shuffle keeps its pass's scene objects; a background refresh may have replaced them since
+  const scene = leftPool.find((s) => s.id === shuffled.id) ?? shuffled;
   state.shuffleIndex++;
   lastShownSceneId = scene.id;
   console.log(
@@ -85,15 +85,19 @@ function getNextFilteredScene(leftPool: Scene[], filterKey: string): Scene | nul
   return scene;
 }
 
+/**
+ * Opponents (right side), sorted by ELO: scenes with an ELO, or the filtered scenes when "use
+ * filtered scenes for both sides" is on (unrated ones then sort last).
+ */
 function buildOpponentPool(allScenes: Scene[], leftPool: Scene[], filters: ListFilters): Scene[] {
   if (state.settings.filterOpponents && filters.filterActive) {
     return leftPool;
   }
-  const ratedOnly = allScenes.filter((s) => s.rating100 != null);
-  return ratedOnly.length >= 1 ? ratedOnly : allScenes;
+  const rated = allScenes.filter(isRated);
+  return rated.length >= 1 ? rated : allScenes;
 }
 
-/** Load the left ("to rate") and full pools. In fun mode both are sandbox copies (see cache.ts). */
+/** Load the left ("to rate") and full pools. Both come from the cache, sorted by ELO. */
 async function loadScenePools(
   filters: ListFilters,
 ): Promise<{ leftPool: Scene[]; allScenes: Scene[] }> {
@@ -124,15 +128,27 @@ async function loadScenePools(
   }
 
   state.leftPoolSize = leftPool.length;
-  if (state.settings.funMode) {
-    return { leftPool: sandboxPool(leftPool), allScenes: sandboxPool(allScenes) };
-  }
   return { leftPool, allScenes };
 }
 
-/** Load the pools (served from cache when possible) just to record the left pool's size. */
-export async function loadPoolSize(): Promise<void> {
-  await loadScenePools(readFilters());
+/**
+ * Ranks for a restored pair from the current pools (also recording the left pool's size), the way
+ * the pair fetchers work them out: the place in the opponent pool, and in Placement, none for the
+ * scene being placed and the opponent's place in the pool without it.
+ */
+export async function pairRanks(left: Scene, right: Scene): Promise<[Rank, Rank]> {
+  const filters = readFilters();
+  const { leftPool, allScenes } = await loadScenePools(filters);
+  let pool = buildOpponentPool(allScenes, leftPool, filters);
+  const rank = (scene: Scene): Rank => {
+    const idx = pool.findIndex((s) => s.id === scene.id);
+    return idx >= 0 ? idx + 1 : null;
+  };
+  if (state.currentMode === "placement") {
+    pool = pool.filter((s) => s.id !== left.id);
+    return [null, rank(right)];
+  }
+  return [rank(left), rank(right)];
 }
 
 /** Load left (scene to rate) and right (opponent) pools for Swiss. */
@@ -156,12 +172,6 @@ async function buildSwissPools(): Promise<{
   return { leftPool, rightPool, filterKey: filters.filterKey };
 }
 
-/** Index where a scene with this rating would sit in a rating-sorted (DESC) pool. */
-function insertionIndex(pool: Scene[], rating: number): number {
-  const idx = pool.findIndex((s) => (s.rating100 ?? 0) < rating);
-  return idx === -1 ? pool.length : idx;
-}
-
 // Swiss mode: left = scene to rate (filtered pool), right = similar-strength opponent
 export async function fetchSwissPair(forcedLeftScene: Scene | null = null): Promise<SwissPairResult> {
   const { leftPool, rightPool, filterKey } = await buildSwissPools();
@@ -175,17 +185,17 @@ export async function fetchSwissPair(forcedLeftScene: Scene | null = null): Prom
   return { scenes: [scene1, scene2], ranks };
 }
 
-/** Pick a random opponent near scene1's rank in the rating-sorted right pool (expanding band if needed). */
+/** Pick a random opponent near scene1's rank in the ELO-sorted right pool (expanding band if needed). */
 function pickSwissOpponent(
   scene1: Scene,
   rightPool: Scene[],
 ): { scene2: Scene; ranks: [Rank, Rank] } {
   const scene1IdxInPool = rightPool.findIndex((s) => s.id === scene1.id);
-  // Rated scenes match around their own rank; unrated ones around where `unratedRating` would sit
+  // Rated scenes match around their own rank; unrated ones around where 1500 would sit
   const effectiveScene1Idx =
-    scene1.rating100 && scene1IdxInPool >= 0
+    isRated(scene1) && scene1IdxInPool >= 0
       ? scene1IdxInPool
-      : insertionIndex(rightPool, effectiveRating(scene1.rating100, state.settings.unratedRating));
+      : eloInsertionIndex(rightPool, effectiveElo(scene1));
   const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
 
   const candidates: { scene: Scene; idx: number }[] = [];
@@ -201,6 +211,7 @@ function pickSwissOpponent(
         candidates.push({ scene: rightPool[i], idx: i });
       }
     }
+    if (reach === rightPool.length) break;
   }
 
   if (candidates.length === 0) {
@@ -214,185 +225,34 @@ function pickSwissOpponent(
   };
 }
 
-/** Random pick from the N undefeated opponents closest above the climber (list is rating-sorted DESC). */
-function pickClosestClimbOpponent(remainingOpponents: Scene[]): Scene {
+/** Random pick from the N unbeaten opponents closest above the champion (list is ELO-sorted). */
+function pickClosestChampionOpponent(remainingOpponents: Scene[]): Scene {
   const closest = remainingOpponents.slice(-CLIMB_OPPONENT_PICK_WINDOW);
   return closest[Math.floor(Math.random() * closest.length)];
 }
 
-/** Undefeated opponents above the climber in the rating-sorted right pool. */
-function getRemainingClimbOpponents(
-  climber: Scene,
-  rightPool: Scene[],
-  climberIndex: number,
-): Scene[] {
+/** Opponents above the champion in the ELO-sorted pool that it hasn't beaten in this run. */
+function getRemainingChampionOpponents(champion: Scene, rightPool: Scene[], championIndex: number): Scene[] {
+  const championElo = effectiveElo(champion, CHAMPION_UNRATED_ELO);
   return rightPool.filter((s, idx) => {
-    if (s.id === climber.id || state.gauntletDefeated.includes(s.id)) return false;
-    return idx < climberIndex || (s.rating100 || 0) >= (climber.rating100 || 0);
+    if (s.id === champion.id || state.championDefeated.includes(s.id)) return false;
+    return idx < championIndex || (elo(s) ?? -Infinity) >= championElo;
   });
 }
 
-async function getClimbOpponentPool(): Promise<Scene[]> {
-  const filters = readFilters();
-  const { leftPool, allScenes } = await loadScenePools(filters);
-  return buildOpponentPool(allScenes, leftPool, filters);
-}
-
-/** Apply ELO from a climber win; bump above the beaten opponent when the pool is cleared. */
-export async function applyClimbWinRating(
-  climber: Scene,
-  beatenOpponent: Scene,
-  eloRating: number,
-): Promise<number> {
-  climber.rating100 = eloRating;
-
-  const rightPool = await getClimbOpponentPool();
-  const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
-  // If the climber has remaining opponents return ELO rating as normal
-  if (getRemainingClimbOpponents(climber, rightPool, climberIndex).length > 0) {
-    return eloRating;
-  }
-
-  // If the climber has no remaining opponents, ensure their rating is above the opponent they just beat
-  const minWinnerRating = Math.min(100, (beatenOpponent.rating100 ?? 0) + 1);
-  if (eloRating < minWinnerRating) {
-    await updateSceneRating(climber.id, minWinnerRating);
-    climber.rating100 = minWinnerRating;
-  }
-  return climber.rating100 ?? eloRating;
-}
-
-// Find the lowest actually rated scene in a descending-sorted array, excluding a specific scene
-// Returns { scene, index } or fallback to first non-excluded scene if none rated
-function findLowestRated(scenes: Scene[], excludeId: string): { scene: Scene; index: number } {
+/** Lowest scene with an ELO in the pool (excluding one scene), or any other scene if none has one. */
+function findLowestRated(scenes: Scene[], excludeId: string): { scene: Scene | undefined; index: number } {
   for (let i = scenes.length - 1; i >= 0; i--) {
     const s = scenes[i];
-    if (s.id !== excludeId && s.rating100 != null) {
+    if (s.id !== excludeId && isRated(s)) {
       return { scene: s, index: i };
     }
   }
-  // Fallback to any scene if none rated
   const fallbackIndex = scenes.findIndex((s) => s.id !== excludeId);
   return { scene: scenes[fallbackIndex], index: fallbackIndex };
 }
 
-// Gauntlet mode: champion vs next challenger
-export async function fetchGauntletPair(
-  forcedLeftScene: Scene | null = null,
-): Promise<GauntletPairResult> {
-  const filters = readFilters();
-
-  console.log("[Stash Battle] 📋 Fetching scenes for gauntlet...");
-  const { leftPool, allScenes } = await loadScenePools(filters);
-
-  let rightPool = buildOpponentPool(allScenes, leftPool, filters);
-  state.totalScenesCount = rightPool.length;
-
-  if (allScenes.length < 2) {
-    throw new Error("Not enough scenes for comparison.");
-  }
-
-  // Handle falling mode - find next opponent BELOW to test against (from full collection)
-  if (state.gauntletFalling && state.gauntletFallingScene) {
-    const fallingScene = state.gauntletFallingScene;
-    const fallingIndex = rightPool.findIndex((s) => s.id === fallingScene.id);
-
-    const belowOpponents = rightPool.filter((s, idx) => {
-      if (s.id === fallingScene.id || state.gauntletDefeated.includes(s.id)) return false;
-      return idx > fallingIndex; // Below in ranking
-    });
-
-    if (belowOpponents.length === 0) {
-      // Hit the bottom - place 1 below the last opponent that beat them
-      const finalRank = rightPool.length;
-      const lastDefeatedById = state.gauntletDefeated[state.gauntletDefeated.length - 1];
-      const lastOpponent = rightPool.find((s) => s.id === lastDefeatedById);
-      const finalRating = Math.max(1, (lastOpponent?.rating100 || 1) - 1);
-      updateSceneRating(fallingScene.id, finalRating);
-
-      return {
-        scenes: [fallingScene],
-        ranks: [finalRank],
-        isVictory: false,
-        isFalling: true,
-        isPlacement: true,
-        placementRank: finalRank,
-        placementRating: finalRating,
-      };
-    } else {
-      // Get next opponent below (first one, closest to falling scene)
-      const nextBelow = belowOpponents[0];
-      const nextBelowIndex = rightPool.findIndex((s) => s.id === nextBelow.id);
-
-      // Update the falling scene's rank for display
-      state.gauntletClimberRank = fallingIndex + 1;
-
-      return {
-        scenes: [fallingScene, nextBelow],
-        ranks: [fallingIndex + 1, nextBelowIndex + 1],
-        isVictory: false,
-        isFalling: true,
-      };
-    }
-  }
-
-  // If no climber yet, pick from filtered pool to start
-  if (!state.gauntletClimber) {
-    state.gauntletDefeated = [];
-    state.gauntletFalling = false;
-    state.gauntletFallingScene = null;
-
-    const challenger = forcedLeftScene || getNextFilteredScene(leftPool, filters.filterKey);
-
-    if (!challenger) {
-      throw new Error("No scenes match your filter criteria.");
-    }
-
-    const challengerIndex = rightPool.findIndex((s) => s.id === challenger.id);
-
-    // Start at the bottom - find lowest rated scene in rightPool
-    const { scene: lowestRated, index: lowestIndex } = findLowestRated(rightPool, challenger.id);
-
-    state.gauntletClimberRank = challengerIndex >= 0 ? challengerIndex + 1 : rightPool.length;
-
-    return {
-      scenes: [challenger, lowestRated],
-      ranks: [state.gauntletClimberRank, lowestIndex + 1],
-      isVictory: false,
-      isFalling: false,
-    };
-  }
-
-  const climber = state.gauntletClimber;
-  const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
-
-  state.gauntletClimberRank = climberIndex >= 0 ? climberIndex + 1 : 1;
-
-  const remainingOpponents = getRemainingClimbOpponents(climber, rightPool, climberIndex);
-
-  // If no opponents left, the climber has conquered the ladder
-  if (remainingOpponents.length === 0) {
-    state.gauntletClimberRank = 1;
-    return {
-      scenes: [climber],
-      ranks: [1],
-      isVictory: true,
-      isFalling: false,
-    };
-  }
-
-  const nextOpponent = pickClosestClimbOpponent(remainingOpponents);
-  const nextOpponentIndex = rightPool.findIndex((s) => s.id === nextOpponent.id);
-
-  return {
-    scenes: [climber, nextOpponent],
-    ranks: [climberIndex >= 0 ? climberIndex + 1 : null, nextOpponentIndex + 1],
-    isVictory: false,
-    isFalling: false,
-  };
-}
-
-// Champion mode: like gauntlet but winner stays on (no falling)
+// Champion mode: winner stays on, starting against the lowest-rated scene
 export async function fetchChampionPair(
   forcedLeftScene: Scene | null = null,
 ): Promise<ChampionPairResult> {
@@ -401,154 +261,64 @@ export async function fetchChampionPair(
   console.log("[Stash Battle] 📋 Fetching scenes for champion...");
   const { leftPool, allScenes } = await loadScenePools(filters);
 
-  let rightPool = buildOpponentPool(allScenes, leftPool, filters);
+  const rightPool = buildOpponentPool(allScenes, leftPool, filters);
   state.totalScenesCount = rightPool.length;
 
   if (allScenes.length < 2) {
     throw new Error("Not enough scenes for comparison.");
   }
 
-  // If no climber yet, pick from filtered pool to start
-  if (!state.gauntletClimber) {
-    state.gauntletDefeated = [];
-
-    if (!forcedLeftScene && leftPool.length < 1) {
-      throw new Error("No scenes match your filter criteria.");
-    }
+  // No champion yet: the challenger from the left pool starts against the lowest-rated scene
+  if (!state.championScene) {
+    state.championDefeated = [];
 
     const challenger = forcedLeftScene || getNextFilteredScene(leftPool, filters.filterKey);
-
     if (!challenger) {
       throw new Error("No scenes match your filter criteria.");
     }
 
     const challengerIndex = rightPool.findIndex((s) => s.id === challenger.id);
-
-    // Start at the bottom - find lowest actually rated scene
     const { scene: lowestRated, index: lowestIndex } = findLowestRated(rightPool, challenger.id);
-
-    state.gauntletClimberRank = challengerIndex >= 0 ? challengerIndex + 1 : rightPool.length;
+    if (!lowestRated) {
+      throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
+    }
 
     return {
       scenes: [challenger, lowestRated],
-      ranks: [state.gauntletClimberRank, lowestIndex + 1],
+      ranks: [challengerIndex >= 0 ? challengerIndex + 1 : null, lowestIndex + 1],
       isVictory: false,
     };
   }
 
-  const climber = state.gauntletClimber;
-  const climberIndex = rightPool.findIndex((s) => s.id === climber.id);
+  const champion = state.championScene;
+  const championIndex = rightPool.findIndex((s) => s.id === champion.id);
+  const remainingOpponents = getRemainingChampionOpponents(champion, rightPool, championIndex);
 
-  state.gauntletClimberRank = climberIndex >= 0 ? climberIndex + 1 : 1;
-
-  const remainingOpponents = getRemainingClimbOpponents(climber, rightPool, climberIndex);
-  
-  // If no opponents left, the climber has conquered the ladder
+  // No opponents left: the champion has beaten everyone above it
   if (remainingOpponents.length === 0) {
-    state.gauntletClimberRank = 1;
-    return {
-      scenes: [climber],
-      ranks: [1],
-      isVictory: true,
-    };
+    return { scenes: [champion], ranks: [1], isVictory: true };
   }
 
-  const nextOpponent = pickClosestClimbOpponent(remainingOpponents);
+  const nextOpponent = pickClosestChampionOpponent(remainingOpponents);
   const nextOpponentIndex = rightPool.findIndex((s) => s.id === nextOpponent.id);
 
   return {
-    scenes: [climber, nextOpponent],
-    ranks: [climberIndex + 1, nextOpponentIndex + 1],
+    scenes: [champion, nextOpponent],
+    ranks: [championIndex >= 0 ? championIndex + 1 : null, nextOpponentIndex + 1],
     isVictory: false,
   };
 }
 
-// --- Placement mode: bounded search with momentum ---
-//
-// The scene's slot lies in [lo, hi) of the rating-sorted opponent pool. A win against index i
-// means the slot is above i (hi = i); a loss means it's below (lo = i + 1). A rated scene starts
-// next to its current rank and gallops (steps 1, 2, 4, 8...) while results keep going the same
-// way; the first reversal (or an unrated scene) switches to halving the remaining range.
+// --- Placement mode (the search itself is in placement.ts) ---
 
-function newPlacementRun(scene: Scene): PlacementRun {
-  return {
-    scene,
-    aboveId: null,
-    belowId: null,
-    lastOpponentId: null,
-    lastWon: null,
-    galloping: scene.rating100 != null,
-    step: 1,
-    battles: 0,
-    rangeLo: 0,
-    rangeHi: 0,
-  };
-}
-
-/** Current [lo, hi) slot bounds, resolved from the bounding opponents' ids. */
-function placementBounds(run: PlacementRun, pool: Scene[]): { lo: number; hi: number } {
-  const aboveIdx = run.aboveId ? pool.findIndex((s) => s.id === run.aboveId) : -1;
-  const belowIdx = run.belowId ? pool.findIndex((s) => s.id === run.belowId) : -1;
-  return { lo: aboveIdx + 1, hi: belowIdx >= 0 ? belowIdx : pool.length };
-}
-
-function nextPlacementIndex(run: PlacementRun, pool: Scene[], lo: number, hi: number): number {
-  if (run.galloping) {
-    if (run.lastOpponentId === null) {
-      // Start just below the scene's current rating: a correctly rated scene confirms in ~2 battles
-      return insertionIndex(pool, run.scene.rating100 ?? 0);
-    }
-    const lastIdx = pool.findIndex((s) => s.id === run.lastOpponentId);
-    if (lastIdx >= 0) {
-      // Step from the far edge of the last opponent's tie group: another equal rating teaches nothing
-      const dir = run.lastWon ? -1 : 1;
-      const lastRating = pool[lastIdx].rating100 ?? 0;
-      let edge = lastIdx;
-      while (edge + dir >= 0 && edge + dir < pool.length && (pool[edge + dir].rating100 ?? 0) === lastRating) {
-        edge += dir;
-      }
-      return edge + dir * run.step;
-    }
-  }
-  return lo + Math.floor((hi - lo) / 2);
-}
-
-/** Random pick among scenes in [lo, hi) that share pool[idx]'s rating (their order is arbitrary). */
+/** Random pick among scenes in [lo, hi) that share pool[idx]'s ELO (their order is arbitrary). */
 function pickAmongTies(pool: Scene[], idx: number, lo: number, hi: number): number {
-  const rating = pool[idx].rating100 ?? 0;
+  const target = elo(pool[idx]);
   const ties: number[] = [];
   for (let i = lo; i < hi; i++) {
-    if ((pool[i].rating100 ?? 0) === rating) ties.push(i);
+    if (elo(pool[i]) === target) ties.push(i);
   }
   return ties[Math.floor(Math.random() * ties.length)];
-}
-
-/** Rating for a scene placed at `slot`: between its neighbours, ±1 at the edges. */
-function placementRating(pool: Scene[], slot: number): number {
-  const above = slot > 0 ? (pool[slot - 1].rating100 ?? 0) : null;
-  const below = slot < pool.length ? (pool[slot].rating100 ?? 0) : null;
-  if (above === null) return Math.min(100, (below ?? 0) + 1);
-  if (below === null) return Math.max(1, above - 1);
-  if (above - below >= 2) return Math.round((above + below) / 2);
-  // No integer strictly between: tie with the scene above (cache ordering puts ties first-come)
-  return Math.max(1, above);
-}
-
-/** Record a placement battle result and update the momentum. */
-export function recordPlacementResult(won: boolean, opponentId: string): void {
-  const run = state.placement;
-  if (!run) return;
-
-  if (run.lastWon !== null) {
-    if (run.lastWon === won) run.step *= 2;
-    else run.galloping = false;
-  }
-  if (won) run.belowId = opponentId;
-  else run.aboveId = opponentId;
-
-  run.lastOpponentId = opponentId;
-  run.lastWon = won;
-  run.battles++;
 }
 
 // Placement mode: left = scene being placed, right = the next opponent in its search range
@@ -567,7 +337,7 @@ export async function fetchPlacementPair(
     if (!scene) {
       throw new Error("No scenes match your filter criteria.");
     }
-    state.placement = newPlacementRun(scene);
+    state.placement = newPlacementRun(scene, state.settings.placementFromBottom);
   }
   const run = state.placement;
 
@@ -577,22 +347,29 @@ export async function fetchPlacementPair(
   }
   state.totalScenesCount = pool.length + 1;
 
-  const { lo, hi } = placementBounds(run, pool);
-  run.rangeLo = Math.min(lo, hi);
-  run.rangeHi = hi;
+  const step = placementStep(run, pool);
+  run.rangeLo = Math.min(step.lo, step.hi);
+  run.rangeHi = step.hi;
 
-  if (lo >= hi) {
-    const slot = Math.min(lo, hi);
-    const rating = placementRating(pool, slot);
+  if (step.done) {
+    // Only the placed scene's ELO changes; it's credited with the battles this run took
+    const newElo = landingElo(pool, step.slot);
+    const newBattles = battles(latestScene(run.scene)) + run.battles;
     console.log(
-      `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${slot + 1} after ${run.battles} battles, rating ${rating}`,
+      `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`,
     );
-    await updateSceneRating(run.scene.id, rating);
-    run.scene.rating100 = rating;
-    return { done: true, scene: run.scene, rank: slot + 1, rating };
+    await writeElo(run.scene, newElo, newBattles);
+    return {
+      done: true,
+      scene: run.scene,
+      rank: step.slot + 1,
+      elo: newElo,
+      battles: run.battles,
+      streak: run.streak,
+      fromBottom: run.fromBottom,
+    };
   }
 
-  const target = Math.max(lo, Math.min(hi - 1, nextPlacementIndex(run, pool, lo, hi)));
-  const idx = pickAmongTies(pool, target, lo, hi);
+  const idx = pickAmongTies(pool, step.index, step.lo, step.hi);
   return { done: false, scenes: [run.scene, pool[idx]], ranks: [null, idx + 1] };
 }

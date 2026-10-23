@@ -1,45 +1,41 @@
-// ELO rating logic (pure calculations — callers apply results and persist).
+// ELO math (pure calculations: callers apply the results and persist them).
 
-import type { ComparisonDeltas, ComparisonInput } from "./types";
+import { ELO_DIVISOR, ELO_K_TIERS } from "./constants";
 
-const MIN_RATING = 1;
-const MAX_RATING = 100;
-
-// Dynamic K-factor based on play_count (similar to chess ELO for new vs established players)
-export function getKFactor(playCount: number): number {
-  if (playCount < 3) return 12;
-  if (playCount < 8) return 8;
-  if (playCount < 15) return 6;
-  return 4;
+/** K for a scene with this many K-games (see kGames): new scenes move a lot, established ones little. */
+export function eloKFactor(kGames: number): number {
+  for (const [below, k] of ELO_K_TIERS) {
+    if (kGames < below) return k;
+  }
+  return ELO_K_TIERS[ELO_K_TIERS.length - 1][1];
 }
 
-/** Rating used in ELO math: the stored rating, or `unratedRating` for unrated scenes (min 1). */
-export function effectiveRating(rating100: number | null | undefined, unratedRating: number): number {
-  return rating100 || clampRating(unratedRating);
+/** Probability that a scene rated `elo` beats one rated `opponentElo`. */
+export function eloExpected(elo: number, opponentElo: number): number {
+  return 1 / (1 + Math.pow(10, (opponentElo - elo) / ELO_DIVISOR));
 }
 
-function clampRating(rating: number): number {
-  return Math.min(MAX_RATING, Math.max(MIN_RATING, rating));
+export interface EloSide {
+  elo: number;
+  /** Battles plus any seeded head start (score.ts kGames): sets this side's K. */
+  kGames: number;
 }
 
-function expectedScore(ratingA: number, ratingB: number): number {
-  const ratingDiff = ratingB - ratingA;
-  return 1 / (1 + Math.pow(10, ratingDiff / 40));
+/** Stored ELO precision (one decimal), so small late-career changes aren't rounded away. */
+export function roundElo(elo: number): number {
+  return Math.round(elo * 10) / 10;
 }
 
-/** Standard two-sided ELO for a head-to-head win. Returns effective deltas (post-clamp). */
-export function calculateRatingChanges(input: ComparisonInput): ComparisonDeltas {
-  const { winner, loser } = input;
-
-  const expected = expectedScore(winner.rating, loser.rating);
-  const winnerChange = Math.max(1, Math.round(getKFactor(winner.playCount) * (1 - expected)));
-  const loserChange = -Math.max(1, Math.round(getKFactor(loser.playCount) * expected));
-
-  const winnerNew = clampRating(winner.rating + winnerChange);
-  const loserNew = clampRating(loser.rating + loserChange);
-
+/**
+ * Two-sided ELO for a head-to-head win; each side uses its own K. Returns the new ELOs.
+ * Each side moves by K × (actual − expected): the winner by K × (1 − its win chance), the loser
+ * by K × (0 − its own win chance), which is the same 1 − winner's chance. With equal K the
+ * points are exactly zero-sum.
+ */
+export function eloResult(winner: EloSide, loser: EloSide): { winner: number; loser: number } {
+  const surprise = 1 - eloExpected(winner.elo, loser.elo);
   return {
-    winner: winnerNew - winner.rating,
-    loser: loserNew - loser.rating,
+    winner: roundElo(winner.elo + eloKFactor(winner.kGames) * surprise),
+    loser: roundElo(loser.elo - eloKFactor(loser.kGames) * surprise),
   };
 }

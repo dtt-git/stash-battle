@@ -1,5 +1,48 @@
 # Changelog
 
+## v3.0.0
+
+A new rating system: Stash Battle now keeps a true ELO score for every scene, separate from your star ratings.
+
+### ⚠️ Before you update
+
+- **Requires Stash v0.31.0 or newer.** ELO is stored in scene custom fields, which Stash added in v0.31.0. On an older Stash, Stash Battle shows a message instead of loading.
+- **Stash Battle no longer changes your Stash star ratings by default.** Every battle still updates rankings, but in Stash Battle's own ELO score. If you want your star ratings to keep following your rankings, set **Settings → Stash ratings update mode** to Straight-line or Percentile, either in the setup screen or later in Settings. **Straight-line with "Use my ratings" is closest to how 2.x worked.**
+- **Take a Stash backup first** (Settings → Tasks → Backup), especially if you turn on a Stash ratings update mode, which rewrites ratings.
+
+### New
+
+- **True ELO** 📈: every scene gets an uncapped ELO score (the same idea chess uses), saved in its custom fields (`stash_battle_elo`, `stash_battle_battles`, `stash_battle_seeded`). Scenes are no longer squeezed into 1-100, so your favourites can keep pulling ahead instead of piling up at 100.
+- **One-time ELO setup**: the first time you open Stash Battle, choose how ELO starts:
+  - **Use my ratings**: every rated scene starts from its star rating, so your existing order carries over (50 stars = 1500 ELO, 10 ELO per rating point).
+  - **Start everyone at 1500**: every scene starts equal.
+  
+  A live 10-scene preview shows what each choice does, and how many of your ratings would change, before anything is written.
+- **Stash ratings update mode** (Settings): Don't update (the default), **Straight-line** (rating = ELO converted back, 1500 = 50), or **Percentile** (rating = percentile in your library: the top scene is 100, the bottom 1). Switching tells you exactly how many ratings will change. While it's on, each battle writes only the ratings that changed, in one go, and Stash's own pages show the new ratings without a refresh.
+- The **Placement and Champion end screens** show where the scene's Stash rating ended up, while a Stash ratings update mode is on.
+- **Reset ELO** (Settings): start every scene's ELO over, with the same choices as the setup. Cancel any time before pressing Start.
+- **Placement → Start from the bottom** (a setting): a scene ignores its current ELO and climbs from your lowest scene, jumping further with each win, with a win streak badge and a Champion screen if it never loses. **This replaces Gauntlet**, with much shorter runs (about 8-21 battles in a 600-scene library).
+- **Cards** show each scene's ELO and rank (`ELO 1740 · #50`), how many battles it has had, and its Stash rating.
+- **Scene pages** show the scene's ELO and rank too, next to the play count and O count. Click it to battle that scene. Stash's Custom Fields list is widened so Stash Battle's field names aren't cut off.
+
+### Changed
+
+- **Gauntlet mode is removed**; use Placement with "Start from the bottom". A saved Gauntlet session opens in Placement.
+- **Fun mode is removed.** With ELO kept separately, "Don't update" now does what fun mode was for: battle without touching your star ratings, except that your rankings are saved.
+- **Champion** is plain winner-stays-on ELO: both scenes' ELO changes every pick, including the defender's. The old special rules (the climber keeping its rating when it loses, 100 dropping to 99) are gone.
+- **Placement** caps its jumps at a tenth of your library, so a winning streak climbs steadily instead of leaping to #1, and lands a scene halfway between its neighbours' ELO.
+- **"Unrated scene rating" setting removed**: unrated scenes count as 1500 in Swiss, the standard ELO start, and start at the bottom in Champion. Placement is the best way to slot a new scene in.
+- How far a scene's ELO moves per battle now depends on how many battles it has had (40, then 24 after 10 battles, then 16 after 30), not on its play count. Scenes set up from your star ratings get a 10-battle head start.
+- The navbar button is added through Stash's plugin API, so it plays nicely with other plugins that add navbar items.
+- Cleaner look: no glow effects, and the mode icons show on phones again.
+
+### Fixed
+
+- The Champion and Placement end screens no longer flash a scrollbar for half a second.
+- Reopening Stash Battle after a finished Placement run (after a page refresh) no longer shows a pair you can't pick from.
+- Ranks no longer lag behind after refreshing the page soon after battling, or after battling in another tab: a restored pair, and a scene opened from its page, show their current ELO and rank.
+- No more dark sliver at the rounded corners of a card, including while its preview plays or the green/red result shows.
+
 ## v2.7.0
 
 A big refresh based on community feedback. Thanks to everyone who sent requests and bug reports!

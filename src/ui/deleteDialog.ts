@@ -7,27 +7,8 @@
 // <body>; CSS lifts it above the battle modal while Battle is open.
 
 import { graphqlQuery } from "../graphql";
+import type { ReactNode } from "../pluginApi";
 import type { Scene } from "../types";
-
-/* Minimal typing for the parts of window.PluginApi used here. */
-type ReactNode = unknown;
-interface ReactLike {
-  createElement(type: unknown, props?: Record<string, unknown> | null, ...children: ReactNode[]): ReactNode;
-  Fragment: unknown;
-  useState<T>(initial: T): [T, (value: T) => void];
-  useEffect(effect: () => void | (() => void), deps?: unknown[]): void;
-}
-interface PluginApiLike {
-  React: ReactLike;
-  /** Loaders resolving to the component's module (they don't add it to `components`). */
-  loadableComponents?: Record<string, () => Promise<Record<string, unknown>>>;
-  patch: { after(component: string, fn: (props: unknown, ctx: unknown, result: ReactNode) => ReactNode): void };
-}
-declare global {
-  interface Window {
-    PluginApi?: PluginApiLike;
-  }
-}
 
 /** Scene fields DeleteScenesDialog reads (file list, funscript, mutation ids). */
 interface DeletableScene {
