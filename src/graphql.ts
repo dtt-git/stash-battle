@@ -27,6 +27,7 @@ export const SCENE_FRAGMENT = `
     date
     rating100
     play_count
+    custom_fields
     paths {
       screenshot
       preview
@@ -56,6 +57,24 @@ export const FIND_SCENES_QUERY = `
         }
       }
     `;
+
+let customFieldsSupport: Promise<boolean> | null = null;
+
+/**
+ * Whether this Stash has scene custom fields (needed for ELO storage). Checked once per page
+ * load via introspection; if introspection itself fails, assume yes and let real queries report.
+ */
+export function sceneCustomFieldsSupported(): Promise<boolean> {
+  customFieldsSupport ??= graphqlQuery<{ __type: { fields: { name: string }[] } | null }>(
+    `query { __type(name: "Scene") { fields { name } } }`,
+  )
+    .then((data) => data.__type?.fields.some((f) => f.name === "custom_fields") ?? true)
+    .catch((e) => {
+      console.warn("[Stash Battle] Could not check for scene custom fields:", e);
+      return true;
+    });
+  return customFieldsSupport;
+}
 
 // Extract scene ID from individual scene pages like /scenes/123
 export function getSceneIdFromUrl(): string | null {

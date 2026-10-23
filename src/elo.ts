@@ -1,6 +1,43 @@
 // ELO rating logic (pure calculations — callers apply results and persist).
 
+import { ELO_DIVISOR, ELO_K_TIERS } from "./constants";
 import type { ComparisonDeltas, ComparisonInput } from "./types";
+
+// --- Standard ELO (3.0: uncapped, stored in custom fields) ---
+
+/** K for a scene with this many rated games: new scenes move a lot, established ones little. */
+export function eloKFactor(games: number): number {
+  for (const [below, k] of ELO_K_TIERS) {
+    if (games < below) return k;
+  }
+  return ELO_K_TIERS[ELO_K_TIERS.length - 1][1];
+}
+
+/** Probability that a scene rated `elo` beats one rated `opponentElo`. */
+export function eloExpected(elo: number, opponentElo: number): number {
+  return 1 / (1 + Math.pow(10, (opponentElo - elo) / ELO_DIVISOR));
+}
+
+export interface EloSide {
+  elo: number;
+  games: number;
+}
+
+/** Stored ELO precision (one decimal), so small late-career changes aren't rounded away. */
+function roundElo(elo: number): number {
+  return Math.round(elo * 10) / 10;
+}
+
+/** Two-sided ELO for a head-to-head win; each side uses its own K. Returns the new ELOs. */
+export function eloResult(winner: EloSide, loser: EloSide): { winner: number; loser: number } {
+  const expected = eloExpected(winner.elo, loser.elo);
+  return {
+    winner: roundElo(winner.elo + eloKFactor(winner.games) * (1 - expected)),
+    loser: roundElo(loser.elo - eloKFactor(loser.games) * expected),
+  };
+}
+
+// --- Pre-3.0 rating100 ELO ---
 
 const MIN_RATING = 1;
 const MAX_RATING = 100;

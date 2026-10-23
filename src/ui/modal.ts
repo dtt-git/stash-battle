@@ -1,7 +1,7 @@
 // The battle modal: opens/closes, wires controls and keyboard shortcuts.
 
 import { clearSceneCache, resetSandbox } from "../cache";
-import { getSceneIdFromUrl } from "../graphql";
+import { getSceneIdFromUrl, sceneCustomFieldsSupported } from "../graphql";
 import { SCENE_MISSING_EVENT } from "../rating";
 import { loadSettings } from "../settings";
 import { resetRunState, resetShuffle, state } from "../state";
@@ -72,7 +72,11 @@ function onSettingChanged(key: keyof Settings): void {
 export async function openModal(): Promise<void> {
   console.log("[Stash Battle] 🎯 Opening modal...");
 
-  await loadSettings();
+  const [, customFieldsOk] = await Promise.all([loadSettings(), sceneCustomFieldsSupported()]);
+  if (!customFieldsOk) {
+    showUnsupportedStash();
+    return;
+  }
   addKeySwallowers();
 
   // Optionally pause whatever Stash is playing so it doesn't overlap the battle previews
@@ -344,6 +348,30 @@ export async function openModal(): Promise<void> {
   };
 
   document.addEventListener("keydown", modalKeyHandler, true);
+}
+
+/** Battle stores ELO in scene custom fields: on a Stash without them, explain instead of loading. */
+function showUnsupportedStash(): void {
+  document.getElementById("sb-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "sb-modal";
+  modal.innerHTML = `
+      <div class="sb-modal-backdrop"></div>
+      <div class="sb-modal-content">
+        <button class="sb-modal-close" aria-label="Close">✕</button>
+        <div class="sb-error-screen">
+          <div class="sb-error-icon">⚠️</div>
+          <p class="sb-error-message">
+            Stash Battle needs a newer version of Stash: it stores each scene's ELO in scene custom
+            fields, which this Stash doesn't have. Update Stash to use Battle.
+          </p>
+        </div>
+      </div>
+    `;
+  document.body.appendChild(modal);
+  document.body.classList.add(BATTLE_OPEN_CLASS);
+  modal.querySelector(".sb-modal-backdrop")?.addEventListener("click", closeModal);
+  modal.querySelector(".sb-modal-close")?.addEventListener("click", closeModal);
 }
 
 /** True while the battle modal is on screen (it stays in the DOM, hidden, after closing). */

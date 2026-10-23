@@ -36,6 +36,8 @@ export interface Scene {
   date?: string | null;
   rating100?: number | null;
   play_count?: number | null;
+  /** Stash's scene custom fields map (ours: stash_battle_elo / stash_battle_games). */
+  custom_fields?: Record<string, unknown> | null;
   paths?: ScenePaths | null;
   files?: SceneFile[] | null;
   studio?: NamedRef | null;
