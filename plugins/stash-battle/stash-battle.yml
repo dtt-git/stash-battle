@@ -8,6 +8,10 @@ ui:
   css:
     - stash-battle.css
 settings:
+  showTiers:
+    displayName: Show tiers on cards
+    description: A tier next to each scene's ELO, from Legendary (top 1%) down to Bronze, by its rank among your scenes with a settled ELO. Off by default.
+    type: BOOLEAN
   openInNewTab:
     displayName: Open scenes in a new tab
     description: Clicking a battle thumbnail opens the scene in a new browser tab.

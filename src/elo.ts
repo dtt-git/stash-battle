@@ -15,6 +15,15 @@ export function eloExpected(elo: number, opponentElo: number): number {
   return 1 / (1 + Math.pow(10, (opponentElo - elo) / ELO_DIVISOR));
 }
 
+/**
+ * Both sides' win chances as whole percentages that always add up to 100, kept within 1-99 (a
+ * "100%" would read as a sure thing, and ELO never is).
+ */
+export function winChances(elo: number, opponentElo: number): [number, number] {
+  const first = Math.min(99, Math.max(1, Math.round(eloExpected(elo, opponentElo) * 100)));
+  return [first, 100 - first];
+}
+
 export interface EloSide {
   elo: number;
   /** Battles plus any seeded head start (score.ts kGames): sets this side's K. */

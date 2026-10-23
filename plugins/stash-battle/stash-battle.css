@@ -422,6 +422,58 @@
   color: #dc3545;
 }
 
+/* Win chances under the VS: left %, right %, then a thin bar filled to the left side's share */
+.sb-vs-stack {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-areas:
+    "vs vs"
+    "left right"
+    "bar bar";
+  justify-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+  cursor: default;
+}
+
+.sb-vs-stack .sb-vs-text {
+  grid-area: vs;
+}
+
+.sb-win-chance {
+  font-size: 0.85rem;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-win-chance-left {
+  grid-area: left;
+}
+
+.sb-win-chance-right {
+  grid-area: right;
+}
+
+.sb-win-chance.sb-favoured {
+  color: #fff;
+  font-weight: bold;
+}
+
+.sb-win-bar {
+  grid-area: bar;
+  justify-self: stretch;
+  display: flex;
+  height: 4px;
+  min-width: 64px;
+  border-radius: 2px;
+  background: #444;
+  overflow: hidden;
+}
+
+.sb-win-bar > span {
+  background: #ccc;
+}
+
 /* Scene Card */
 .sb-scene-card {
   --sb-card-border: #333;
@@ -505,6 +557,15 @@
   font-weight: bold;
   margin-top: 8px;
   animation: bounceIn 0.4s ease-out 0.2s both;
+}
+
+.sb-rating-upset {
+  margin-top: 6px;
+  font-size: 1.35rem;
+  font-weight: bold;
+  color: #fff;
+  opacity: 0.9;
+  animation: bounceIn 0.4s ease-out 0.35s both;
 }
 
 .sb-rating-winner .sb-rating-change {
@@ -737,6 +798,33 @@
   color: #ffc107;
   white-space: nowrap;
 }
+
+.sb-scene-rank[title] {
+  cursor: help;
+}
+
+/* Tier pill ("Show tiers on cards"), just before the ELO badge */
+.sb-tier {
+  --sb-tier-color: #555;
+  margin-top: 2px;
+  margin-right: -4px;
+  padding: 0 8px;
+  border: 1px solid var(--sb-tier-color);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.6;
+  color: #ddd;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.sb-tier-legendary { --sb-tier-color: #e0b100; }
+.sb-tier-diamond { --sb-tier-color: #5bc0de; }
+.sb-tier-platinum { --sb-tier-color: #8fa9c9; }
+.sb-tier-gold { --sb-tier-color: #c9a227; }
+.sb-tier-silver { --sb-tier-color: #9a9a9a; }
+.sb-tier-bronze { --sb-tier-color: #a8714a; }
 
 .sb-scene-meta {
   display: flex;
@@ -1190,6 +1278,18 @@ body.sb-battle-open > .modal {
     font-size: 1.6rem;
   }
 
+  .sb-vs-stack {
+    column-gap: 8px;
+  }
+
+  .sb-win-chance {
+    font-size: 0.75rem;
+  }
+
+  .sb-win-bar {
+    min-width: 48px;
+  }
+
   .sb-meta-plays,
   .sb-meta-battles,
   .sb-tags-row {
@@ -1316,7 +1416,8 @@ body.sb-battle-open > .modal {
     z-index: 8;
   }
 
-  .sb-vs-text {
+  .sb-vs-text,
+  .sb-vs-stack {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
@@ -1324,6 +1425,35 @@ body.sb-battle-open > .modal {
     border-radius: 999px;
     background: #121212;
     font-size: 1rem;
+  }
+
+  /* Win chances join the VS pill on one line: "68% VS 32%" */
+  .sb-vs-stack {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .sb-vs-stack .sb-vs-text {
+    position: static;
+    transform: none;
+    padding: 0;
+    background: none;
+  }
+
+  .sb-win-bar {
+    display: none;
+  }
+
+  .sb-tier {
+    margin-top: 0;
+    padding: 0 5px;
+    font-size: 0.75rem;
+  }
+
+  .sb-tier-name {
+    display: none;
   }
 
   .sb-scene-image-container {

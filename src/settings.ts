@@ -53,6 +53,7 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
     cleanMode: bool("cleanMode"),
     pauseMediaOnOpen: bool("pauseMediaOnOpen"),
     placementFromBottom: bool("placementFromBottom"),
+    showTiers: bool("showTiers"),
     previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
   };
 }

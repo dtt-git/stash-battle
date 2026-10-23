@@ -154,6 +154,7 @@ function onSettingChanged(key: keyof Settings): void {
       break;
     case "openInNewTab":
     case "cleanMode":
+    case "showTiers":
       rerenderCurrentPair();
       break;
   }

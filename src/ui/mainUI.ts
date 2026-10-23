@@ -1,8 +1,8 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
 import { clearFilteredCache, latestScene, refreshSceneInCache, removeSceneEverywhere } from "../cache";
-import { CHAMPION_UNRATED_ELO, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
-import { eloResult } from "../elo";
+import { CHAMPION_UNRATED_ELO, CLIMB_SMALL_POOL_WARN_AT, UPSET_MAX_CHANCE } from "../constants";
+import { eloResult, winChances } from "../elo";
 import { readFilters } from "../filters";
 import { fetchSceneById } from "../graphql";
 import { navigateToUrl } from "../navigation";
@@ -17,8 +17,9 @@ import { writeElo } from "../rating";
 import { fetchSceneFields } from "../sceneActions";
 import { battles, effectiveElo, kGames } from "../score";
 import { isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
+import { tierMap } from "../stats";
 import { saveState } from "../storage";
-import type { Mode, Rank, Scene } from "../types";
+import type { Mode, Rank, Scene, Tier } from "../types";
 import { confirmDeleteScene } from "./deleteDialog";
 import { createSceneCard } from "./sceneCard";
 import { showPlacementScreen, showVictoryScreen } from "./screens";
@@ -249,20 +250,49 @@ function togglePreview(card: HTMLElement): void {
   applyPreviewSettings();
 }
 
+/**
+ * The VS between the cards, with each side's win chance under it (a "who's favoured" bar).
+ * Placement has none: its scene's ELO doesn't change per pick, and an unrated one has no ELO.
+ */
+function vsDivider(left: Scene, right: Scene): string {
+  if (state.currentMode === "placement") {
+    return `<div class="sb-vs-divider"><span class="sb-vs-text">VS</span></div>`;
+  }
+  const [leftChance, rightChance] = winChances(battleElo(latestScene(left)), battleElo(latestScene(right)));
+  const favoured = (chance: number): string => (chance > 50 ? " sb-favoured" : "");
+  const tip = `Chance each scene wins, from their ELO: left ${leftChance}%, right ${rightChance}%`;
+  return `
+        <div class="sb-vs-divider">
+          <div class="sb-vs-stack" title="${tip}">
+            <span class="sb-win-chance sb-win-chance-left${favoured(leftChance)}">${leftChance}%</span>
+            <span class="sb-vs-text">VS</span>
+            <span class="sb-win-chance sb-win-chance-right${favoured(rightChance)}">${rightChance}%</span>
+            <span class="sb-win-bar" aria-hidden="true"><span style="width: ${leftChance}%"></span></span>
+          </div>
+        </div>`;
+}
+
+/** Each scene's tier when "Show tiers on cards" is on (from the whole library's ELO order). */
+function pairTiers(scenes: Scene[]): (Tier | null)[] {
+  const library = state.memoryCache.allScenes;
+  if (!state.settings.showTiers || !library) return scenes.map(() => null);
+  const tiers = tierMap(library);
+  return scenes.map((scene) => tiers.get(scene.id) ?? null);
+}
+
 // Shared rendering logic for displaying a pair of scenes
 export function renderPair(scenes: Scene[], ranks: Rank[]): void {
   const comparisonArea = document.getElementById("sb-comparison-area");
   if (!comparisonArea) return;
 
   const statusBadges = scenes.map(climbStatusBadge);
+  const tiers = pairTiers(scenes);
 
   comparisonArea.innerHTML = `
       <div class="sb-vs-container">
-        ${createSceneCard(scenes[0], "left", ranks[0], statusBadges[0])}
-        <div class="sb-vs-divider">
-          <span class="sb-vs-text">VS</span>
-        </div>
-        ${createSceneCard(scenes[1], "right", ranks[1], statusBadges[1])}
+        ${createSceneCard(scenes[0], "left", ranks[0], statusBadges[0], tiers[0])}
+        ${vsDivider(scenes[0], scenes[1])}
+        ${createSceneCard(scenes[1], "right", ranks[1], statusBadges[1], tiers[1])}
       </div>
     `;
 
@@ -582,8 +612,11 @@ interface EloChange {
   to: number;
 }
 
-/** Two-sided ELO for a pick (Swiss and Champion): both scenes' ELO and battles change and are saved. */
-function resolveComparison(winner: Scene, loser: Scene): { winner: EloChange; loser: EloChange } {
+/**
+ * Two-sided ELO for a pick (Swiss and Champion): both scenes' ELO and battles change and are
+ * saved. `upset` is true when the winner was a real underdog (see UPSET_MAX_CHANCE).
+ */
+function resolveComparison(winner: Scene, loser: Scene): { winner: EloChange; loser: EloChange; upset: boolean } {
   // The math reads the cached copies: the pair's own objects may predate a background refresh
   const latestWinner = latestScene(winner);
   const latestLoser = latestScene(loser);
@@ -597,6 +630,7 @@ function resolveComparison(winner: Scene, loser: Scene): { winner: EloChange; lo
   return {
     winner: { from: winnerSide.elo, to: result.winner },
     loser: { from: loserSide.elo, to: result.loser },
+    upset: winChances(winnerSide.elo, loserSide.elo)[0] <= UPSET_MAX_CHANCE,
   };
 }
 
@@ -653,9 +687,18 @@ function handleChampionChoice(choice: SceneChoice): void {
 
   saveState();
 
+  showPickResult(winnerCard, loserCard, change);
+}
+
+/** Winner/loser card styles and both ELO animations, then the next pair. */
+function showPickResult(
+  winnerCard: HTMLElement,
+  loserCard: HTMLElement,
+  change: { winner: EloChange; loser: EloChange; upset: boolean },
+): void {
   winnerCard.classList.add("sb-winner");
   loserCard.classList.add("sb-loser");
-  showRatingAnimation(winnerCard, change.winner.from, change.winner.to, true);
+  showRatingAnimation(winnerCard, change.winner.from, change.winner.to, true, change.upset);
   showRatingAnimation(loserCard, change.loser.from, change.loser.to, false);
   scheduleNextPairAfterAnimations();
 }
@@ -681,11 +724,7 @@ function handleSceneChoice(choice: SceneChoice): void {
 
   saveState();
 
-  winnerCard.classList.add("sb-winner");
-  loserCard.classList.add("sb-loser");
-  showRatingAnimation(winnerCard, change.winner.from, change.winner.to, true);
-  showRatingAnimation(loserCard, change.loser.from, change.loser.to, false);
-  scheduleNextPairAfterAnimations();
+  showPickResult(winnerCard, loserCard, change);
 }
 
 const RATING_ANIM_MAX_TOTAL_MS = 1400;
@@ -698,12 +737,16 @@ function scheduleNextPairAfterAnimations(): void {
   setTimeout(() => loadNewPair(), 1500);
 }
 
-/** ELO count-up/down overlay (whole numbers); large jumps speed up so the count fits within 1400ms. */
+/**
+ * ELO count-up/down overlay (whole numbers); large jumps speed up so the count fits within 1400ms.
+ * `upset` adds a small "Upset!" under the change.
+ */
 function showRatingAnimation(
   card: HTMLElement,
   oldElo: number,
   newElo: number,
   isWinner: boolean,
+  upset = false,
 ): void {
   const oldRating = Math.round(oldElo);
   const newRating = Math.round(newElo);
@@ -722,6 +765,12 @@ function showRatingAnimation(
 
   overlay.appendChild(ratingDisplay);
   overlay.appendChild(changeDisplay);
+  if (upset) {
+    const upsetDisplay = document.createElement("div");
+    upsetDisplay.className = "sb-rating-upset";
+    upsetDisplay.textContent = "Upset!";
+    overlay.appendChild(upsetDisplay);
+  }
   card.appendChild(overlay);
 
   const totalSteps = Math.abs(change);

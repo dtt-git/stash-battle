@@ -4,13 +4,13 @@ import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached, latest
 import {
   CHAMPION_UNRATED_ELO,
   CLIMB_OPPONENT_PICK_WINDOW,
-  SWISS_OPPONENT_REACH_INITIAL,
-  SWISS_OPPONENT_REACH_MULTIPLIER,
+  SWISS_OPPONENT_ELO_WINDOW,
+  SWISS_OPPONENT_MIN_CANDIDATES,
 } from "./constants";
 import { readFilters, type ListFilters } from "./filters";
 import { landingElo, newPlacementRun, placementStep } from "./placement";
 import { writeElo } from "./rating";
-import { battles, effectiveElo, elo, eloInsertionIndex, isRated } from "./score";
+import { battles, effectiveElo, elo, isRated, swissOpponentIndexes } from "./score";
 import { state } from "./state";
 import type { ChampionPairResult, PlacementPairResult, Rank, Scene, SwissPairResult } from "./types";
 
@@ -185,43 +185,32 @@ export async function fetchSwissPair(forcedLeftScene: Scene | null = null): Prom
   return { scenes: [scene1, scene2], ranks };
 }
 
-/** Pick a random opponent near scene1's rank in the ELO-sorted right pool (expanding band if needed). */
+/**
+ * Pick a random opponent within ±SWISS_OPPONENT_ELO_WINDOW of scene1's ELO in the ELO-sorted right
+ * pool (unrated scenes count as 1500), or among the nearest few when the window has too few.
+ */
 function pickSwissOpponent(
   scene1: Scene,
   rightPool: Scene[],
 ): { scene2: Scene; ranks: [Rank, Rank] } {
   const scene1IdxInPool = rightPool.findIndex((s) => s.id === scene1.id);
-  // Rated scenes match around their own rank; unrated ones around where 1500 would sit
-  const effectiveScene1Idx =
-    isRated(scene1) && scene1IdxInPool >= 0
-      ? scene1IdxInPool
-      : eloInsertionIndex(rightPool, effectiveElo(scene1));
   const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
 
-  const candidates: { scene: Scene; idx: number }[] = [];
-  // Prefer similar-strength matchups (±reach ranks). If the band is empty (edges, unrated left
-  // scene, tiny pool), double reach until we find candidates or cover the whole pool.
-  for (
-    let reach = Math.min(SWISS_OPPONENT_REACH_INITIAL, rightPool.length);
-    candidates.length === 0 && reach <= rightPool.length;
-    reach = Math.min(reach * SWISS_OPPONENT_REACH_MULTIPLIER, rightPool.length)
-  ) {
-    for (let i = effectiveScene1Idx - reach; i <= effectiveScene1Idx + reach; i++) {
-      if (i >= 0 && i < rightPool.length && i !== scene1IdxInPool) {
-        candidates.push({ scene: rightPool[i], idx: i });
-      }
-    }
-    if (reach === rightPool.length) break;
-  }
-
+  const candidates = swissOpponentIndexes(
+    rightPool,
+    effectiveElo(latestScene(scene1)),
+    scene1.id,
+    SWISS_OPPONENT_ELO_WINDOW,
+    SWISS_OPPONENT_MIN_CANDIDATES,
+  );
   if (candidates.length === 0) {
     throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
   }
 
-  const pick = candidates[Math.floor(Math.random() * candidates.length)];
+  const idx = candidates[Math.floor(Math.random() * candidates.length)];
   return {
-    scene2: pick.scene,
-    ranks: [scene1RankInPool, pick.idx + 1],
+    scene2: rightPool[idx],
+    ranks: [scene1RankInPool, idx + 1],
   };
 }
 

@@ -5,6 +5,7 @@ import {
   BATTLES_FIELD,
   ELO_FIELD,
   ELO_FIELD_KEYS,
+  ELO_K_TIERS,
   ELO_PER_RATING_POINT,
   ELO_START,
   PLACEMENT_EDGE_GAP,
@@ -48,6 +49,14 @@ export function isSeeded(scene: Scene): boolean {
 /** The count K is based on: real battles, plus the head start for seeded scenes. */
 export function kGames(scene: Scene): number {
   return battles(scene) + (isSeeded(scene) ? SEEDED_HEAD_START : 0);
+}
+
+/**
+ * The scene's ELO is still settling: it has fewer K-games than the first K tier's limit (10), the
+ * stage where each battle moves it the most. Seeded scenes start past it; unrated ones aren't.
+ */
+export function isProvisional(scene: Scene): boolean {
+  return isRated(scene) && kGames(scene) < ELO_K_TIERS[0][0];
 }
 
 /** EloFields as the custom fields map Stash stores. */
@@ -173,6 +182,29 @@ export function eloInsertionIndex(pool: Scene[], eloValue: number): number {
     return other === null || other < eloValue;
   });
   return idx === -1 ? pool.length : idx;
+}
+
+/**
+ * Indexes of the Swiss opponents for a scene at `eloValue`: every scene in the pool within
+ * ±`window` ELO (unrated ones count as ELO_START, as in Swiss battles), or, when that's fewer than
+ * `minCount`, the `minCount` nearest by ELO (plus any tied with the last of them). The scene
+ * itself (`excludeId`) is never one.
+ */
+export function swissOpponentIndexes(
+  pool: Scene[],
+  eloValue: number,
+  excludeId: string,
+  window: number,
+  minCount: number,
+): number[] {
+  const others = pool
+    .map((scene, idx) => ({ idx, gap: Math.abs(effectiveElo(scene) - eloValue), id: scene.id }))
+    .filter((s) => s.id !== excludeId);
+  const inWindow = others.filter((s) => s.gap <= window);
+  if (inWindow.length >= minCount || inWindow.length === others.length) return inWindow.map((s) => s.idx);
+  const byGap = [...others].sort((a, b) => a.gap - b.gap);
+  const cutoff = byGap[Math.min(minCount, byGap.length) - 1].gap;
+  return byGap.filter((s) => s.gap <= cutoff).map((s) => s.idx).sort((a, b) => a - b);
 }
 
 /**

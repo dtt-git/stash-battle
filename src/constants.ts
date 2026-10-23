@@ -7,7 +7,7 @@ export const CACHE_DB_VERSION = 2;
 export const CACHE_STORE_NAME = "scenes";
 export const CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes cache expiry
 
-import type { Settings } from "./types";
+import type { Settings, Tier } from "./types";
 
 /** Plugin id (folder name) — key for this plugin's settings in Stash's configuration. */
 export const PLUGIN_ID = "stash-battle";
@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   eloSetupMode: null,
   openInNewTab: false,
   placementFromBottom: false,
+  showTiers: false,
   previewVolume: 50,
   autoplayPreviews: true,
   filterOpponents: false,
@@ -29,9 +30,15 @@ export const DEFAULT_SETTINGS: Settings = {
 export const LEGACY_FILTER_OPPONENTS_KEY = "sb_filterOpponents";
 export const LEGACY_MUTE_PREVIEWS_KEY = "sb_mutePreviews";
 
-// Swiss mode: initial rank band (±N) when picking a similar-strength opponent; doubles until candidates exist.
-export const SWISS_OPPONENT_REACH_INITIAL = 10;
-export const SWISS_OPPONENT_REACH_MULTIPLIER = 2;
+/**
+ * Swiss: the opponent is picked at random from every scene within ±this ELO (win chances between
+ * 36% and 64%). A pick that close still tells over 90% of what a 50/50 one does, and a scene meets
+ * far more varied opponents than a window of nearby ranks, which on a seeded library is mostly
+ * ties.
+ */
+export const SWISS_OPPONENT_ELO_WINDOW = 100;
+/** Swiss: when fewer scenes than this are in the window (top, bottom, small pools), take this many nearest. */
+export const SWISS_OPPONENT_MIN_CANDIDATES = 10;
 
 // Champion: random pick among the N closest undefeated opponents above the champion.
 export const CLIMB_OPPONENT_PICK_WINDOW = 5;
@@ -41,6 +48,12 @@ export const CLIMB_OPPONENT_PICK_WINDOW = 5;
  * newcomer climbs from there as before. Swiss counts unrated scenes as ELO_START (1500).
  */
 export const CHAMPION_UNRATED_ELO = 1000;
+
+/**
+ * A pick is an "Upset!" when the winner's win chance (as shown, in %) was at most this: about 70
+ * ELO below its opponent. Swiss opponents are within ±100, so about 1 pick in 7 if ELO is right.
+ */
+export const UPSET_MAX_CHANCE = 40;
 
 /** Show a UI warning when Champion's opponent pool is smaller than this (filter opponents on). */
 export const CLIMB_SMALL_POOL_WARN_AT = 10;
@@ -64,6 +77,20 @@ export const ELO_K_TIERS: readonly (readonly [number, number])[] = [
   [10, 40],
   [30, 24],
   [Infinity, 16],
+];
+
+/**
+ * Tiers ("Show tiers on cards"), best first, by rank among the library's settled scenes: a scene
+ * whose rank is within the top `top` share gets the first tier that fits. Every tier always has
+ * scenes in it, whatever the library's ELO spread. The last tier takes everyone else.
+ */
+export const TIERS: readonly Tier[] = [
+  { id: "legendary", name: "Legendary", emoji: "👑", top: 0.01 },
+  { id: "diamond", name: "Diamond", emoji: "💎", top: 0.05 },
+  { id: "platinum", name: "Platinum", emoji: "🔷", top: 0.15 },
+  { id: "gold", name: "Gold", emoji: "🥇", top: 0.35 },
+  { id: "silver", name: "Silver", emoji: "🥈", top: 0.65 },
+  { id: "bronze", name: "Bronze", emoji: "🥉", top: 1 },
 ];
 
 /**

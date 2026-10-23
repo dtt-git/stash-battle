@@ -16,6 +16,7 @@ export interface Settings {
   eloSetupMode: EloStart | null; // How that setup started ELO
   openInNewTab: boolean; // Thumbnail click opens the scene in a new tab
   placementFromBottom: boolean; // Placement runs start at the bottom scene and climb (replaces Gauntlet)
+  showTiers: boolean; // Tier pill (Legendary ... Bronze) on the battle cards
   previewVolume: number; // 0-100, 0 = muted
   autoplayPreviews: boolean; // Loop both previews (muted) without hovering
   filterOpponents: boolean; // Right side obeys the list filter too
@@ -58,6 +59,15 @@ export interface EloFields {
   elo: number;
   battles: number;
   seeded: boolean;
+}
+
+/** A tier on the ladder (see TIERS in constants.ts). */
+export interface Tier {
+  id: string;
+  name: string;
+  emoji: string;
+  /** Share of settled scenes from the top that this tier reaches down to (0.05 = top 5%). */
+  top: number;
 }
 
 /** Rank position in the opponent pool (1 = top), or null when unknown. */

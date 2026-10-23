@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { eloExpected, eloKFactor, eloResult } from "../src/elo";
+import { eloExpected, eloKFactor, eloResult, winChances } from "../src/elo";
 
 test("K drops from 40 to 24 to 16 as games build up", () => {
   assert.equal(eloKFactor(0), 40);
@@ -49,4 +49,20 @@ test("an upset moves more than an expected win, and nothing is clamped", () => {
   assert.equal(upset.loser, 1885.5, "a favourite that loses an upset drops as much as the winner gains");
   assert.ok(eloResult({ elo: 2600, kGames: 50 }, { elo: 2600, kGames: 50 }).winner > 2600);
   assert.ok(eloResult({ elo: 300, kGames: 50 }, { elo: 300, kGames: 50 }).loser < 300);
+});
+
+test("winChances add up to 100 and match eloExpected", () => {
+  for (const [a, b] of [[1500, 1500], [1700, 1500], [1500, 1740], [1612.5, 1499.9], [2000, 1010]]) {
+    const [first, second] = winChances(a, b);
+    assert.equal(first + second, 100);
+    assert.ok(Math.abs(first - eloExpected(a, b) * 100) <= 1, `${a} vs ${b}: ${first}`);
+  }
+  assert.deepEqual(winChances(1500, 1500), [50, 50]);
+  assert.deepEqual(winChances(1600, 1500), [64, 36]);
+  assert.deepEqual(winChances(1500, 1600), [36, 64]);
+});
+
+test("winChances never show 0% or 100%", () => {
+  assert.deepEqual(winChances(2400, 1000), [99, 1]);
+  assert.deepEqual(winChances(1000, 2400), [1, 99]);
 });

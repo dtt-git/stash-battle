@@ -7,14 +7,17 @@ import {
   compareByElo,
   elo,
   eloInsertionIndex,
+  isProvisional,
   isSeeded,
   kGames,
   linearRating,
   percentileRatings,
   seed,
   stashRatingChanges,
+  swissOpponentIndexes,
   startingElo,
 } from "../src/score";
+import { ELO_K_TIERS } from "../src/constants";
 import type { Scene } from "../src/types";
 
 function scene(id: string, eloValue?: unknown, battlesValue?: unknown, seededValue?: unknown): Scene {
@@ -170,4 +173,40 @@ test("stashRatingChanges matches the setup preview's counts", () => {
   assert.equal(stashRatingChanges(ratings, "off").size, 0);
   // A scene already at its target isn't written
   assert.equal(stashRatingChanges([{ id: "a", rating100: 50, custom_fields: { stash_battle_elo: 1500 } }], "linear").size, 0);
+});
+
+test("isProvisional: rated with fewer than the first K tier's limit of K-games", () => {
+  const limit = ELO_K_TIERS[0][0];
+  assert.equal(isProvisional(scene("a", 1540, 0)), true);
+  assert.equal(isProvisional(scene("a", 1540, limit - 1)), true);
+  assert.equal(isProvisional(scene("a", 1540, limit)), false);
+  // Seeded scenes start with the head start, so they're never provisional
+  assert.equal(isProvisional(scene("a", 1540, 0, 1)), false);
+  assert.equal(isProvisional(scene("a", 1540, 0, true)), false);
+  // Unrated scenes aren't provisional (they show "Unrated")
+  assert.equal(isProvisional(scene("a")), false);
+});
+
+test("swissOpponentIndexes: everyone within the ELO window, never the scene itself", () => {
+  // ELO-sorted pool: 1800, 1700, 1650, 1600 (the scene), 1550, 1500, 1400
+  const pool = [1800, 1700, 1650, 1600, 1550, 1500, 1400].map((e, i) => scene(String(i), e));
+  assert.deepEqual(swissOpponentIndexes(pool, 1600, "3", 100, 1), [1, 2, 4, 5]);
+  assert.deepEqual(swissOpponentIndexes(pool, 1600, "3", 50, 1), [2, 4]);
+});
+
+test("swissOpponentIndexes: too few in the window takes the nearest few, ties included", () => {
+  const pool = [2000, 1700, 1600, 1500, 1400, 1300].map((e, i) => scene(String(i), e));
+  // Top scene: nobody within 100, so the 3 nearest
+  assert.deepEqual(swissOpponentIndexes(pool, 2000, "0", 100, 3), [1, 2, 3]);
+  // 1500 and 1300 tie as the 2nd nearest to 1400, so both come in
+  assert.deepEqual(swissOpponentIndexes(pool, 1400, "4", 0, 2), [3, 5]);
+  // A pool smaller than minCount gives everyone else
+  assert.deepEqual(swissOpponentIndexes(pool.slice(0, 2), 2000, "0", 100, 10), [1]);
+  assert.deepEqual(swissOpponentIndexes([scene("a", 1500)], 1500, "a", 100, 10), []);
+});
+
+test("swissOpponentIndexes: unrated scenes count as 1500", () => {
+  const pool = [scene("a", 1700), scene("b", 1520), scene("u"), scene("c", 1300)];
+  // An unrated scene (not in the pool) matches around 1500
+  assert.deepEqual(swissOpponentIndexes(pool, 1500, "x", 100, 1), [1, 2]);
 });

@@ -4,7 +4,7 @@ overview: Part of 3.0 (on elo-mode). Show win chances, a provisional "?" and opt
 todos:
   - id: stage1-cards
     content: "Stage 1: battle cards - win chances, provisional '?', tiers (opt-in setting, off by default). Pure functions + tests, no new data."
-    status: pending
+    status: completed
   - id: stage2-stats-tab
     content: "Stage 2: Stats tab from existing data - overview numbers, ELO distribution, hidden gems / overplayed, how settled + 'battle the least-tested'."
     status: pending
@@ -25,7 +25,9 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
 
 ## Status and where to start
 
-- **Nothing is built yet.** This plan was written on Oct 23, 2026, right after 3.0 was finished.
+- **Stage 1 is done, reviewed and committed** (Oct 23). Win chances (`winChances` in `elo.ts`), `isProvisional` (`score.ts`), `tierMap` / `tierDescription` (new `stats.ts`), the `showTiers` setting (Settings tab "Scenes" section and yml). 47 tests pass. "Upset!" shows when the winner's chance was **40% or less** (`UPSET_MAX_CHANCE`, Brian's choice: under 50% would flag about half of all Swiss picks, and 35% never fires with the ±100 Swiss window).
+- **Swiss window (Brian, Oct 23, outside this plan):** Swiss now picks a random opponent within **±100 ELO** (`SWISS_OPPONENT_ELO_WINDOW`, `swissOpponentIndexes` in `score.ts`), or the 10 nearest when fewer are in range. The old ±10 ranks meant a median farthest opponent of 20 ELO, about a third of them exact ties. Live: 25 skipped pairs had gaps up to 100, average 40. **Stage 3 note:** with ±100, the "biggest upsets" list would mostly hold 36-40% wins; revisit it then. Checked live: the VS block, "Upset!" on an 8% win, the "?" on the card and the scene page button (scenes 1443/1446 are provisional), the Gold and Diamond pills, and the phone layout (`58% VS 42%` in the pill, emoji-only tier). Both test-pick scenes and the config were restored exactly.
+- This plan was written on Oct 23, 2026, right after 3.0 was finished.
 - **3.0 state:** branch `elo-mode`, open as [PR #7](https://github.com/dtt-git/stash-battle/pull/7) into `main`. Latest commit `a4d6250`. Brian is using 3.0 himself before releasing it.
 - **Where it goes (Brian, Oct 23):** straight onto `elo-mode`, into PR #7 and **version 3.0.0**. No new branch and no 3.1 version bump.
 - **Read first:** [true-elo-handoff.md](true-elo-handoff.md) (how Brian works, environment, git rules) and [true-elo-mode.md](true-elo-mode.md) (how ELO works). Both are still accurate; the "Working notes" section below adds what changed since.

@@ -7,29 +7,50 @@
 
 import { getAllScenesCached } from "../cache";
 import { fetchSceneById, getSceneIdFromUrl, sceneCustomFieldsSupported } from "../graphql";
-import { elo, isRated } from "../score";
-import type { Scene } from "../types";
+import { elo, isProvisional, isRated } from "../score";
+import { loadSettings } from "../settings";
+import { state } from "../state";
+import { tierDescription, tierMap } from "../stats";
+import type { Scene, Tier } from "../types";
 import { SWORDS_PATHS } from "./icons";
+import { PROVISIONAL_TIP } from "./sceneCard";
 
 const ITEM_CLASS = "sb-scene-elo";
 const TITLE = "Stash Battle ELO, and rank in your library. Click to battle this scene.";
 
-/** "ELO 1740 · #50", or "ELO · Unrated" for a scene with no ELO yet. */
+/** "ELO 1740 · #50" (a "?" after a provisional ELO), or "ELO · Unrated" for a scene with no ELO yet. */
 function labelText(scene: Scene, rank: number | null): string {
   const value = elo(scene);
   if (value === null) return "ELO · Unrated";
-  return `ELO ${Math.round(value)}${rank !== null ? ` · #${rank}` : ""}`;
+  return `ELO ${Math.round(value)}${isProvisional(scene) ? "?" : ""}${rank !== null ? ` · #${rank}` : ""}`;
 }
 
-/** The scene (from the cache, or fetched if it's newer than the cache) and its rank among rated scenes. */
-async function sceneAndRank(sceneId: string): Promise<{ scene: Scene; rank: number | null } | null> {
+/** The button's tooltip, with the provisional note and the tier (when tiers are on) added. */
+function titleText(scene: Scene, tier: Tier | null): string {
+  const lines = [TITLE];
+  if (isProvisional(scene)) lines.push(PROVISIONAL_TIP);
+  if (tier && state.settings.showTiers) lines.push(`${tier.emoji} ${tierDescription(tier)}`);
+  return lines.join("\n");
+}
+
+/**
+ * The scene (from the cache, or fetched if it's newer than the cache), its rank among rated
+ * scenes and its tier.
+ */
+async function sceneAndRank(sceneId: string): Promise<{ scene: Scene; rank: number | null; tier: Tier | null } | null> {
   const { scenes } = await getAllScenesCached();
   // The cache is sorted by ELO with unrated scenes last, so a rated scene's index is its rank
   const index = scenes.findIndex((s) => s.id === sceneId);
-  if (index >= 0) return { scene: scenes[index], rank: isRated(scenes[index]) ? index + 1 : null };
+  if (index >= 0) {
+    const scene = scenes[index];
+    return { scene, rank: isRated(scene) ? index + 1 : null, tier: tierMap(scenes).get(sceneId) ?? null };
+  }
   const scene = await fetchSceneById(sceneId);
-  return scene ? { scene, rank: null } : null;
+  return scene ? { scene, rank: null, tier: null } : null;
 }
+
+/** Settings load with Stash Battle; on a scene page it may not have opened yet (once per page load). */
+let settingsLoad: Promise<boolean> | null = null;
 
 /** Opens Stash Battle (on a scene page, with this scene in the battle). Set by registerSceneElo. */
 let openBattle: () => void = () => {};
@@ -74,7 +95,8 @@ async function renderSceneElo(force = false): Promise<void> {
   rendering = sceneId;
   try {
     if (!(await sceneCustomFieldsSupported())) return;
-    const result = await sceneAndRank(sceneId);
+    settingsLoad ??= loadSettings();
+    const [result] = await Promise.all([sceneAndRank(sceneId), settingsLoad]);
     // The page may have moved on (another scene, or the toolbar re-rendered) while this loaded
     if (!result || getSceneIdFromUrl() !== sceneId) return;
     const target = document.querySelector(".scene-toolbar");
@@ -88,6 +110,7 @@ async function renderSceneElo(force = false): Promise<void> {
     item.dataset.sceneId = sceneId;
     const value = item.querySelector(".sb-scene-elo-value");
     if (value) value.textContent = labelText(result.scene, result.rank);
+    item.querySelector("button")?.setAttribute("title", titleText(result.scene, result.tier));
   } catch (e) {
     console.warn("[Stash Battle] Couldn't show the scene's ELO:", e);
   } finally {

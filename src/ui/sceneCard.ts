@@ -1,11 +1,20 @@
 // Renders an individual scene card (returns an HTML string).
 
-import { CHAMPION_UNRATED_ELO, ELO_START } from "../constants";
-import { battles, elo } from "../score";
+import { CHAMPION_UNRATED_ELO, ELO_K_TIERS, ELO_START } from "../constants";
+import { battles, elo, isProvisional } from "../score";
 import { state } from "../state";
+import { tierDescription } from "../stats";
 import { isStashDeleteDialogAvailable } from "./deleteDialog";
-import type { Rank, Scene } from "../types";
+import type { Rank, Scene, Tier } from "../types";
 import { resolveSceneTitle } from "./sceneTitle";
+
+/** Tooltip for a provisional ELO (the "?" after it). */
+export const PROVISIONAL_TIP = `Provisional: fewer than ${ELO_K_TIERS[0][0]} battles, so this ELO is still settling`;
+
+/** Small pill with the tier's emoji and name (the name hides on phones). */
+export function tierPill(tier: Tier): string {
+  return `<span class="sb-tier sb-tier-${tier.id}" title="${tierDescription(tier)}">${tier.emoji}<span class="sb-tier-name"> ${tier.name}</span></span>`;
+}
 
 export function formatDuration(seconds: number | null | undefined): string {
   if (!seconds) return "N/A";
@@ -23,6 +32,7 @@ export function createSceneCard(
   side: "left" | "right",
   rank: Rank = null,
   statusBadge: number | string | null = null,
+  tier: Tier | null = null,
 ): string {
   const file = scene.files && scene.files[0] ? scene.files[0] : {};
   const duration = file.duration;
@@ -40,18 +50,21 @@ export function createSceneCard(
   const { openInNewTab, cleanMode } = state.settings;
   const stashRating = scene.rating100 ? `${scene.rating100}/100` : "None";
 
-  // ELO badge: "ELO 1740 · #50" when rated (rank when known). Unrated scenes show the ELO they
-  // count as in this mode in the same order, "ELO 1500 · Unrated" (Placement has none: "Unrated").
+  // ELO badge: "ELO 1740 · #50" when rated (rank when known), with a "?" while it's provisional.
+  // Unrated scenes show the ELO they count as in this mode in the same order, "ELO 1500 ·
+  // Unrated" (Placement has none: "Unrated").
   const eloValue = elo(scene);
   const unratedAs =
     state.currentMode === "swiss" ? ELO_START : state.currentMode === "champion" ? CHAMPION_UNRATED_ELO : null;
+  const provisional = isProvisional(scene);
   let eloLabel: string;
   if (eloValue !== null) {
-    eloLabel = `ELO ${Math.round(eloValue)}${rank !== null && rank !== undefined ? ` · #${rank}` : ""}`;
+    eloLabel = `ELO ${Math.round(eloValue)}${provisional ? "?" : ""}${rank !== null && rank !== undefined ? ` · #${rank}` : ""}`;
   } else {
     eloLabel = unratedAs !== null ? `ELO ${unratedAs} · Unrated` : "Unrated";
   }
-  const rankDisplay = `<span class="sb-scene-rank">${eloLabel}</span>`;
+  const rankTitle = provisional ? ` title="${PROVISIONAL_TIP}"` : "";
+  const rankDisplay = `${tier ? tierPill(tier) : ""}<span class="sb-scene-rank"${rankTitle}>${eloLabel}</span>`;
 
   // Status badge: win-streak count (formatted) or custom label (e.g. falling mode)
   let statusBadgeHtml = "";
