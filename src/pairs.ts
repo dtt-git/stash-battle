@@ -131,9 +131,24 @@ async function loadScenePools(
   return { leftPool, allScenes };
 }
 
-/** Load the pools (served from cache when possible) just to record the left pool's size. */
-export async function loadPoolSize(): Promise<void> {
-  await loadScenePools(readFilters());
+/**
+ * Ranks for a restored pair from the current pools (also recording the left pool's size), the way
+ * the pair fetchers work them out: the place in the opponent pool, and in Placement, none for the
+ * scene being placed and the opponent's place in the pool without it.
+ */
+export async function pairRanks(left: Scene, right: Scene): Promise<[Rank, Rank]> {
+  const filters = readFilters();
+  const { leftPool, allScenes } = await loadScenePools(filters);
+  let pool = buildOpponentPool(allScenes, leftPool, filters);
+  const rank = (scene: Scene): Rank => {
+    const idx = pool.findIndex((s) => s.id === scene.id);
+    return idx >= 0 ? idx + 1 : null;
+  };
+  if (state.currentMode === "placement") {
+    pool = pool.filter((s) => s.id !== left.id);
+    return [null, rank(right)];
+  }
+  return [rank(left), rank(right)];
 }
 
 /** Load left (scene to rate) and right (opponent) pools for Swiss. */

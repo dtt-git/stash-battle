@@ -184,7 +184,8 @@ A JSON string of the current filter parameters. Stored alongside the filtered ca
 - **`setEloInCache(scene, fields | null)`** (called by `writeElo` / `clearElo` *before* the network write) sets the ELO fields on the scene object it's given and on its cached copies in **both** `allScenes` and `filteredScenes`, and moves the cached copies to their new place in the ELO order (`eloInsertionIndex`; unrated to the end). The scene object is passed (not just an id) because a scene restored from localStorage, like a saved champion, is a different object from the cached one. If the write fails, the old fields are put back (unless a later write has replaced them since).
 - **`latestScene(scene)`** returns the cached copy (all scenes, then filtered), or the scene itself. Objects held across battles (the Swiss shuffle, a saved pair, a Champion or Placement run) go stale once a background refresh swaps in new copies, so battle math (`resolveComparison`, Placement's landing) reads ELO and battles through it, and the Swiss left scene is taken from the current pool by id.
 - **`setRatingsInCache(map)`** sets `rating100` on cached scenes after Stash Battle wrote Stash ratings (order is ELO, so it doesn't move).
-- Neither updates the IndexedDB copy; it refreshes within 5 minutes.
+- Both write the in-memory lists back to IndexedDB (`persistCacheSoon`, debounced 1 s, keeping each entry's timestamp so the 5-minute expiry is unchanged). Without it, a reload within 5 minutes read the copy from before the battles: old ELO, old order, so ranks lagged until the Refresh button.
+- **`refreshSceneInCache(fresh)`** brings a scene's cached copies in line with values fetched on their own: the forced scene-page scene (`fetchSceneById` in `loadNewPair`), and a restored pair (`verifyCurrentPair` now fetches `rating100` and `custom_fields` with its existence check, updates the pair's objects, then calls this). They can be newer than the cache, e.g. after battles in another tab.
 
 ---
 
@@ -421,6 +422,7 @@ After each Swiss / Champion pick, an overlay counts the **ELO** change in whole 
 
 - **Victory** (Champion, or a "Start from the bottom" climb that never lost): crown, "CHAMPION!", "Reached the top: N wins in a row!", final ELO
 - **Placement**: pin, "PLACED!", streak (bottom runs), rank, battles, final ELO
+- With a Stash ratings update mode on, the ELO line also shows `Stash Rating: N`: the scene's target from `stashRatingTargets` over the all-scenes cache (the cache already has the new ELO), so it's what the sync writes, even if that write is still on its way
 - Both show "Start New Run" (`#sb-new-run`), which resets run state
 - No glow. They use the cards' entry animation (`fadeIn`, 0.3s); while an end screen shows, the battle area has `overflow: clip` (`.sb-comparison-area:has(> .sb-end-screen)`), because the end screen sits flush with the window's bottom (the action bar is hidden) and the slide-in would otherwise make the content 20px taller for a moment and flash a scrollbar.
 
@@ -482,7 +484,9 @@ After a delete, `handleSceneGone(id)`:
 2. If it was the **left** scene or the run's scene (placement scene, champion) → `resetRunState()` and a fresh pair.
 3. Otherwise (an opponent) → drop it from `championDefeated` and placement bounds, and `loadNewPair(leftId)`.
 
-**Deleted elsewhere**: `restoreCurrentPair` and the reused-modal path call `verifyCurrentPair()` (aliased `findScene` lookups — `findScenes(ids:)` errors if any id is missing), and a write that fails with "not found" dispatches `SCENE_MISSING_EVENT`; all of them route to `handleSceneGone`.
+**Restoring a saved pair**: `restoreCurrentPair` first checks the pair belongs to the current run (`pairMatchesRun`: Placement's run scene on the left, or the champion in the pair); a pair without its run (from before runs cleared their pair on the end screen) loads a new pair instead, since picks would have nothing to act on. Then the ranks are worked out again from the current pools (`pairRanks` in `pairs.ts`), not the saved ones. Finished runs clear `currentPair` (`finishRunShowEndScreen`), and a reopened modal keeps showing the end screen.
+
+**Deleted elsewhere**: `restoreCurrentPair` and the reused-modal path call `verifyCurrentPair()` (aliased `findScene` lookups via `fetchSceneFields` — `findScenes(ids:)` errors if any id is missing), and a write that fails with "not found" dispatches `SCENE_MISSING_EVENT`; all of them route to `handleSceneGone`.
 
 ---
 
@@ -570,5 +574,5 @@ All data comes from Stash's GraphQL API:
 
 17. **Setup flags and `configurePlugin`**: because `configurePlugin` replaces the whole map, `eloSetupAt` / `eloSetupMode` / `stashRatings` must go through `updateSettings` / `updateSettingsNow` and `normalize()`, or the next settings save drops them.
 
-18. **The cache's `rating100` drives the per-battle sync**: after a full sync it's updated in memory but not in IndexedDB, so a reload within 5 minutes can make the first sync rewrite a few ratings to the same values (harmless, but it touches `updated_at`).
+18. **Other tabs**: each tab keeps its own in-memory cache, so battles in one tab reach another only when its cache refreshes (5 minutes, or the Refresh button). A restored pair and a scene-page scene are fetched fresh, so their own ELO is always current; the rest of the order catches up on refresh.
 19. **Stash's custom-field filters don't compare numbers** (v0.31.1): on a numeric field like `stash_battle_elo`, `EQUALS` and `GREATER_THAN` match nothing, `LESS_THAN` matches every scene, and `BETWEEN` matches nothing; `NOT_NULL` and boolean `EQUALS true` work. The filter value seems to be compared as text against the stored number (SQLite sorts every number below every text). Same family as [stashapp/stash#5682](https://github.com/stashapp/stash/issues/5682). So ranks are counted client-side, and Scenes-page filters on ELO or battles give wrong results in Stash itself, before Stash Battle sees them. Don't store ELO as text to work around it: it would break numeric order everywhere else.

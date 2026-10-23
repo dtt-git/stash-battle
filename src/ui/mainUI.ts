@@ -1,6 +1,6 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
-import { clearFilteredCache, latestScene, removeSceneEverywhere } from "../cache";
+import { clearFilteredCache, latestScene, refreshSceneInCache, removeSceneEverywhere } from "../cache";
 import { CHAMPION_UNRATED_ELO, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
 import { eloResult } from "../elo";
 import { readFilters } from "../filters";
@@ -10,11 +10,11 @@ import {
   fetchChampionPair,
   fetchPlacementPair,
   fetchSwissPair,
-  loadPoolSize,
+  pairRanks,
 } from "../pairs";
 import { recordPlacementResult } from "../placement";
 import { writeElo } from "../rating";
-import { findExistingSceneIds } from "../sceneActions";
+import { fetchSceneFields } from "../sceneActions";
 import { battles, effectiveElo, kGames } from "../score";
 import { isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { saveState } from "../storage";
@@ -359,6 +359,8 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     let forcedLeftScene: Scene | null = null;
     if (forcedLeftSceneId) {
       forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+      // Fresh from Stash: the cache may be older (another tab), and ranks and battle math read it
+      if (forcedLeftScene) refreshSceneInCache(forcedLeftScene);
       if (!forcedLeftScene) {
         console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
       }
@@ -453,39 +455,70 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
 }
 
 /** Render the saved pair, unless one of its scenes was deleted in Stash meanwhile. */
+/**
+ * Whether the saved pair belongs to the current run. A Placement pair is its run's scene against
+ * an opponent, and a Champion pair includes the champion; without that, picks have nothing to
+ * act on (a run that ended, say).
+ */
+function pairMatchesRun(left: Scene, right: Scene): boolean {
+  if (state.currentMode === "placement") return state.placement?.scene.id === left.id;
+  if (state.currentMode === "champion" && state.championScene) {
+    return state.championScene.id === left.id || state.championScene.id === right.id;
+  }
+  return true;
+}
+
 export async function restoreCurrentPair(): Promise<void> {
   if (isEloSetupPending()) return;
-  state.disableChoice = false;
   const left = state.currentPair.left as Scene;
   const right = state.currentPair.right as Scene;
+  if (!pairMatchesRun(left, right)) {
+    console.log("[Stash Battle] 📂 Saved pair doesn't belong to the current run, loading a new pair");
+    await loadNewPair();
+    return;
+  }
+  state.disableChoice = false;
 
-  // Load the (cached) pools in the background: pre-warms them for the next choice and fills in
-  // the pool size on the status line, which a restored pair otherwise doesn't know yet
-  void loadPoolSize()
-    .then(updatePoolStatus)
-    .catch((e) => console.warn("[Stash Battle] Could not load scene pools for the status line:", e));
-
+  // Also brings the pair's ELO and Stash rating up to date (they may have changed since it was saved)
   if (!(await verifyCurrentPair())) return;
 
-  console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
-  renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
+  // Ranks from the current pools, not the saved ones: battles since may have moved them. Loading
+  // the pools also pre-warms them for the next choice and fills in the status line's pool size.
+  let ranks: [Rank, Rank] = [state.currentRanks.left, state.currentRanks.right];
+  try {
+    ranks = await pairRanks(left, right);
+    state.currentRanks = { left: ranks[0], right: ranks[1] };
+  } catch (e) {
+    console.warn("[Stash Battle] Could not load scene pools for the saved pair's ranks:", e);
+  }
+
+  console.log("[Stash Battle] 📂 Rendering saved pair");
+  renderPair([left, right], ranks);
   updatePoolStatus();
 }
 
 /**
  * Check the current pair still exists in Stash (scenes may be deleted elsewhere). If one is gone,
- * continue without it and return false. Network errors count as "still there".
+ * continue without it and return false. Otherwise the pair's ELO and Stash rating are brought up
+ * to date from Stash, in its objects and the cache. Network errors count as "still there".
  */
 export async function verifyCurrentPair(): Promise<boolean> {
   const { left, right } = state.currentPair;
   if (!left || !right) return true;
   try {
-    const existing = await findExistingSceneIds([left.id, right.id]);
-    const gone = [left, right].find((s) => !existing.has(s.id));
+    const fresh = await fetchSceneFields([left.id, right.id]);
+    const gone = [left, right].find((s) => !fresh.has(s.id));
     if (gone) {
       console.log(`[Stash Battle] 👻 Scene ${gone.id} in the current pair no longer exists`);
       await handleSceneGone(gone.id);
       return false;
+    }
+    for (const scene of [left, right]) {
+      const fields = fresh.get(scene.id);
+      if (!fields) continue;
+      scene.rating100 = fields.rating100 ?? null;
+      scene.custom_fields = fields.custom_fields ?? {};
+      refreshSceneInCache(scene);
     }
   } catch (e) {
     console.warn("[Stash Battle] Could not verify current pair:", e);

@@ -266,8 +266,11 @@ export async function openModal(): Promise<void> {
     // If filters changed, no pair, or forced scene, load new content
     if (forceSceneBattle) {
       loadNewPair(scenePageId);
-    } else if (filtersChanged || !state.currentPair.left || !state.currentPair.right) {
+    } else if (filtersChanged) {
       loadNewPair();
+    } else if (!state.currentPair.left || !state.currentPair.right) {
+      // A finished run's end screen stays until "Start New Run" (the run cleared its pair)
+      if (!document.querySelector("#sb-comparison-area .sb-end-screen")) loadNewPair();
     } else if (document.querySelector("#sb-comparison-area .sb-vs-container")) {
       // Existing pair is still valid unless a scene was deleted elsewhere meanwhile
       applyPreviewSettings();

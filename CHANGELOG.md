@@ -19,6 +19,7 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
   
   A live 10-scene preview shows what each choice does, and how many of your ratings would change, before anything is written.
 - **Stash ratings update mode** (Settings): Don't update (the default), **Straight-line** (rating = ELO converted back, 1500 = 50), or **Percentile** (rating = percentile in your library: the top scene is 100, the bottom 1). Switching tells you exactly how many ratings will change. While it's on, each battle writes only the ratings that changed, in one go, and Stash's own pages show the new ratings without a refresh.
+- The **Placement and Champion end screens** show where the scene's Stash rating ended up, while a Stash ratings update mode is on.
 - **Reset ELO** (Settings): start every scene's ELO over, with the same choices as the setup. Cancel any time before pressing Start.
 - **Placement → Start from the bottom** (a setting): a scene ignores its current ELO and climbs from your lowest scene, jumping further with each win, with a win streak badge and a Champion screen if it never loses. **This replaces Gauntlet**, with much shorter runs (about 8-21 battles in a 600-scene library).
 - **Cards** show each scene's ELO and rank (`ELO 1740 · #50`), how many battles it has had, and its Stash rating.
@@ -38,6 +39,8 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
 ### Fixed
 
 - The Champion and Placement end screens no longer flash a scrollbar for half a second.
+- Reopening Stash Battle after a finished Placement run (after a page refresh) no longer shows a pair you can't pick from.
+- Ranks no longer lag behind after refreshing the page soon after battling, or after battling in another tab: a restored pair, and a scene opened from its page, show their current ELO and rank.
 - No more dark sliver at the rounded corners of a card, including while its preview plays or the green/red result shows.
 
 ## v2.7.0

@@ -924,6 +924,7 @@
       if (cached !== scene) applyElo(cached, value);
       pool.splice(value ? eloInsertionIndex(pool, value.elo) : pool.length, 0, cached);
     }
+    persistCacheSoon();
   }
   function setRatingsInCache(ratings) {
     for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
@@ -931,6 +932,37 @@
         const rating = ratings.get(scene.id);
         if (rating !== void 0) scene.rating100 = rating;
       }
+    }
+    persistCacheSoon();
+  }
+  function refreshSceneInCache(fresh) {
+    for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+      const cached = pool?.find((s) => s.id === fresh.id);
+      if (cached) cached.rating100 = fresh.rating100 ?? null;
+    }
+    setEloInCache(fresh, eloFields(fresh));
+  }
+  var PERSIST_DEBOUNCE_MS = 1e3;
+  var persistTimer = null;
+  function persistCacheSoon() {
+    if (typeof indexedDB === "undefined") return;
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      void persistCache();
+    }, PERSIST_DEBOUNCE_MS);
+  }
+  async function persistCache() {
+    const lists = [
+      ["all-scenes", state.memoryCache.allScenes],
+      ["filtered-scenes", state.memoryCache.filteredScenes]
+    ];
+    for (const [cacheKey, scenes] of lists) {
+      if (!scenes) continue;
+      const cached = await getCachedScenes(cacheKey);
+      if (!cached) continue;
+      if (cacheKey === "filtered-scenes" && cached.filterKey !== state.memoryCache.filterKey) continue;
+      await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey, cached.timestamp);
     }
   }
   async function removeSceneEverywhere(sceneId) {
@@ -953,10 +985,10 @@
   }
 
   // src/sceneActions.ts
-  async function findExistingSceneIds(ids) {
-    const aliases = ids.map((id, i) => `s${i}: findScene(id: ${JSON.stringify(id)}) { id }`).join("\n");
+  async function fetchSceneFields(ids) {
+    const aliases = ids.map((id, i) => `s${i}: findScene(id: ${JSON.stringify(id)}) { id rating100 custom_fields }`).join("\n");
     const result = await graphqlQuery(`{ ${aliases} }`);
-    return new Set(Object.values(result).flatMap((s) => s ? [s.id] : []));
+    return new Map(Object.values(result).flatMap((s) => s ? [[s.id, s]] : []));
   }
   function isSceneNotFoundError(error) {
     return error instanceof Error && /not found/i.test(error.message);
@@ -1550,8 +1582,19 @@
     state.leftPoolSize = leftPool.length;
     return { leftPool, allScenes };
   }
-  async function loadPoolSize() {
-    await loadScenePools(readFilters());
+  async function pairRanks(left, right) {
+    const filters = readFilters();
+    const { leftPool, allScenes } = await loadScenePools(filters);
+    let pool = buildOpponentPool(allScenes, leftPool, filters);
+    const rank = (scene) => {
+      const idx = pool.findIndex((s) => s.id === scene.id);
+      return idx >= 0 ? idx + 1 : null;
+    };
+    if (state.currentMode === "placement") {
+      pool = pool.filter((s) => s.id !== left.id);
+      return [null, rank(right)];
+    }
+    return [rank(left), rank(right)];
   }
   async function buildSwissPools() {
     const filters = readFilters();
@@ -1826,18 +1869,28 @@
   }
   function finishRunShowEndScreen(html) {
     resetRunState();
+    state.currentPair = { left: null, right: null };
+    state.currentRanks = { left: null, right: null };
     saveState();
     showEndScreen(html);
   }
-  function eloLine(value) {
-    return value === null ? "" : `<br>ELO: <strong>${Math.round(value)}</strong>`;
+  function eloLine(scene, value) {
+    if (value === null) return "";
+    let line = `<br>ELO: <strong>${Math.round(value)}</strong>`;
+    const mode = state.settings.stashRatings;
+    const scenes = state.memoryCache.allScenes;
+    if (mode !== "off" && scenes) {
+      const rating = stashRatingTargets(scenes, mode).get(scene.id);
+      if (rating !== void 0) line += ` · Stash Rating: <strong>${rating}</strong>`;
+    }
+    return line;
   }
   function showVictoryScreen(champion, winStreak) {
     const html = buildEndScreenHtml(
       champion,
       "👑",
       "CHAMPION!",
-      `Reached the top: ${winStreak} win${winStreak === 1 ? "" : "s"} in a row!${eloLine(elo(champion))}`,
+      `Reached the top: ${winStreak} win${winStreak === 1 ? "" : "s"} in a row!${eloLine(champion, elo(latestScene(champion)))}`,
       "Start New Run"
     );
     finishRunShowEndScreen(html);
@@ -1850,7 +1903,7 @@
       scene,
       "📍",
       "PLACED!",
-      `${streakText}Rank <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesText}${eloLine(result.elo)}`,
+      `${streakText}Rank <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesText}${eloLine(scene, result.elo)}`,
       "Start New Run"
     );
     finishRunShowEndScreen(html);
@@ -2328,6 +2381,7 @@
       let forcedLeftScene = null;
       if (forcedLeftSceneId) {
         forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+        if (forcedLeftScene) refreshSceneInCache(forcedLeftScene);
         if (!forcedLeftScene) {
           console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
         }
@@ -2401,27 +2455,52 @@
       }
     }
   }
+  function pairMatchesRun(left, right) {
+    if (state.currentMode === "placement") return state.placement?.scene.id === left.id;
+    if (state.currentMode === "champion" && state.championScene) {
+      return state.championScene.id === left.id || state.championScene.id === right.id;
+    }
+    return true;
+  }
   async function restoreCurrentPair() {
     if (isEloSetupPending()) return;
-    state.disableChoice = false;
     const left = state.currentPair.left;
     const right = state.currentPair.right;
-    void loadPoolSize().then(updatePoolStatus).catch((e) => console.warn("[Stash Battle] Could not load scene pools for the status line:", e));
+    if (!pairMatchesRun(left, right)) {
+      console.log("[Stash Battle] 📂 Saved pair doesn't belong to the current run, loading a new pair");
+      await loadNewPair();
+      return;
+    }
+    state.disableChoice = false;
     if (!await verifyCurrentPair()) return;
-    console.log("[Stash Battle] 📂 Rendering saved pair (no network fetch needed)");
-    renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
+    let ranks = [state.currentRanks.left, state.currentRanks.right];
+    try {
+      ranks = await pairRanks(left, right);
+      state.currentRanks = { left: ranks[0], right: ranks[1] };
+    } catch (e) {
+      console.warn("[Stash Battle] Could not load scene pools for the saved pair's ranks:", e);
+    }
+    console.log("[Stash Battle] 📂 Rendering saved pair");
+    renderPair([left, right], ranks);
     updatePoolStatus();
   }
   async function verifyCurrentPair() {
     const { left, right } = state.currentPair;
     if (!left || !right) return true;
     try {
-      const existing = await findExistingSceneIds([left.id, right.id]);
-      const gone = [left, right].find((s) => !existing.has(s.id));
+      const fresh = await fetchSceneFields([left.id, right.id]);
+      const gone = [left, right].find((s) => !fresh.has(s.id));
       if (gone) {
         console.log(`[Stash Battle] 👻 Scene ${gone.id} in the current pair no longer exists`);
         await handleSceneGone(gone.id);
         return false;
+      }
+      for (const scene of [left, right]) {
+        const fields = fresh.get(scene.id);
+        if (!fields) continue;
+        scene.rating100 = fields.rating100 ?? null;
+        scene.custom_fields = fields.custom_fields ?? {};
+        refreshSceneInCache(scene);
       }
     } catch (e) {
       console.warn("[Stash Battle] Could not verify current pair:", e);
@@ -3213,8 +3292,10 @@
       hideSetupScreen(existingModal);
       if (forceSceneBattle) {
         loadNewPair(scenePageId);
-      } else if (filtersChanged || !state.currentPair.left || !state.currentPair.right) {
+      } else if (filtersChanged) {
         loadNewPair();
+      } else if (!state.currentPair.left || !state.currentPair.right) {
+        if (!document.querySelector("#sb-comparison-area .sb-end-screen")) loadNewPair();
       } else if (document.querySelector("#sb-comparison-area .sb-vs-container")) {
         applyPreviewSettings();
         void verifyCurrentPair();

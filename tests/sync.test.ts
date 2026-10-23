@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { refreshSceneInCache } from "../src/cache";
 import { holdStashListRefresh, refreshStashCache } from "../src/graphql";
 import { syncStashRatings, writeElo } from "../src/rating";
 import { battles, elo } from "../src/score";
@@ -174,4 +175,18 @@ test("a settings save keeps what another tab stored, plus only this tab's change
   assert.equal(saved.eloSetupMode, "ratings");
   assert.equal(saved.stashRatings, "percentile");
   assert.equal(saved.previewVolume, 10);
+});
+
+test("refreshSceneInCache brings a scene's cached copy up to date and moves it to its rank", () => {
+  state.memoryCache.allScenes = [scene("a", 1800, 80), scene("b", 1700, 70), scene("c", 1600, 60)];
+  state.memoryCache.filteredScenes = null;
+  // Fresh from Stash (changed in another tab): b is now on top, with a new Stash rating
+  const fresh: Scene = { id: "b", rating100: 90, custom_fields: { stash_battle_elo: 1900, stash_battle_battles: 7, stash_battle_seeded: 1 } };
+  refreshSceneInCache(fresh);
+  const cached = state.memoryCache.allScenes;
+  assert.deepEqual(cached.map((s) => s.id), ["b", "a", "c"]);
+  assert.equal(cached[0].rating100, 90);
+  assert.equal(elo(cached[0]), 1900);
+  assert.equal(battles(cached[0]), 7);
+  assert.notEqual(cached[0], fresh, "the cached object is updated, not replaced");
 });

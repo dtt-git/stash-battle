@@ -8,7 +8,7 @@ import {
 } from "./constants";
 import { getFindFilter, type ListFilters } from "./filters";
 import { FIND_SCENES_QUERY, graphqlQuery } from "./graphql";
-import { eloInsertionIndex, sortByElo, withEloFields } from "./score";
+import { eloFields, eloInsertionIndex, sortByElo, withEloFields } from "./score";
 import { state } from "./state";
 import type { CacheEntry, EloFields, FindScenesResult, Scene } from "./types";
 
@@ -406,6 +406,7 @@ export function setEloInCache(scene: Scene, value: EloFields | null): void {
     if (cached !== scene) applyElo(cached, value);
     pool.splice(value ? eloInsertionIndex(pool, value.elo) : pool.length, 0, cached);
   }
+  persistCacheSoon();
 }
 
 /** Set the Stash rating on cached scenes (after Stash Battle wrote them). Order is ELO, so unchanged. */
@@ -415,6 +416,55 @@ export function setRatingsInCache(ratings: Map<string, number>): void {
       const rating = ratings.get(scene.id);
       if (rating !== undefined) scene.rating100 = rating;
     }
+  }
+  persistCacheSoon();
+}
+
+/**
+ * Bring a scene's cached copies in line with fresh values from Stash (its ELO fields and Stash
+ * rating), moving them to their place in the ELO order. For scenes fetched on their own (a
+ * restored pair, a scene page battle), which may be newer than the cache: changed in another
+ * tab, say.
+ */
+export function refreshSceneInCache(fresh: Scene): void {
+  for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+    const cached = pool?.find((s) => s.id === fresh.id);
+    if (cached) cached.rating100 = fresh.rating100 ?? null;
+  }
+  setEloInCache(fresh, eloFields(fresh));
+}
+
+/** Write the in-memory scene lists back to IndexedDB this long after the last change. */
+const PERSIST_DEBOUNCE_MS = 1000;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Battles change the in-memory lists only; without this, a reload within CACHE_MAX_AGE_MS would
+ * read the IndexedDB copy from before them (old ELO, old order). Debounced, so a pick's writes
+ * and its Stash rating sync are saved together.
+ */
+function persistCacheSoon(): void {
+  if (typeof indexedDB === "undefined") return;
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void persistCache();
+  }, PERSIST_DEBOUNCE_MS);
+}
+
+/** Save the in-memory lists over their IndexedDB entries, keeping each entry's timestamp. */
+async function persistCache(): Promise<void> {
+  const lists: [string, Scene[] | null][] = [
+    ["all-scenes", state.memoryCache.allScenes],
+    ["filtered-scenes", state.memoryCache.filteredScenes],
+  ];
+  for (const [cacheKey, scenes] of lists) {
+    if (!scenes) continue;
+    const cached = await getCachedScenes(cacheKey);
+    // Missing or expired: the next load fetches fresh anyway. A different filter: not this list.
+    if (!cached) continue;
+    if (cacheKey === "filtered-scenes" && cached.filterKey !== state.memoryCache.filterKey) continue;
+    await setCachedScenes(cacheKey, scenes, scenes.length, cached.filterKey, cached.timestamp);
   }
 }
 
