@@ -1,6 +1,6 @@
 ---
 name: Stats tab and battle extras
-overview: After 3.0. Show win chances, a provisional "?" and opt-in tiers on the battle cards; add a Stats tab (ELO distribution, hidden gems, how settled the rankings are) and, from new per-scene totals and small capped lists stored in Stash, records (win/loss, streaks, peak, hall of fame, top 10 with movement, biggest upsets). A full battle log (rating graphs, head-to-head) is deferred.
+overview: Part of 3.0 (on elo-mode). Show win chances, a provisional "?" and opt-in tiers on the battle cards; add a Stats tab (ELO distribution, hidden gems, how settled the rankings are) and, from new per-scene totals and small capped lists stored in Stash, records (win/loss, streaks, peak, hall of fame, top 10 with movement, biggest upsets). A full battle log (rating graphs, head-to-head) is deferred.
 todos:
   - id: stage1-cards
     content: "Stage 1: battle cards - win chances, provisional '?', tiers (opt-in setting, off by default). Pure functions + tests, no new data."
@@ -12,14 +12,14 @@ todos:
     content: "Stage 3: new data in Stash - per-scene wins/losses/peak/streaks, capped lists in the plugin config (hall of fame, daily top-10 snapshots, biggest upsets); Records section."
     status: pending
   - id: stage4-docs
-    content: "Stage 4: DOCUMENTATION.md, README, CHANGELOG, version 3.1.0, Stats screenshot, forum post."
+    content: "Stage 4: DOCUMENTATION.md, README, the 3.0.0 CHANGELOG entry, Stats screenshot, forum drafts (no version bump)."
     status: pending
 isProject: false
 ---
 
 <!-- Working plan for the features after 3.0. Written Oct 23, 2026 from the discussion with Brian; nothing is built yet. -->
 
-# Stats tab and battle extras (3.1)
+# Stats tab and battle extras (part of 3.0)
 
 Impact: **Medium-large**. Four stages, with a review point after each one, the same way 3.0 was built.
 
@@ -27,7 +27,7 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
 
 - **Nothing is built yet.** This plan was written on Oct 23, 2026, right after 3.0 was finished.
 - **3.0 state:** branch `elo-mode`, open as [PR #7](https://github.com/dtt-git/stash-battle/pull/7) into `main`. Latest commit `a4d6250`. Brian is using 3.0 himself before releasing it.
-- **Where to branch:** if PR #7 has been merged, branch from `main`; if not, branch from the tip of `elo-mode`. Ask Brian which, and the branch name, before starting.
+- **Where it goes (Brian, Oct 23):** straight onto `elo-mode`, into PR #7 and **version 3.0.0**. No new branch and no 3.1 version bump.
 - **Read first:** [true-elo-handoff.md](true-elo-handoff.md) (how Brian works, environment, git rules) and [true-elo-mode.md](true-elo-mode.md) (how ELO works). Both are still accurate; the "Working notes" section below adds what changed since.
 
 ## Decisions (Brian, Oct 23)
@@ -57,7 +57,7 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
 - Show it between the cards, at the VS: a thin two-colour bar with `68%` and `32%` on either side. On phones (cards stacked) a single line under VS.
 - Round so the two always add up to 100.
 - **Upset:** when the pick goes to a side that had under 50%, the result animation can say "Upset!". Keep it subtle (no glow, Brian dislikes glows).
-- **Placement:** open question. The placed scene's ELO doesn't change per pick, and an unrated placed scene has no real ELO, so hide win chances in Placement unless Brian wants them.
+- **Placement:** hidden (Brian, Oct 23). The placed scene's ELO doesn't change per pick, and an unrated placed scene has no real ELO.
 
 ### 2. Provisional "?" (Stage 1)
 
@@ -114,7 +114,7 @@ All of it in Stash, all of it small.
 
 - **Why these and not a history:** Stash returns *all* of a scene's custom fields with every scene, and the GraphQL field is a map with no way to pick keys. So anything per scene rides along on every library download, Stash Battle's and Stash's own. Five numbers are fine; a history per scene would roughly double the full-library download.
 - Placement: the run already counts its picks (`run.battles`, `run.streak`); also count wins and losses, and add them when the scene lands. The opponents of a Placement run don't change (as now).
-- Battles from before 3.1 have no win/loss: show "since 3.1" in the UI, and keep `stash_battle_battles` as the total.
+- Battles from before these fields existed have no win/loss (only Brian's own library, since 3.0 is unreleased): keep `stash_battle_battles` as the total, and show wins/losses as they are.
 - `peak` starts at the current ELO the first time it's written.
 - Add the new keys to `ELO_FIELD_KEYS` (so Reset ELO and `clearElo` remove them), to `eloCustomFields` / `withEloFields`, and to `EloFields` (or a separate `RecordFields`, decide while building).
 - Custom Fields CSS: `stash_battle_best_streak` is 24 characters; widen the 22ch rule.
@@ -153,7 +153,7 @@ Ratings with an uncertainty that shrinks as a scene battles (`1740 ± 80`), as o
 1. **Battle cards:** win chances (with "Upset!"), provisional "?" on cards and the scene page button, tiers behind the new setting. Pure functions in `elo.ts` / `score.ts` / `stats.ts`, unit-tested. No new stored data.
 2. **Stats tab from existing data:** tab shell, overview, ELO distribution, hidden gems / overplayed (with Battle this scene), how settled (with Battle the least-tested).
 3. **Records:** `persistSettings` keeps unknown keys; per-scene wins / losses / peak / streak fields; hall of fame, daily top-10 snapshots, biggest upsets; Records section; card record line if Brian wants it.
-4. **Docs and release:** DOCUMENTATION.md, README (features, a Stats screenshot), CHANGELOG `v3.1.0`, version bump in `package.json` and the yml, forum update draft.
+4. **Docs:** DOCUMENTATION.md, README (features, a Stats screenshot), the existing CHANGELOG `v3.0.0` entry, the forum drafts in `docs/forum/`. The version stays 3.0.0.
 
 ## Review checkpoints (after every stage)
 
@@ -183,7 +183,6 @@ Same as 3.0 (see the handoff):
 
 ## Open questions for Brian
 
-- Win chances in Placement: hide (proposed) or show?
 - Tier names, emoji and cutoffs: is the proposed ladder right?
 - "Battle the least-tested": the proposed behaviour (Swiss with the least-battled scenes on the left until stopped), or something else?
 - A `Record: 12–5` line on the cards?
