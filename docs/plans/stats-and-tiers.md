@@ -25,7 +25,7 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
 
 ## Status and where to start
 
-- **Stage 1 is done, reviewed and committed** (Oct 23). Win chances (`winChances` in `elo.ts`), `isProvisional` (`score.ts`), `tierMap` / `tierDescription` (new `stats.ts`), the `showTiers` setting (Settings tab "Scenes" section and yml). 47 tests pass. "Upset!" shows when the winner's chance was **40% or less** (`UPSET_MAX_CHANCE`, Brian's choice: under 50% would flag about half of all Swiss picks, and 35% never fires with the ±100 Swiss window).
+- **Stage 1 is done, reviewed and committed** (Oct 23). Win chances (`winChances` in `elo.ts`), `isProvisional` (`score.ts`), `tierMap` / `tierDescription` (new `stats.ts`), the `showTiers` setting (Settings tab "Scenes" section and yml; on by default). 47 tests pass. "Upset!" shows when the winner's chance was **40% or less** (`UPSET_MAX_CHANCE`, Brian's choice: under 50% would flag about half of all Swiss picks, and 35% never fires with the ±100 Swiss window).
 - **Swiss window (Brian, Oct 23, outside this plan):** Swiss now picks a random opponent within **±100 ELO** (`SWISS_OPPONENT_ELO_WINDOW`, `swissOpponentIndexes` in `score.ts`), or the 10 nearest when fewer are in range. The old ±10 ranks meant a median farthest opponent of 20 ELO, about a third of them exact ties. Live: 25 skipped pairs had gaps up to 100, average 40. **Stage 3 note:** with ±100, the "biggest upsets" list would mostly hold 36-40% wins; revisit it then. Checked live: the VS block, "Upset!" on an 8% win, the "?" on the card and the scene page button (scenes 1443/1446 are provisional), the Gold and Diamond pills, and the phone layout (`58% VS 42%` in the pill, emoji-only tier). Both test-pick scenes and the config were restored exactly.
 - This plan was written on Oct 23, 2026, right after 3.0 was finished.
 - **3.0 state:** branch `elo-mode`, open as [PR #7](https://github.com/dtt-git/stash-battle/pull/7) into `main`. Latest commit `a4d6250`. Brian is using 3.0 himself before releasing it.
@@ -37,7 +37,7 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
 - **Wanted, on the battle cards:**
   - **Win chances**, like a chess broadcast's "who's favoured" bar.
   - **A provisional "?"** after the ELO of scenes that haven't settled yet (`ELO 1540?`).
-  - **Tiers**, **opt-in** (a setting, off by default) until Brian decides whether he likes them. Game-style names, **not chess titles** ("sounds a bit weird"). Proposed ladder below.
+  - **Tiers**, as a setting. First built off by default; after trying them Brian made them **on by default** (Oct 23: "it should be the intended experience"), with squarer corners (6px) and more padding. Game-style names, **not chess titles** ("sounds a bit weird"). Proposed ladder below.
 - **Wanted, in a new Stats tab:**
   - **Hidden gems / overplayed:** ELO against play count.
   - **ELO distribution**, with the Stash rating scale under it.

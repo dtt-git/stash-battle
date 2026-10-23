@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   eloSetupMode: null,
   openInNewTab: false,
   placementFromBottom: false,
-  showTiers: false,
+  showTiers: true,
   previewVolume: 50,
   autoplayPreviews: true,
   filterOpponents: false,
