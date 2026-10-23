@@ -62,7 +62,6 @@ export function createMainUI(): string {
       <div id="stash-battle-container" class="sb-container">
         <div class="sb-header">
           <h1 class="sb-title">⚔️ Stash Battle</h1>
-          <p class="sb-subtitle">Compare scenes head-to-head to build your rankings</p>
           ${createTabBar()}
         </div>
 

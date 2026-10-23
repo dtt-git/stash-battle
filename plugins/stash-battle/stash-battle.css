@@ -26,15 +26,8 @@
 .sb-title {
   font-size: 2.2rem;
   font-weight: bold;
-  margin-bottom: 2px;
+  margin: 0 0 10px;
   color: #fff;
-}
-
-.sb-subtitle {
-  font-size: 1.05rem;
-  color: #888;
-  margin-top: 5px;
-  margin-bottom: 6px;
 }
 
 /* Lives in the Battle tab (not the header) so toggling it never moves the tab bar */
@@ -1157,7 +1150,6 @@ body.sb-battle-open > .modal {
     margin-bottom: 8px;
   }
 
-  .sb-subtitle,
   .sb-mode-desc {
     display: none;
   }
@@ -1188,10 +1180,6 @@ body.sb-battle-open > .modal {
 @media (max-width: 1000px) {
   .sb-container {
     padding: 16px 16px 0;
-  }
-
-  .sb-subtitle {
-    display: none;
   }
 
   .sb-vs-container {
