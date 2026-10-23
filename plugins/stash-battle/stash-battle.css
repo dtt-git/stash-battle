@@ -807,7 +807,7 @@
 .sb-tier {
   --sb-tier-color: #555;
   margin: 1px 2px 0 4px;
-  padding: 1px 10px;
+  padding: 1px 6px;
   border: 1px solid var(--sb-tier-color);
   border-radius: 6px;
   font-size: 0.8rem;
