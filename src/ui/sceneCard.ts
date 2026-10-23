@@ -82,7 +82,7 @@ export function createSceneCard(
   // pwr-* classes are the plugin's pre-2.0 names; SFW Switch still targets them to blur Stash Battle.
   // Badges sit outside the (blurred) image container so they stay readable in SFW mode.
   return `
-      <div class="sb-scene-card" data-side="${side}">
+      <div class="sb-scene-card${tier ? ` sb-tier-${tier.id}` : ""}" data-side="${side}"${tier ? ` data-tier="${tier.id}"` : ""}>
         <div class="sb-scene-media">
           <a class="sb-scene-image-container pwr-scene-image-container" href="${sceneUrl}"${linkTarget}>
             ${

@@ -487,6 +487,11 @@
   min-width: 0;
 }
 
+/* With tiers on, the border takes the tier's colour (set by its .sb-tier-* class, below) */
+.sb-scene-card[data-tier] {
+  --sb-card-border: var(--sb-tier-color);
+}
+
 /*
  * The card's border is drawn on top of its content, not around it. With a normal border, the
  * border's inner edge and the clip of the content (thumbnail, rating overlay) are two curved
