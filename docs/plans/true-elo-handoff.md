@@ -14,7 +14,7 @@ Pick-up notes for continuing the work in [true-elo-mode.md](true-elo-mode.md) in
 
 - **Branch:** `elo-mode`, created from `main` at `d3e740f`.
 - **Commits:** Stage 1 and Stage 2 are separate commits on `elo-mode`. Neither is pushed.
-- **Navbar change (separate):** `PluginApi.patch` for the nav button is committed on its own branch, `claude/amazing-rubin-4ce4c3` (commit `9e74ce2`, from `main`). It isn't merged into `elo-mode` and isn't pushed. It touches `main.ts`, `navButton.ts` and `deleteDialog.ts` and adds `src/pluginApi.ts`, none of which the ELO stages change.
+- **Navbar change:** `PluginApi.patch` for the nav button was made on its own branch, `claude/amazing-rubin-4ce4c3` (commit `9e74ce2`, from `main`). It's now merged into `elo-mode` (merge `a00e75d`). It touches `main.ts`, `navButton.ts` and `deleteDialog.ts` and adds `src/pluginApi.ts`. Checked after the merge: the button shows on Scenes, hides on Performers and opens the ELO setup.
 
 ## How to work with Brian (agreed process)
 
