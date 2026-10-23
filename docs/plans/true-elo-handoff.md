@@ -6,17 +6,15 @@ Pick-up notes for continuing the work in [true-elo-mode.md](true-elo-mode.md) in
 
 | Stage | State |
 |---|---|
-| 1. ELO core | **Done and verified, waiting for Brian's review. Not committed.** |
-| 2. Write path + setup screen, remove fun mode | Not started. Waits for Brian's go after reviewing Stage 1. |
+| 1. ELO core | Done, reviewed, committed. |
+| 2. Write path + setup screen, remove fun mode | Done, reviewed, committed. Brian's go for Stage 3 is still needed. |
 | 3. Modes/cache/UI onto ELO, Gauntlet becomes Placement's "Start from the bottom" | Not started |
-| 4. "Stash ratings" dropdown + sync, Reset ELO | Not started |
+| 4. "Stash ratings" dropdown + sync, Reset ELO, Stash page-cache refresh | Not started |
 | 5. Docs, CHANGELOG, version 3.0.0 | Not started |
 
 - **Branch:** `elo-mode`, created from `main` at `d3e740f`.
-- **Uncommitted Stage 1 changes:**
-  - Changed: `.gitignore`, `package.json`, `tsconfig.json`, `src/constants.ts`, `src/elo.ts`, `src/graphql.ts`, `src/types.ts`, `src/ui/modal.ts`, and the built `plugins/stash-battle/stash-battle.js`.
-  - New: `src/score.ts`, `scripts/test.mjs`, `tests/score.test.ts`, `tests/elo.test.ts`, and `docs/plans/`.
-- **Open question for Brian:** whether to commit Stage 1 to the branch before Stage 2 starts. It was offered; he hasn't answered yet.
+- **Commits:** Stage 1 and Stage 2 are separate commits on `elo-mode`. Neither is pushed.
+- **Navbar change (separate):** `PluginApi.patch` for the nav button is committed on its own branch, `claude/amazing-rubin-4ce4c3` (commit `9e74ce2`, from `main`). It isn't merged into `elo-mode` and isn't pushed. It touches `main.ts`, `navButton.ts` and `deleteDialog.ts` and adds `src/pluginApi.ts`, none of which the ELO stages change.
 
 ## How to work with Brian (agreed process)
 
@@ -28,6 +26,7 @@ Pick-up notes for continuing the work in [true-elo-mode.md](true-elo-mode.md) in
   - Never start the next stage until he has tried it and said go.
 - **Don't build beyond the plan.** Ask (AskQuestion tool) before changing anything outside it. He often refines the design mid-stream: update `true-elo-mode.md` when he does.
 - **Writing style:** plain language, full sentences, concrete examples with numbers. He is not a chess or ELO expert and asks "why" a lot, so explain the reasoning.
+- **Naming:** call the plugin "Stash Battle", never just "Battle", in UI text and in messages to Brian. "Battle" is fine only for the navbar button and the "⚔️ Battle" tab, since those name the button and the tab.
 - **Git:**
   - Only commit as the **dtt-git** user. The local git identity is already `dtt <dark7882009@hotmail.com>`.
   - To push, the gh account must be dtt-git (`gh auth switch --user dtt-git`). Then run `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push`, because the Windows credential manager prompt fails.
@@ -72,23 +71,78 @@ Pick-up notes for continuing the work in [true-elo-mode.md](true-elo-mode.md) in
 - **Battle opens normally:** one introspection request, then `FindScenesByRating` with `custom_fields`. No errors and no mutations.
 - **Unsupported Stash:** faking the introspection response without `custom_fields` (by wrapping `window.fetch` in the page) shows the message, the close button works, and a reload clears the fake.
 
-## Gotchas for Stage 2 onward
+## What Stage 2 built
+
+- **Settings** (`src/types.ts`, `src/constants.ts`, `src/settings.ts`):
+  - `funMode` removed. A stored `funMode` is dropped on load and disappears from the config on the next save (checked).
+  - New `stashRatings` (`"off"` default; unknown values become `"off"`), `eloSetupAt` (ISO time string) and `eloSetupMode` (`"ratings"` / `"fresh"`). `stashRatings` arrived a stage early because setup saves its second answer there; the dropdown is still Stage 4.
+  - `loadSettings()` now returns whether it loaded. `updateSettingsNow()` saves without the debounce and reports failure. `persistSettings` leaves out null keys. `hadFunMode()` says whether the stored config had pre-3.0 fun mode on.
+- **`src/score.ts`:** `startingElo(scene, start)`, `afterSetup(scene, start)` (a copy with our fields replaced), `stashRatingTargets(scenes, mode)` and `stashRatingChanges(scenes, mode)` (only ratings that differ). 17 unit tests now, including the preview's numbers.
+- **`src/rating.ts`:** `ratingsEnabled` removed. New `writeElo(id, elo, games)` and `clearElo(id)`: one `sceneUpdate`, custom fields only, with the cached objects updated via `setEloInCache` (no re-sort). New `writeStashRatings(map)`: one request, one aliased `bulkSceneUpdate` per distinct value. Stage 4's debounced `syncStashRatings` should wrap it. `updateSceneRating` stays for the modes.
+- **`src/eloSetup.ts`:** `fetchSetupScenes()` (fresh `id rating100 custom_fields` for every scene, not the cache), `setupRatingChanges()` and `runEloSetup()`.
+  - "Use my ratings": aliased `sceneUpdate`s, `SETUP_BATCH_SIZE` (50) per request. Then one `bulkSceneUpdate` with `custom_fields.remove` for scenes that have an ELO but no Stash rating, which only happens on a re-run. That is the plan's Reset ELO rule, applied to every setup run.
+  - "Start everyone at 1500": one `bulkSceneUpdate` with every id.
+  - Then `writeStashRatings` if the second answer isn't "off".
+- **`src/ui/setupScreen.ts` + `src/ui/ratingPreview.ts`:** the screen renders into `#sb-setup-area` in the Battle panel. The panel gets `sb-setup-active`, and CSS hides everything else in it. A module-level `running` flag keeps the progress view if Battle is closed and reopened mid-setup. When the writes finish, it clears the scene cache, shuffle, run state and saved pair, then saves the flags. If saving the flags fails, it offers a retry and stays pending.
+  - Extra notes beyond the plan: "N scenes already have an ELO from an earlier setup that didn't finish" (shown when any scene has one), and the Start button reads "Start ELO and change N ratings" when ratings would change.
+- **Gating** (`isEloSetupPending()` in `src/state.ts`, true while `eloSetupAt` is unset): `loadNewPair` and `restoreCurrentPair` return early, the battle keyboard shortcuts are off, and `openModal` shows the setup on both the new-modal and reused-modal paths. If settings fail to load while setup looks pending, a message modal shows instead, so a network blip can't trigger a re-run.
+- **Fixed in passing:** a message modal (settings failed, or Stage 1's "needs a newer Stash") was reused as if it were the battle modal on the next open. Reuse now requires `#stash-battle-container`.
+- **Fun mode removed** from `cache.ts` (sandbox), `pairs.ts`, `mainUI.ts` (badge, `sandboxScene`; animations always run and the next pair loads after 1500 ms), `screens.ts`, `sceneCard.ts`, `settingsPanel.ts`, the yml and the css. `DOCUMENTATION.md` and `README.md` still describe it (Stage 5).
+
+### Interim behaviour until Stage 3
+
+The modes still write `rating100` through `updateSceneRating`, so **battling during Stage 2 still changes Stash ratings**, even after choosing "Don't update". Setup itself doesn't. The setup screen's wording describes 3.0's final behaviour.
+
+### Verified on Brian's Stash
+
+- **Write shapes:** `sceneUpdate` and `bulkSceneUpdate` both take `custom_fields { full, partial, remove }`, where `remove` is a list of keys. Values come back as JSON numbers, decimals included (1612.5 came back as 1612.5).
+- **First open:** setup shows, with no pool request (`FindScenesByRating`) before it's done.
+- **Preview:** all six answer combinations give the plan's numbers and "N of 10 change" counts. Live counts on this library:
+  - Percentile + Use my ratings changes 516 ratings.
+  - A fresh start with either update option changes 604 (7 scenes are already at 50).
+  - Straight-line + Use my ratings changes 0.
+- **Use my ratings + Don't update:**
+  - 11 requests, 521 scenes, about 0.5 s.
+  - Every rated scene got `seed(rating)` with 10 games, and unrated scenes got nothing.
+  - No `rating100` was sent, and 0 of 611 Stash ratings changed.
+  - Scene 1186's `hotornot_stats` / `scene_record` survived.
+- **Start at 1500 + Don't update:** one `bulkSceneUpdate` with 611 ids, all 1500 / 0 games, 0 ratings changed.
+- **Interrupted setup** (requests slowed, page reloaded after 4 of 11 batches):
+  - The flag wasn't saved, and setup showed again with the "already have an ELO" note.
+  - The re-run fixed every scene and removed the stale ELO from the 90 unrated ones.
+  - Closing and reopening Battle mid-setup kept the progress view.
+- **Settings load failure (faked):** the message shows, and the next open recovers.
+- **Other checks:** the Settings tab no longer has the fun mode row. Preview squares shrink without wrapping or overflowing at 640 and 375 px wide.
+- **Not exercised for real:** writing Stash ratings (`writeStashRatings`, i.e. setup with Percentile or Straight-line and a non-zero count), because it rewrites Brian's ratings. It needs his go-ahead, or testing in Stage 4.
+- **Library state left behind:**
+  - Every `stash_battle_*` field was removed and the setup flags cleared, so the setup shows again for Brian.
+  - Stash ratings are unchanged, but every scene's `updated_at` changed (bulk writes touch it even when nothing visible changes).
+  - The config now has `stashRatings: "off"` and no `funMode`.
+- **Screenshots in this session:** the built-in browser pane crops screenshots (device pixel ratio 1.25), so layout was checked with DOM measurements instead. Also hide the page behind the modal (`body > *:not(#sb-modal) { visibility: hidden }`), because the Scenes page can show through in a screenshot.
+
+### Feedback round 1 (after Brian tried the setup)
+
+- **Naming:** the setup screen, the message modals and the "Pause playing video when Stash Battle opens" setting (Settings tab and yml) now say "Stash Battle".
+- **Preview animation:** `showRatingPreview(container, start, stashRatings)` in `ratingPreview.ts` updates the existing preview in place. Numbers count to their new values over 400 ms (eased; a timer lands them even when the tab gets no animation frames). Fills, the "changed" outline and the greyed rows fade with CSS transitions. Both are off under `prefers-reduced-motion`. `renderRatingPreview` still returns the plain HTML string.
+- **Brian ran setup with Percentile and then restored a backup.** Restoring the database doesn't restore the plugin config, so the "setup finished" flag was still set; it was cleared by hand (see the console snippet in the session). After that restore, scene 1178 reads 39 (it was 35 before testing) and 1473 reads 38 (was 42), so the backup was slightly older.
+- **Plugin API ideas:** reviewed in the plan ("Plugin API ideas") and decided by Brian. The Stash page-cache refresh (`refreshStashCache`) is now part of Stage 4. The backend setup task and the rating-edit hook are not being done. The navbar `PluginApi.patch` change runs as its own session and branch from `main`, separate from `elo-mode`.
+
+### Feedback round 2 (Stage 2 review)
+
+- **Brian's Percentile run looked right:** ratings spread 1-100, and the rating-sorted list matched.
+- **Setup wording shortened** at Brian's request (intro, option descriptions, a single note, preview caption). The warnings were left as they were.
+- **The Stash settings page showed the old plugin settings** ("Fun mode", "Battle opens") even after Reload plugins. The yml on disk was right; Stash just hadn't re-read it. `mutation { reloadPlugins }` fixed it, and a page refresh shows it.
+- **Another session's test deploy:** the navbar session deployed its `main`-based build (no ELO setup) into the live plugins folder while testing, then copied ours back. While that build was loaded, Stash Battle opened straight to a battle, which looked like the setup flag had been set. It hadn't been: no flag and no ELO fields.
+  - **Lesson:** parallel sessions share the live Stash plugins folder. Tell Brian before another session deploys there, and reload plugins afterwards.
+
+## Gotchas for Stage 3 onward
 
 - **Keep the plugin working at every checkpoint.**
   - The modes keep using rating100 until Stage 3, so Stage 2 adds `writeElo` / `clearElo` alongside `updateSceneRating` rather than replacing it.
   - Removing fun mode in Stage 2 touches `cache.ts` (sandbox), `rating.ts` (`ratingsEnabled`), `mainUI.ts` (fun badge, animations), `screens.ts` ("not saved" notes), `modal.ts` (`onSettingChanged` case and `resetSandbox` calls), `constants.ts`, `types.ts`, `settings.ts`, `settingsPanel.ts` and the yml.
-- **The setup screen must run before any pool loads.** That's in `openModal()`: after settings and the capability check, before `loadNewPair` / `restoreCurrentPair`, and also on the reused-modal path.
-- **The setup flags (`eloSetupAt`, `eloSetupMode`) are saved in the plugin config.** `configurePlugin` replaces the whole map, so save them through the existing settings path (`updateSettings`, plus `normalize()` in `src/settings.ts`), or they'll be lost on the next settings save.
-- **Write shapes to confirm against this Stash first** (introspection or a single test scene):
-  - `sceneUpdate(input: { id, custom_fields: { partial: { stash_battle_elo, stash_battle_games } } })`,
-  - `bulkSceneUpdate(input: { ids, custom_fields: { partial: {...} } })`,
-  - `custom_fields.remove: [keys]` for clearing.
-  - After the first write, check whether values come back as numbers or strings.
-- **Batching:** "Use my ratings" sends about 50 aliased `sceneUpdate` calls per request (a constant, to be tuned on Brian's library). "Start at 1500" is a single `bulkSceneUpdate`.
-- **Setup preview:**
-  - It's in `src/ui/ratingPreview.ts`: 10 squares in 3 rows (Now / After setup / After lots of battles).
-  - Its numbers come from the real `seed`, `percentileRatings` and `linearRating`. The expected values are in the plan.
-  - Both setup questions are shown at once, and the preview redraws when either changes.
+- **Stage 3 must bump `CACHE_DB_VERSION` and reset saved run state** (plan, Stage 3), because cached scenes and saved pairs from before setup have no custom fields. Setup already clears the cache and saved pair when it finishes.
+- **Cache order after `writeElo`:** `setEloInCache` updates the field but doesn't re-sort. Stage 3's ELO repositioning goes there (or replaces it).
+- **Reset ELO (Stage 4)** can reuse `showSetupScreen` as is, and `runEloSetup` already removes stale ELO under "Use my ratings". The "Before 3.0..." note is hidden once `eloSetupAt` is set, so Reset ELO should clear the flag only after its confirmation.
 - **The Settings tab has no `<select>` control yet** (`settingControl` in `settingsPanel.ts` only does checkboxes and the number box). Stage 4 adds one. `stashRatings` stays out of the yml, because Stash's plugin settings page has no dropdown type.
 - **Opening Battle in automation:** the nav link is an `<a>` whose text is exactly "Battle". To log GraphQL traffic, wrap `window.fetch` and record each request's operation name, whether it's a mutation, and any errors.
 - **Screenshots:** `browser_take_screenshot` downscales. For exact sizes, use CDP `Emulation.setDeviceMetricsOverride` (1280x960, because card tags hide below 900px of height) plus `Page.captureScreenshot` with a clip, and clear the emulation afterwards.

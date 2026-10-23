@@ -8,10 +8,6 @@ ui:
   css:
     - stash-battle.css
 settings:
-  funMode:
-    displayName: Fun mode
-    description: Battle without changing any ratings.
-    type: BOOLEAN
   openInNewTab:
     displayName: Open scenes in a new tab
     description: Clicking a battle thumbnail opens the scene in a new browser tab.
@@ -37,6 +33,6 @@ settings:
     description: Show a delete button on each battle card to remove scenes from Stash.
     type: BOOLEAN
   pauseMediaOnOpen:
-    displayName: Pause playing video when Battle opens
+    displayName: Pause playing video when Stash Battle opens
     description: Stop the scene you're watching so its audio doesn't overlap the battle previews. On by default.
     type: BOOLEAN

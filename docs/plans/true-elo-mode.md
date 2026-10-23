@@ -7,12 +7,12 @@ todos:
     status: completed
   - id: stage2-write
     content: "Stage 2: write path + setup - writeElo/clearElo (custom_fields partial only), one-time ELO setup screen (use my ratings / start everyone at 1500, plus the Stash ratings choice, both shown together with a live 10-scene preview) with progress and completion flag, remove fun mode and its sandbox"
-    status: pending
+    status: completed
   - id: stage3-modes
     content: "Stage 3: move Swiss/Placement/Champion, cache sorting/repositioning and UI (cards, animations, end screens) onto ELO; remove Gauntlet mode and add Placement's \"Start from the bottom\" option"
     status: pending
   - id: stage4-settings
-    content: "Stage 4: settings - stashRatings dropdown (off / percentile / linear, off by default; warning + full sync when the mode changes; per-battle sync of changed ratings batched into one request), Reset ELO button"
+    content: "Stage 4: settings - stashRatings dropdown (off / percentile / linear, off by default; warning + full sync when the mode changes; per-battle sync of changed ratings batched into one request), Reset ELO button, refresh Stash's own page cache after writes"
     status: pending
   - id: stage5-docs
     content: "Stage 5: DOCUMENTATION.md, README, CHANGELOG, version 3.0.0"
@@ -217,6 +217,55 @@ flowchart LR
   - Removed rules: "the climber keeps its rating when it loses", and the 100-to-99 rule.
 - **Removed policy layer:** `battleRoleFor` and `applyModePolicy` in [src/ui/mainUI.ts](src/ui/mainUI.ts), and the climber, benchmark and combatant roles in [src/types.ts](src/types.ts). Swiss and Champion both call the same two-sided `resolveComparison`. Placement only writes a rating when the scene lands.
 
+## Plugin API ideas (reviewed and decided Oct 22)
+
+Another agent read Stash's plugin architecture docs and suggested four changes. I checked each against this plan and against your Stash (v0.31.1). Only the third one helps with ELO.
+
+**Decided (Brian, Oct 22):** point 3 goes into Stage 4. Points 1 and 2 are not being done. Point 4 is a separate change outside this rework; it was started as its own session, from `main`.
+
+1. **Run the ELO setup as a backend plugin task** (a `tasks:` entry in the yml, run by Stash's built-in JS runtime, with progress in Stash's job queue).
+   - **Decided: not doing it.**
+   - The benefits are progress in the job queue, a cancel button, and setup continuing after the tab closes. But setup took about 0.5 seconds for your 521 rated scenes, so there's nothing to watch or cancel. Interrupting it is already safe, because running it again overwrites what was written.
+   - The costs:
+     - A second copy of the setup logic in a different JavaScript runtime (Stash's built-in one, which runs older JavaScript), built and shipped separately.
+     - Passing the two answers to the task as arguments.
+     - Polling the job queue to know when it's done.
+   - The setup screen would still have to run in the browser anyway, because the preview and the live "N ratings change" count need the scene list there.
+   - Worth revisiting only if a very large library (tens of thousands of scenes) makes setup take minutes.
+2. **A `Scene.Update.Post` hook that updates ELO when a rating is edited by hand in Stash.**
+   - **Decided: not doing it, because it reverses a decision above.** The plan makes ELO the only authority after setup: a star edit in Stash lasts only until Stash Battle next writes that scene. A hook would make Stash ratings an input again.
+   - It also only makes sense for one option:
+     - **Percentile:** a rating is a rank, not a score. Setting a scene to 80 by hand doesn't say what its ELO should be, because the answer depends on every other scene.
+     - **Don't update:** Stash ratings and ELO are meant to drift apart.
+     - **Straight-line:** a hand-set 80 could become ELO 1800 (`seed(80)`). But that throws away the scene's real ELO, which can sit beyond the 1-100 range.
+   - Other problems:
+     - Stash runs hooks for every scene update (scans, other plugins, bulk edits).
+     - Stash Battle's own rating writes would trigger the hook, so it needs a guard.
+     - Hooks need a backend plugin (point 1's runtime).
+   - If hand edits should count later, the simpler version is a "Re-seed from my rating" action on the setup or settings screen, not a hook.
+3. **Keep Stash's own pages up to date after Stash Battle writes.**
+   - **Decided: yes, in Stage 4.** This one helps with ELO updates.
+   - Stash Battle sends its writes with plain `fetch`, so Stash's own page cache (Apollo) never hears about them. A scene list or scene page that's already loaded keeps showing the old rating (and old ELO custom fields) until it's refreshed.
+   - That matters most for Percentile: one battle can shift a few other scenes' ratings, and turning the option on rewrites hundreds.
+   - **Confirmed on your Stash:**
+     - `PluginApi.utils.StashService.getClient()` returns Stash's Apollo client, with `cache.modify`, `cache.evict` and `cache.gc`.
+     - `StashService.evictQueries` is Stash's own helper for dropping cached query results.
+     - The cache held the 40 scenes on the Scenes page and one cached `findScenes` result.
+   - **How:**
+     - A small helper, `refreshStashCache(changed)`, in `src/graphql.ts`.
+     - After every write (`writeElo`, `writeStashRatings`, setup, Reset ELO), it updates each changed scene's cached `rating100` / `custom_fields` with `cache.modify`, so lists show the new values at once.
+     - When ratings changed, it also evicts cached `findScenes` results, so lists sorted by rating re-sort on their next render.
+     - If `PluginApi` or the client isn't there, it quietly does nothing.
+   - **To verify then:** a scene list open behind Stash Battle shows the new ratings after closing it, without a page refresh.
+4. **Replace the page-wide `MutationObserver` in `main.ts` with a navbar patch and `stash:location`.**
+   - **Decided: yes, but as its own change outside the 3.0 ELO rework** (its own session and branch, from `main`). It has nothing to do with ELO.
+   - Today the observer re-injects the nav button on every DOM change anywhere on the page.
+   - **Confirmed on your Stash:**
+     - `PluginApi.patch` exists.
+     - `MainNavBar.UtilityItems` and `MainNavBar.MenuItems` are patchable components.
+     - `PluginApi.Event` is an event target (for `stash:location`).
+   - The navbar has broken before ("Fix navbar utility items disappearing alongside other plugins"), so this needs testing alongside other plugins that add navbar items.
+
 ## Stages (review point after each)
 
 1. **ELO core.** (Done; see [true-elo-handoff.md](true-elo-handoff.md) for what was built and verified.)
@@ -225,10 +274,12 @@ flowchart LR
    - New [src/score.ts](src/score.ts) with `elo`, `isRated`, `games`, `seed`, `effectiveElo`, `percentileRatings` (ELO ranking to a map from scene id to 1-100), `linearRating` (ELO to 1-100, inverse of `seed`), `compareByElo`, `sortByElo` and `eloInsertionIndex` (named so it doesn't clash with the private `insertionIndex` in `pairs.ts`, which Stage 3 removes).
    - Add the Stash capability check (`sceneCustomFieldsSupported` in `graphql.ts`, checked in `openModal`).
    - Unit tests in `tests/*.test.ts`, run with `npm test` (`scripts/test.mjs` bundles them with esbuild, then runs `node --test`).
-2. **Write path and setup.**
+2. **Write path and setup.** (Done; see [true-elo-handoff.md](true-elo-handoff.md).)
    - `writeElo` and `clearElo` in [src/rating.ts](src/rating.ts), each one `sceneUpdate` carrying the ELO custom fields only. `updateSceneRating` stays until Stage 3, because the modes still write rating100 until then.
    - The one-time ELO setup: logic in a new [src/eloSetup.ts](src/eloSetup.ts), and a screen in a new [src/ui/setupScreen.ts](src/ui/setupScreen.ts). It covers both choices, batched writes with progress, and the `eloSetupAt` / `eloSetupMode` flags in the plugin config ([src/settings.ts](src/settings.ts)).
    - Remove fun mode: the setting, the sandbox in `cache.ts`, `ratingsEnabled()`, the fun mode badge and the "not saved" notes on the end screens.
+   - Also added here because setup needs them: the `stashRatings` setting (types, defaults, `normalize()`; the dropdown is still Stage 4), and `writeStashRatings` in `rating.ts` (the one-request grouped write that Stage 4's debounced `syncStashRatings` wraps).
+   - Every setup run, not only Reset ELO, removes the ELO of scenes without a Stash rating under "Use my ratings", so re-running an interrupted setup gives the same result as a clean one.
 3. **Modes, cache and UI.**
    - Move every `rating100` read and sort in [src/pairs.ts](src/pairs.ts), [src/ui/mainUI.ts](src/ui/mainUI.ts) and [src/cache.ts](src/cache.ts) onto `score.ts`. That covers `repositionSceneInArray`, `insertionIndex`, `findLowestRated`, the placement helpers and `resolveComparison`.
    - Remove the Gauntlet mode and add Placement's "Start from the bottom" option: the `placementFromBottom` setting (types, defaults, `normalize()`, yml, Settings tab row), the `fromBottom` run flag, the streak badge and the victory screen.
@@ -243,6 +294,7 @@ flowchart LR
    - Add it as a dropdown row in the Settings tab ([src/ui/settingsPanel.ts](src/ui/settingsPanel.ts)), with the new select control and the description line. It isn't added to [plugins/stash-battle/stash-battle.yml](plugins/stash-battle/stash-battle.yml).
    - Remove `funMode` from all of these, including the yml.
    - `syncStashRatings` in [src/rating.ts](src/rating.ts): picks the percentile or straight-line target, then debounced, only changed scenes, grouped by value, and sent as one aliased request.
+   - `refreshStashCache` in [src/graphql.ts](src/graphql.ts) (point 3 of "Plugin API ideas"): called after every ELO and Stash rating write (`writeElo`, `clearElo`, `writeStashRatings`, setup, Reset ELO), so Stash's own pages show the new values without a refresh.
    - Side effects go in `onSettingChanged` ([src/ui/modal.ts](src/ui/modal.ts)): the warning and full sync when switching to Percentile or Straight-line, reverting on cancel, and the "ratings aren't being changed" note.
    - A Reset ELO button in the Settings tab that re-opens the setup choices after a confirmation.
 5. **Docs and release.**
@@ -283,6 +335,7 @@ flowchart LR
     - the sync spreads ratings from 1 to 100 by rank, with ties sharing the middle value,
     - Stash's scene list sorted by rating then matches Battle's order.
   - On Percentile, a Swiss battle writes only the few scenes whose rating changed, in a single request (check the browser's network tab).
+  - With a Stash scene list open behind Stash Battle, closing Stash Battle shows the new ratings (and a rating-sorted list re-sorts) without a page refresh.
   - Switching to Straight-line right after a "Use my ratings" setup writes nothing and shows no warning. After some battles, only the battled scenes' ratings change.
   - Switching between Percentile and Straight-line shows the warning and resyncs. Cancelling the warning puts the dropdown back.
   - The setup screen doesn't show again on the next open. An interrupted setup (close the tab partway) shows the screen again.
@@ -320,4 +373,5 @@ flowchart LR
 - **New scenes with stars:** a scene added after setup with stars but no ELO battles as unrated. It also won't match Stash filters like "rating is null", so it can't be singled out with a filter for unrated scenes.
 - **Rating-based filters stop shrinking on "Don't update".** Filters like "rating is null" don't shrink as you battle, because Stash ratings aren't being written. Filtering on the `stash_battle_elo` custom field works instead, and the README should mention it.
 - **Cache size:** fetching `custom_fields` includes other plugins' JSON, so the cache gets slightly bigger.
-- **Number round-trip:** custom field values have to come back as numbers. `score.ts` already accepts numeric strings as a fallback. Confirm the real type once Stage 2 writes the first values; the other plugins' existing fields come back as strings, but they store JSON text.
+- **Number round-trip:** confirmed in Stage 2: custom field values come back as JSON numbers, decimals included. `score.ts` still accepts numeric strings as a fallback.
+- **Every write touches `updated_at`:** Stash updates a scene's "updated" time on any write, even a bulk write that changes nothing visible. Setup and Stash rating syncs therefore change it for every scene they write.

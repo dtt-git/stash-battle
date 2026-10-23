@@ -1,10 +1,10 @@
 // The battle modal: opens/closes, wires controls and keyboard shortcuts.
 
-import { clearSceneCache, resetSandbox } from "../cache";
+import { clearSceneCache } from "../cache";
 import { getSceneIdFromUrl, sceneCustomFieldsSupported } from "../graphql";
 import { SCENE_MISSING_EVENT } from "../rating";
 import { loadSettings } from "../settings";
-import { resetRunState, resetShuffle, state } from "../state";
+import { isEloSetupPending, resetRunState, resetShuffle, state } from "../state";
 import { loadState, saveState } from "../storage";
 import type { Mode, Settings } from "../types";
 import { cancelDeleteDialog, isDeleteDialogOpen } from "./deleteDialog";
@@ -17,11 +17,11 @@ import {
   restoreCurrentPair,
   skipPair,
   updateClimbPoolWarning,
-  updateFunBadge,
   updateModeInfo,
   verifyCurrentPair,
 } from "./mainUI";
 import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
+import { hideSetupScreen, showSetupScreen } from "./setupScreen";
 
 // Track keyboard handler so we can remove it on close
 let modalKeyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -48,15 +48,6 @@ function onSettingChanged(key: keyof Settings): void {
       loadNewPair();
       updateClimbPoolWarning();
       break;
-    case "funMode":
-      // Switching between real and sandbox ratings mid-run would mix the two: start fresh
-      resetSandbox();
-      resetShuffle();
-      resetRunState();
-      saveState();
-      updateFunBadge();
-      loadNewPair();
-      break;
     case "previewVolume":
     case "autoplayPreviews":
       applyPreviewSettings();
@@ -72,9 +63,17 @@ function onSettingChanged(key: keyof Settings): void {
 export async function openModal(): Promise<void> {
   console.log("[Stash Battle] 🎯 Opening modal...");
 
-  const [, customFieldsOk] = await Promise.all([loadSettings(), sceneCustomFieldsSupported()]);
+  const [settingsOk, customFieldsOk] = await Promise.all([loadSettings(), sceneCustomFieldsSupported()]);
   if (!customFieldsOk) {
-    showUnsupportedStash();
+    showMessageModal(
+      "Stash Battle needs a newer version of Stash: it stores each scene's ELO in scene custom fields, which this Stash doesn't have. Update Stash to use Stash Battle.",
+    );
+    return;
+  }
+  // Without settings, Battle can't tell whether the one-time ELO setup already ran (and running
+  // it again would overwrite every scene's ELO)
+  if (!settingsOk && isEloSetupPending()) {
+    showMessageModal("Stash Battle couldn't load its settings from Stash. Close Stash Battle and try again.");
     return;
   }
   addKeySwallowers();
@@ -131,9 +130,13 @@ export async function openModal(): Promise<void> {
     state.currentRanks = { left: null, right: null };
   }
 
-  // Check for existing hidden modal - reuse it
+  // Check for existing hidden modal - reuse it (unless it's a message modal, see showMessageModal)
   const existingModal = document.getElementById("sb-modal");
-  if (existingModal && existingModal.classList.contains("sb-modal-hidden")) {
+  if (
+    existingModal &&
+    existingModal.classList.contains("sb-modal-hidden") &&
+    existingModal.querySelector("#stash-battle-container")
+  ) {
     console.log("[Stash Battle] ♻️ Reusing existing modal");
     existingModal.classList.remove("sb-modal-hidden", "sb-modal-closing");
     document.body.classList.add(BATTLE_OPEN_CLASS);
@@ -141,7 +144,6 @@ export async function openModal(): Promise<void> {
     // Always reopen on the Battle tab; settings may have changed elsewhere meanwhile
     showTab(existingModal, "battle");
     syncSettingsControls(existingModal);
-    updateFunBadge();
 
     // Re-register keyboard handler
     if (modalKeyHandler) {
@@ -152,6 +154,13 @@ export async function openModal(): Promise<void> {
     // Focus modal content
     const modalContent = existingModal.querySelector<HTMLElement>(".sb-modal-content");
     if (modalContent) modalContent.focus();
+
+    // The one-time ELO setup shows in place of the battle until it's done
+    if (isEloSetupPending()) {
+      showSetupScreen(existingModal, () => void loadNewPair(getSceneIdFromUrl()));
+      return;
+    }
+    hideSetupScreen(existingModal);
 
     // If filters changed, no pair, or forced scene, load new content
     if (forceSceneBattle) {
@@ -167,7 +176,7 @@ export async function openModal(): Promise<void> {
     return;
   }
 
-  // Remove any non-hidden existing modal (shouldn't happen, but safety)
+  // Remove any other existing modal (a message modal, or a visible one, which shouldn't happen)
   if (existingModal) existingModal.remove();
 
   // Initialize filter params tracking
@@ -251,7 +260,6 @@ export async function openModal(): Promise<void> {
 
       try {
         await clearSceneCache();
-        resetSandbox();
 
         // Reset shuffle state since scene list is being refreshed
         resetShuffle();
@@ -270,8 +278,11 @@ export async function openModal(): Promise<void> {
     });
   }
 
-  // Load initial comparison or restore saved pair
-  if (forceSceneBattle) {
+  // Load initial comparison or restore saved pair, after the one-time ELO setup if it's pending
+  if (isEloSetupPending()) {
+    console.log("[Stash Battle] 🧭 ELO setup not done yet, showing setup");
+    showSetupScreen(modal, () => void loadNewPair(getSceneIdFromUrl()));
+  } else if (forceSceneBattle) {
     console.log(`[Stash Battle] 🎯 Starting battle with scene ${scenePageId} from scene page`);
     loadNewPair(scenePageId);
   } else if (hasState && state.currentPair.left && state.currentPair.right && !filtersChanged) {
@@ -317,8 +328,8 @@ export async function openModal(): Promise<void> {
       return;
     }
 
-    // Battle shortcuts only apply on the Battle tab
-    if (getActiveTab() !== "battle") return;
+    // Battle shortcuts only apply on the Battle tab, once ELO setup is done
+    if (getActiveTab() !== "battle" || isEloSetupPending()) return;
 
     // Let the volume slider / number input keep their own arrow keys (checkboxes don't need them)
     const active = document.activeElement as HTMLInputElement | null;
@@ -350,8 +361,8 @@ export async function openModal(): Promise<void> {
   document.addEventListener("keydown", modalKeyHandler, true);
 }
 
-/** Battle stores ELO in scene custom fields: on a Stash without them, explain instead of loading. */
-function showUnsupportedStash(): void {
+/** A modal with just a message, shown instead of Battle (e.g. this Stash lacks custom fields). */
+function showMessageModal(message: string): void {
   document.getElementById("sb-modal")?.remove();
   const modal = document.createElement("div");
   modal.id = "sb-modal";
@@ -361,10 +372,7 @@ function showUnsupportedStash(): void {
         <button class="sb-modal-close" aria-label="Close">✕</button>
         <div class="sb-error-screen">
           <div class="sb-error-icon">⚠️</div>
-          <p class="sb-error-message">
-            Stash Battle needs a newer version of Stash: it stores each scene's ELO in scene custom
-            fields, which this Stash doesn't have. Update Stash to use Battle.
-          </p>
+          <p class="sb-error-message">${message}</p>
         </div>
       </div>
     `;

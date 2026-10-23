@@ -21,14 +21,13 @@ const SECTIONS: { title: string; rows: SettingRow[] }[] = [
     rows: [
       { key: "filterOpponents", title: "Use filtered scenes for both sides", hint: "Opponents also come from the current scene list filter instead of your whole rated library" },
       { key: "unratedRating", title: "Unrated scene rating", hint: "What unrated scenes count as in Swiss. 0 starts them at the bottom; 50 is closer to a classic ELO start" },
-      { key: "funMode", title: "Fun mode", hint: "Battle without changing any ratings" },
     ],
   },
   {
     title: "Scenes",
     rows: [
       { key: "autoplayPreviews", title: "Autoplay previews", hint: "Loop both previews silently; hover a card to hear it" },
-      { key: "pauseMediaOnOpen", title: "Pause playing video when Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
+      { key: "pauseMediaOnOpen", title: "Pause playing video when Stash Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
       { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
       { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" },
     ],

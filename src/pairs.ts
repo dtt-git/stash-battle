@@ -1,6 +1,6 @@
 // Matchmaking: build the scene pairs for each comparison mode.
 
-import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached, sandboxPool } from "./cache";
+import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached } from "./cache";
 import { CLIMB_OPPONENT_PICK_WINDOW, SWISS_OPPONENT_REACH_INITIAL, SWISS_OPPONENT_REACH_MULTIPLIER } from "./constants";
 import { effectiveRating } from "./elo";
 import { readFilters, type ListFilters } from "./filters";
@@ -93,7 +93,7 @@ function buildOpponentPool(allScenes: Scene[], leftPool: Scene[], filters: ListF
   return ratedOnly.length >= 1 ? ratedOnly : allScenes;
 }
 
-/** Load the left ("to rate") and full pools. In fun mode both are sandbox copies (see cache.ts). */
+/** Load the left ("to rate") and full pools. */
 async function loadScenePools(
   filters: ListFilters,
 ): Promise<{ leftPool: Scene[]; allScenes: Scene[] }> {
@@ -124,9 +124,6 @@ async function loadScenePools(
   }
 
   state.leftPoolSize = leftPool.length;
-  if (state.settings.funMode) {
-    return { leftPool: sandboxPool(leftPool), allScenes: sandboxPool(allScenes) };
-  }
   return { leftPool, allScenes };
 }
 

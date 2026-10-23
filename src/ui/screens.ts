@@ -1,6 +1,5 @@
 // Victory and placement end-screens for gauntlet/champion runs.
 
-import { ratingsEnabled } from "../rating";
 import { resetRunState, state } from "../state";
 import { saveState } from "../storage";
 import type { Scene } from "../types";
@@ -29,7 +28,7 @@ function buildEndScreenHtml(
           }
         </div>
         <h3 class="sb-end-screen-name">${title}</h3>
-        <p class="sb-end-screen-stats">${statsHtml}${ratingsEnabled() ? "" : "<br><em>🎈 Fun mode: rating not saved</em>"}</p>
+        <p class="sb-end-screen-stats">${statsHtml}</p>
         <button id="sb-new-gauntlet" class="btn btn-primary">${buttonLabel}</button>
       </div>
     `;

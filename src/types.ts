@@ -3,9 +3,17 @@
 /** The comparison modes the plugin supports. */
 export type Mode = "swiss" | "placement" | "gauntlet" | "champion";
 
+/** How ELO starts at setup: from current Stash ratings, or 1500 for every scene. */
+export type EloStart = "ratings" | "fresh";
+
+/** Whether and how Battle writes Stash ratings from ELO. */
+export type StashRatingsMode = "off" | "percentile" | "linear";
+
 /** User settings, persisted in Stash's plugin configuration (see settings.ts). */
 export interface Settings {
-  funMode: boolean; // Battles never write ratings
+  stashRatings: StashRatingsMode; // Stash ratings written from ELO ("off" never writes them)
+  eloSetupAt: string | null; // When the one-time ELO setup finished (ISO time); null = not yet
+  eloSetupMode: EloStart | null; // How that setup started ELO
   openInNewTab: boolean; // Thumbnail click opens the scene in a new tab
   unratedRating: number; // Rating unrated scenes count as in Swiss ELO math / matchmaking
   previewVolume: number; // 0-100, 0 = muted

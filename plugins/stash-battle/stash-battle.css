@@ -37,18 +37,6 @@
 }
 
 /* Lives in the Battle tab (not the header) so toggling it never moves the tab bar */
-.sb-fun-badge {
-  display: block;
-  width: fit-content;
-  margin: 0 auto 12px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 0.85rem;
-  color: #ffd27a;
-  background: rgba(255, 193, 7, 0.12);
-  border: 1px solid rgba(255, 193, 7, 0.4);
-}
-
 .sb-climb-warning {
   margin: 12px 0 0;
   padding: 8px 12px;
@@ -1187,11 +1175,6 @@ body.sb-battle-open > .modal {
     margin: 2px 40px 10px;
   }
 
-  .sb-fun-badge {
-    margin-bottom: 10px;
-    font-size: 0.8rem;
-  }
-
   /* Modes as a compact segmented row */
   .sb-mode-toggle {
     gap: 4px;
@@ -1363,6 +1346,243 @@ body.sb-battle-open > .modal {
 /* Narrow phones: mode names only, so four modes + ⓘ fit on one row */
 @media (max-width: 400px) {
   .sb-mode-icon {
+    display: none;
+  }
+}
+
+/* ---------- One-time ELO setup (Battle tab, in place of the battle) ---------- */
+
+.sb-setup-active > :not(#sb-setup-area) {
+  display: none !important;
+}
+
+.sb-setup {
+  max-width: 960px;
+  margin: 0 auto;
+  text-align: left;
+  line-height: 1.45;
+}
+
+.sb-setup-title {
+  margin: 4px 0 8px;
+  font-size: 1.4rem;
+  text-align: center;
+}
+
+.sb-setup-subtitle {
+  margin: 18px 0 6px;
+  font-size: 1rem;
+}
+
+.sb-setup-intro {
+  margin: 0 auto 14px;
+  max-width: 720px;
+  color: #ccc;
+  text-align: center;
+}
+
+.sb-setup-questions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.sb-setup-question {
+  margin: 0;
+  padding: 10px 14px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.sb-setup-question legend {
+  width: auto;
+  margin: 0;
+  padding: 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.sb-setup-option {
+  margin: 8px 0;
+}
+
+.sb-setup-option .custom-control-label {
+  cursor: pointer;
+}
+
+.sb-setup-desc {
+  display: block;
+  color: #aaa;
+  font-size: 0.85rem;
+}
+
+.sb-setup-note {
+  margin: 10px 0 0;
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.sb-setup-warning {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  color: #ddd;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  border-radius: 6px;
+}
+
+.sb-setup-actions {
+  margin-top: 18px;
+  text-align: center;
+}
+
+.sb-setup-progress,
+.sb-setup-done {
+  max-width: 560px;
+  padding: 30px 0;
+}
+
+.sb-setup-progress .progress {
+  height: 10px;
+  margin: 16px 0 8px;
+}
+
+.sb-setup-progress-label {
+  text-align: center;
+}
+
+.sb-setup-summary {
+  margin: 12px 0 0;
+  padding-left: 20px;
+}
+
+/* Setup preview: 10 example squares per row; squares shrink rather than wrap */
+
+.sb-rating-preview {
+  --sb-pv-accent: var(--primary, #137cbd);
+}
+
+.sb-pv-legend {
+  margin: 0 0 8px;
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.sb-pv-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 190px;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sb-pv-label {
+  padding-bottom: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sb-pv-note {
+  padding-bottom: 8px;
+  color: #aaa;
+  font-size: 0.8rem;
+}
+
+.sb-pv-squares {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sb-pv-cell {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.sb-pv-elo {
+  height: 1.4em;
+  line-height: 1.4em;
+  margin-bottom: 2px;
+  color: #aaa;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-pv-square {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 44px;
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--sb-pv-accent) 60%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sb-pv-accent) var(--sb-pv-fill, 0%), transparent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  /* Always present but transparent, so "changed" can fade in */
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  transition:
+    background-color 0.4s ease,
+    border-color 0.4s ease,
+    color 0.4s ease,
+    text-shadow 0.4s ease,
+    outline-color 0.4s ease,
+    opacity 0.4s ease,
+    filter 0.4s ease;
+}
+
+.sb-pv-strong {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.sb-pv-unrated {
+  border-style: dashed;
+  border-color: rgba(128, 128, 128, 0.7);
+  background: none;
+  color: #888;
+}
+
+.sb-pv-changed {
+  outline-color: #ffc107;
+}
+
+.sb-pv-muted .sb-pv-square {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-pv-square {
+    transition: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .sb-setup-questions {
+    grid-template-columns: 1fr;
+  }
+
+  .sb-pv-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    margin-bottom: 12px;
+  }
+
+  .sb-pv-label,
+  .sb-pv-note {
+    padding-bottom: 0;
+  }
+
+  .sb-pv-note:empty {
     display: none;
   }
 }

@@ -12,7 +12,9 @@ import type { Settings } from "./types";
 export const PLUGIN_ID = "stash-battle";
 
 export const DEFAULT_SETTINGS: Settings = {
-  funMode: false,
+  stashRatings: "off",
+  eloSetupAt: null,
+  eloSetupMode: null,
   openInNewTab: false,
   unratedRating: 50,
   previewVolume: 50,
@@ -66,3 +68,6 @@ export const SEEDED_GAMES = 10;
 
 /** ELO gap above the top / below the bottom scene when Placement lands a scene at an edge. */
 export const PLACEMENT_EDGE_GAP = 25;
+
+/** ELO setup ("Use my ratings"): aliased sceneUpdate mutations per GraphQL request. */
+export const SETUP_BATCH_SIZE = 50;

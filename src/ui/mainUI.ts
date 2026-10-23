@@ -1,6 +1,6 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
-import { clearFilteredCache, removeSceneEverywhere, sandboxScene } from "../cache";
+import { clearFilteredCache, removeSceneEverywhere } from "../cache";
 import { calculateRatingChanges, effectiveRating } from "../elo";
 import { CLIMB_K_PLAY_COUNT, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
 import { readFilters } from "../filters";
@@ -15,9 +15,9 @@ import {
   loadPoolSize,
   recordPlacementResult,
 } from "../pairs";
-import { ratingsEnabled, updateSceneRating } from "../rating";
+import { updateSceneRating } from "../rating";
 import { findExistingSceneIds } from "../sceneActions";
-import { isRunActive, resetRunState, resetShuffle, state } from "../state";
+import { isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { saveState } from "../storage";
 import type { BattleSide, ComparisonDeltas, Mode, Rank, Scene } from "../types";
 import { confirmDeleteScene } from "./deleteDialog";
@@ -75,7 +75,7 @@ export function createMainUI(): string {
         </div>
 
         <div class="sb-tab-panel" data-panel="battle">
-          <p id="sb-fun-badge" class="sb-fun-badge" ${state.settings.funMode ? "" : "hidden"}>🎈 Fun mode: ratings are not saved</p>
+          <div id="sb-setup-area" class="sb-setup-area" hidden></div>
           <div class="sb-mode-row">
             <div class="sb-mode-toggle">${modeButtons}
             </div>
@@ -136,12 +136,6 @@ export function updatePoolStatus(): void {
     status.innerHTML = `Rating scenes from your whole library${countHtml}<span class="sb-pool-hint"> · filter the Scenes page to narrow it down</span>`;
   }
   status.hidden = false;
-}
-
-/** Show/hide the fun mode badge to match the setting. */
-export function updateFunBadge(): void {
-  const badge = document.getElementById("sb-fun-badge");
-  if (badge) badge.hidden = !state.settings.funMode;
 }
 
 function climbStatusBadge(scene: Scene): number | string | null {
@@ -342,6 +336,8 @@ export function skipPair(): void {
 }
 
 export async function loadNewPair(forcedLeftSceneId: string | null = null): Promise<void> {
+  // No pool loads before the one-time ELO setup has run (it shows in place of the battle)
+  if (isEloSetupPending()) return;
   state.disableChoice = false;
   const comparisonArea = document.getElementById("sb-comparison-area");
   if (!comparisonArea) return;
@@ -362,8 +358,6 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     let forcedLeftScene: Scene | null = null;
     if (forcedLeftSceneId) {
       forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
-      // Fun mode battles only ever touch sandbox copies (see cache.ts)
-      if (forcedLeftScene && !ratingsEnabled()) forcedLeftScene = sandboxScene(forcedLeftScene);
       if (!forcedLeftScene) {
         console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
       }
@@ -475,6 +469,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
 
 /** Render the saved pair, unless one of its scenes was deleted in Stash meanwhile. */
 export async function restoreCurrentPair(): Promise<void> {
+  if (isEloSetupPending()) return;
   state.disableChoice = false;
   const left = state.currentPair.left as Scene;
   const right = state.currentPair.right as Scene;
@@ -604,7 +599,7 @@ function applyModePolicy(
   return { winner: winnerDelta, loser: loserDelta };
 }
 
-/** Run pure ELO math and write any rating changes (to Stash, or in fun mode to the in-memory sandbox). */
+/** Run pure ELO math and write any rating changes to Stash. */
 function resolveComparison(winner: Scene, loser: Scene): ComparisonDeltas {
   const mode = state.currentMode;
   const winnerRating = battleRating(winner);
@@ -907,8 +902,7 @@ const RATING_ANIM_DEFAULT_STEP_MS = 50;
 const RATING_ANIM_MIN_STEP_MS = 8;
 
 function scheduleNextPairAfterAnimations(): void {
-  // Fun mode has no rating animation to wait for
-  setTimeout(() => loadNewPair(), ratingsEnabled() ? 1500 : 600);
+  setTimeout(() => loadNewPair(), 1500);
 }
 
 /** Count-up/down overlay; large jumps speed up so the full count fits within 1400ms. */
@@ -918,7 +912,6 @@ function showRatingAnimation(
   newRating: number,
   isWinner: boolean,
 ): void {
-  if (!ratingsEnabled()) return;
   const change = newRating - oldRating;
   // Create overlay
   const overlay = document.createElement("div");

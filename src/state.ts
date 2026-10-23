@@ -99,3 +99,8 @@ export function isRunActive(): boolean {
       return false;
   }
 }
+
+/** The one-time ELO setup hasn't finished yet, so Battle shows it instead of loading pairs. */
+export function isEloSetupPending(): boolean {
+  return !state.settings.eloSetupAt;
+}

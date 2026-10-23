@@ -1,8 +1,8 @@
 // A scene's ELO (read from its custom fields), ELO ordering, and conversions between ELO and
 // Stash's 1-100 rating. Pure functions: no state, no I/O.
 
-import { ELO_FIELD, ELO_PER_RATING_POINT, ELO_START, GAMES_FIELD } from "./constants";
-import type { Scene } from "./types";
+import { ELO_FIELD, ELO_PER_RATING_POINT, ELO_START, GAMES_FIELD, SEEDED_GAMES } from "./constants";
+import type { EloStart, Scene, StashRatingsMode } from "./types";
 
 /** Custom field values should come back as numbers; numeric strings are accepted too. */
 function readNumber(value: unknown): number | null {
@@ -73,6 +73,51 @@ export function percentileRatings(scenes: Scene[]): Map<string, number> {
     start = end + 1;
   }
   return ratings;
+}
+
+/** Target Stash rating for every scene with an ELO, under the given mode (none for "off"). */
+export function stashRatingTargets(scenes: Scene[], mode: StashRatingsMode): Map<string, number> {
+  if (mode === "percentile") return percentileRatings(scenes);
+  const targets = new Map<string, number>();
+  if (mode === "linear") {
+    for (const scene of scenes) {
+      const value = elo(scene);
+      if (value !== null) targets.set(scene.id, linearRating(value));
+    }
+  }
+  return targets;
+}
+
+/** The Stash ratings a sync would write: scene id to new rating, only where it differs from now. */
+export function stashRatingChanges(scenes: Scene[], mode: StashRatingsMode): Map<string, number> {
+  const current = new Map(scenes.map((scene) => [scene.id, scene.rating100 ?? null]));
+  const changes = new Map<string, number>();
+  for (const [id, rating] of stashRatingTargets(scenes, mode)) {
+    if (current.get(id) !== rating) changes.set(id, rating);
+  }
+  return changes;
+}
+
+/**
+ * ELO and games a scene gets from the one-time setup, or null when it starts unrated.
+ * "ratings" seeds rated scenes from their Stash rating; "fresh" starts every scene at 1500.
+ */
+export function startingElo(scene: Scene, start: EloStart): { elo: number; games: number } | null {
+  if (start === "fresh") return { elo: ELO_START, games: 0 };
+  return scene.rating100 != null ? { elo: seed(scene.rating100), games: SEEDED_GAMES } : null;
+}
+
+/** A copy of the scene as it would be right after setup (its ELO fields replaced). */
+export function afterSetup(scene: Scene, start: EloStart): Scene {
+  const custom_fields = { ...scene.custom_fields };
+  delete custom_fields[ELO_FIELD];
+  delete custom_fields[GAMES_FIELD];
+  const initial = startingElo(scene, start);
+  if (initial) {
+    custom_fields[ELO_FIELD] = initial.elo;
+    custom_fields[GAMES_FIELD] = initial.games;
+  }
+  return { ...scene, custom_fields };
 }
 
 /** Highest ELO first, unrated scenes last. Equal ELOs keep their order (Array.sort is stable). */

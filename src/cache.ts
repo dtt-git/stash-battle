@@ -5,6 +5,8 @@ import {
   CACHE_DB_VERSION,
   CACHE_MAX_AGE_MS,
   CACHE_STORE_NAME,
+  ELO_FIELD,
+  GAMES_FIELD,
 } from "./constants";
 import { getFindFilter, type ListFilters } from "./filters";
 import { FIND_SCENES_QUERY, graphqlQuery } from "./graphql";
@@ -431,6 +433,23 @@ export function updateSceneInCache(sceneId: string, newRating: number): void {
   }
 }
 
+/** Set (or with null, remove) a scene's ELO fields on its cached objects. Order is unchanged. */
+export function setEloInCache(sceneId: string, value: { elo: number; games: number } | null): void {
+  for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+    const scene = pool?.find((s) => s.id === sceneId);
+    if (!scene) continue;
+    const fields = { ...scene.custom_fields };
+    if (value) {
+      fields[ELO_FIELD] = value.elo;
+      fields[GAMES_FIELD] = value.games;
+    } else {
+      delete fields[ELO_FIELD];
+      delete fields[GAMES_FIELD];
+    }
+    scene.custom_fields = fields;
+  }
+}
+
 // Drop a deleted scene from every cache tier and the left-side shuffle
 export async function removeSceneEverywhere(sceneId: string): Promise<void> {
   const without = (scenes: Scene[] | null): Scene[] | null =>
@@ -454,46 +473,4 @@ export async function removeSceneEverywhere(sceneId: string): Promise<void> {
     }
   }
   console.log(`[Stash Battle] 🗑️ Removed scene ${sceneId} from caches`);
-}
-
-// --- Fun mode sandbox ---
-//
-// In fun mode, battles run their normal logic but ratings live only in memory: pools are served
-// as copies of the cached scenes (one copy per scene id), re-sorted by those copies' ratings, and
-// rating writes update the copies instead of Stash or the real cache.
-
-const funSandbox = new Map<string, Scene>();
-
-/** Fun-mode copy of a scene, created from the real one on first use. */
-export function sandboxScene(scene: Scene): Scene {
-  let copy = funSandbox.get(scene.id);
-  if (!copy) {
-    copy = { ...scene };
-    funSandbox.set(scene.id, copy);
-  }
-  return copy;
-}
-
-/** A real (rating-sorted) pool as sandbox copies, re-sorted by their in-memory ratings. */
-export function sandboxPool(pool: Scene[]): Scene[] {
-  // Stable sort: ties keep the real cache's order, unrated (0) stay last
-  return pool.map(sandboxScene).sort((a, b) => (b.rating100 ?? 0) - (a.rating100 ?? 0));
-}
-
-/** Fun-mode rating write: updates the in-memory copy only. */
-export function setSandboxRating(sceneId: string, rating100: number | null): void {
-  const real = funSandbox.has(sceneId) ? null : state.memoryCache.allScenes?.find((s) => s.id === sceneId);
-  const copy = funSandbox.get(sceneId) ?? (real ? sandboxScene(real) : null);
-  if (copy) copy.rating100 = rating100;
-}
-
-/** Forget all fun-mode ratings (fun mode toggled, cache refreshed). */
-export function resetSandbox(): void {
-  funSandbox.clear();
-}
-
-/** The scene's saved rating (from the real cache), for display while fun mode shows sandbox copies. */
-export function savedRating(scene: Scene): number | null | undefined {
-  const real = state.memoryCache.allScenes?.find((s) => s.id === scene.id);
-  return real ? real.rating100 : scene.rating100;
 }
