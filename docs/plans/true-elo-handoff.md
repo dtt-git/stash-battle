@@ -12,6 +12,8 @@ Pick-up notes for continuing the work in [true-elo-mode.md](true-elo-mode.md) in
 | 4. "Stash ratings" dropdown + sync, Reset ELO, Stash page-cache refresh | Done, reviewed, committed. |
 | 5. Docs, CHANGELOG, version 3.0.0 | Done and committed; pushed with a PR into `main`. |
 
+**Next work (planned Oct 23, not started):** [stats-and-tiers.md](stats-and-tiers.md): win chances, provisional "?" and opt-in tiers on the cards, a Stats tab, and records stored in Stash. Its "Working notes" list what changed after this handoff.
+
 - **Branch:** `elo-mode`, created from `main` at `d3e740f`.
 - **Commits:** Stages 1-5 are separate commits on `elo-mode` (plus Stage 2's review polish and the navbar merge), pushed with a PR into `main` at Brian's request.
 - **Navbar change:** `PluginApi.patch` for the nav button was made on its own branch, `claude/amazing-rubin-4ce4c3` (commit `9e74ce2`, from `main`). It's now merged into `elo-mode` (merge `a00e75d`). It touches `main.ts`, `navButton.ts` and `deleteDialog.ts` and adds `src/pluginApi.ts`. Checked after the merge: the button shows on Scenes, hides on Performers and opens the ELO setup.
