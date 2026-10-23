@@ -25,6 +25,7 @@ import {
   verifyCurrentPair,
 } from "./mainUI";
 import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
+import { refreshSceneElo } from "./sceneElo";
 import { hideSetupScreen, isSetupRunning, showSetupScreen } from "./setupScreen";
 import { stashRatingsOption } from "./stashRatingsText";
 
@@ -525,8 +526,9 @@ export function closeModal(): void {
 
   cancelDeleteDialog();
   cancelConfirmDialog();
-  // Stash's scene lists show the ratings written while Stash Battle was open
+  // Stash's scene lists show the ratings written while Stash Battle was open, and a scene page its ELO
   holdStashListRefresh(false);
+  refreshSceneElo();
   // Closing Stash Battle on Reset ELO's choices (before Start) cancels the reset
   if (state.resettingElo && !isSetupRunning()) {
     state.resettingElo = false;

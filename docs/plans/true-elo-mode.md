@@ -1,6 +1,6 @@
 ---
 name: True ELO mode
-overview: Replace the 1-100 rating system with a standard, uncapped ELO stored in Stash custom fields. By default Battle never touches Stash ratings. A "Stash ratings" dropdown (Don't update / Percentile / Straight-line), which replaces fun mode, lets users opt in to having Battle write Stash ratings from ELO.
+overview: Replace the 1-100 rating system with a standard, uncapped ELO stored in Stash custom fields. By default Battle never touches Stash ratings. A "Stash ratings" dropdown (Don't update / Straight-line / Percentile), which replaces fun mode, lets users opt in to having Battle write Stash ratings from ELO.
 todos:
   - id: stage1-core
     content: "Stage 1: ELO core - custom_fields in SCENE_FRAGMENT/types, constants, standard ELO math, src/score.ts (seed, percentile and straight-line mappings, client-side sort), Stash capability check"
@@ -33,12 +33,12 @@ Impact: **Large**. Built in 5 stages, with a review point after each one.
 - **Battle never changes Stash ratings by default.**
   - A **"Stash ratings"** dropdown replaces fun mode. ELO is always saved; the dropdown decides whether and how Stash's rating is written:
     - **Don't update** (default): Battle never writes Stash ratings.
-    - **Percentile:** rating = the scene's rank in the library. The top scene is 100, the middle one 50, the bottom one 1, evenly spread. Nothing bunches up at 100, but a rating can shift by a point when another scene passes it.
     - **Straight-line:** rating comes from the ELO number itself (1500 = 50, 10 ELO per point, range 1010-2000), the inverse of `seed`. Gaps between scenes show, and a rating changes only when that scene battles, but very strong or very weak scenes stick at 100 or 1.
+    - **Percentile:** rating = the scene's rank in the library. The top scene is 100, the middle one 50, the bottom one 1, evenly spread. Nothing bunches up at 100, but a rating can shift by a point when another scene passes it.
   - It starts on **Don't update for everyone after the upgrade**, including existing users who had ratings updating. The setup screen and the CHANGELOG tell them where to turn updates back on.
   - Fun mode ("nothing saved") is removed.
 - **The only ways Stash ratings ever change:**
-  1. **Switching the dropdown to Percentile or Straight-line** (or between them). A warning shows how many ratings would change, then every rated scene is synced in one go.
+  1. **Switching the dropdown to Straight-line or Percentile** (or between them). A warning shows how many ratings would change, then every rated scene is synced in one go.
   2. **While it's on, every battle** writes the scenes whose Stash rating changed:
      - Percentile: the scenes in the battle plus a few they passed, or more when a new scene joins the ranking.
      - Straight-line: only the scenes whose ELO changed in that battle.
@@ -168,7 +168,7 @@ flowchart LR
 - **New control:** the Settings tab has no dropdown yet, so `settingControl` in [src/ui/settingsPanel.ts](src/ui/settingsPanel.ts) gets a `<select data-setting>` case. It's bound on `change`, and `syncSettingsControls` covers selects.
 - **Under the dropdown:** a one-line description of the selected option, so the difference is clear without the docs.
 - **Don't update:** battles write ELO and the battle count only. The Battle tab shows a small note: "Stash ratings aren't being changed · change in Settings".
-- **Switching to Percentile or Straight-line** (from any other option):
+- **Switching to Straight-line or Percentile** (from any other option):
   - A warning explains what the chosen option does, shows how many scenes' ratings would change, and suggests a backup.
   - Confirming runs a full sync with progress.
   - Cancelling puts the dropdown back to its previous value.
@@ -299,7 +299,7 @@ Another agent read Stash's plugin architecture docs and suggested four changes. 
    - Remove `funMode` from all of these, including the yml.
    - `syncStashRatings` in [src/rating.ts](src/rating.ts): picks the percentile or straight-line target, then debounced, only changed scenes, grouped by value, and sent as one aliased request.
    - `refreshStashCache` in [src/graphql.ts](src/graphql.ts) (point 3 of "Plugin API ideas"): called after every ELO and Stash rating write (`writeElo`, `clearElo`, `writeStashRatings`, setup, Reset ELO), so Stash's own pages show the new values without a refresh.
-   - Side effects go in `onSettingChanged` ([src/ui/modal.ts](src/ui/modal.ts)): the warning and full sync when switching to Percentile or Straight-line, reverting on cancel, and the "ratings aren't being changed" note.
+   - Side effects go in `onSettingChanged` ([src/ui/modal.ts](src/ui/modal.ts)): the warning and full sync when switching to Straight-line or Percentile, reverting on cancel, and the "ratings aren't being changed" note.
    - A Reset ELO button in the Settings tab that re-opens the setup choices after a confirmation.
 5. **Docs and release.**
    - Rewrite the Rating / ELO System section of [DOCUMENTATION.md](DOCUMENTATION.md) and remove its fun mode notes. Update its Settings, GraphQL and Pitfalls sections.
@@ -368,8 +368,8 @@ Another agent read Stash's plugin architecture docs and suggested four changes. 
 - **Existing users lose automatic rating updates unless they opt back in.** That's deliberate: the setup screen preselects Don't update. Its Stash ratings question, and the CHANGELOG, tell them how to turn updates back on (Straight-line with Use my ratings is the closest match to today's behaviour).
 - **A fresh start with updates on flattens every Stash rating to 50.** That's deliberate, but destructive. The warning has to say so plainly and show the count.
 - **Percentile reshapes ratings.** Percentile ratings are spread evenly, so most scenes' ratings change once when it's turned on. A scene a user rated 100 by hand may become 97. The warning has to say this and show the count.
-- **Percentile ratings are relative.** A 50 means "the middle of my library", not "decent". Adding or placing a scene nudges others by a point, and each changed scene's "updated" time in Stash changes.
 - **Straight-line bunches at the ends.** ELO has no cap, so scenes that keep winning pile up at 100 (and losers at 1) over time, and Stash can't tell them apart. Battle's own ranking is unaffected. The dropdown's description should mention this.
+- **Percentile ratings are relative.** A 50 means "the middle of my library", not "decent". Adding or placing a scene nudges others by a point, and each changed scene's "updated" time in Stash changes.
 - **Switching between the two** rewrites many ratings each time. The warning covers this, but people experimenting should take a backup first.
 - **Top scenes can lose ELO in Champion.** Beaten opponents now lose ELO there. Established scenes have a lower K, so a single upset moves them only a little.
 - **Gauntlet users lose a mode button.** The climb now lives under Placement's "Start from the bottom" setting. It also jumps up the ladder (1, 2, 4, 8... ranks) instead of fighting every nearby scene in turn, and it no longer falls step by step after a loss. Runs are much shorter. The CHANGELOG and the Placement tooltip should point Gauntlet users to the setting.

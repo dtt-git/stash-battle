@@ -26,14 +26,16 @@ ELO is saved in each scene's custom fields, so **Stash Battle doesn't touch your
 
 - **Stash ratings update mode** (Settings): your choice of whether Stash Battle writes your Stash ratings:
   - **Don't update** (default): ELO is saved; your star ratings stay as they are.
-  - **Percentile**: rating = percentile in your library. 90 means the scene ranks above about 90% of your scenes; the top scene is 100, the bottom 1.
   - **Straight-line**: rating = ELO converted back (1500 = 50, 10 ELO per point). Very high or low scenes stop at 100 or 1.
+  - **Percentile**: rating = percentile in your library. 90 means the scene ranks above about 90% of your scenes; the top scene is 100, the bottom 1.
 
-  Switching to Percentile or Straight-line tells you how many ratings will change before anything is written. While an update mode is on, each battle updates only the ratings that changed, and Stash's own pages show the new ratings without a refresh.
+  Switching to Straight-line or Percentile tells you how many ratings will change before anything is written. While an update mode is on, each battle updates only the ratings that changed, and Stash's own pages show the new ratings without a refresh.
 
 - **Filtering**: Apply any filters on the scenes page before opening Stash Battle. What you see on the scenes page is what you get in Stash Battle, in every mode; a line above the cards shows whether you're rating your filter or your whole library, and how many scenes that is. By default, filtered scenes appear on the left (scenes to rate) and opponents come from your full library on the right.
 
 - **Scene cards** show each scene's ELO and rank (`ELO 1740 · #50`), how many battles it has had, and its Stash rating.
+
+- **On Stash's scene pages**, the same `ELO 1740 · #50` sits next to the play count and O count, with a ⚔ icon. Click it to battle that scene.
 
 - **Settings tab** (next to the Battle tab; most also under Stash's Settings → Plugins). Saves to Stash:
   - **Stash ratings update mode** and **Reset ELO** (see above)
@@ -84,7 +86,7 @@ Recommend saving a backup of your database beforehand (Settings → Tasks → Ba
 6. Click a scene (or press ← / →) to pick the winner; Space skips the pair
 7. Watch your rankings evolve over time!
 
-You can also open Stash Battle on a scene page, which puts that scene into a battle right away.
+You can also open Stash Battle on a scene page (the **Battle** button, or the ELO next to the play count), which puts that scene into a battle right away.
 
 Settings live in the **Settings** tab next to **Battle**.
 

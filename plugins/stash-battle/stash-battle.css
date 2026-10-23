@@ -1772,3 +1772,28 @@ body.sb-battle-open > .modal {
   gap: 8px;
   margin-top: 14px;
 }
+
+/* ---- Stash's own pages ---- */
+
+/* Scene page: "ELO 1740 · #50" next to Play Count and O Count. One Stash "minimal" button, so
+   the icon and text highlight together; padding and gap match the count buttons' icon + value.
+   Opens Stash Battle. */
+.scene-toolbar .sb-scene-elo-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.375rem 0.5rem;
+  white-space: nowrap;
+}
+
+/* Stash gives .fa-icon side margins; its count buttons drop them, so this does too */
+.scene-toolbar .sb-scene-elo-button .fa-icon {
+  margin: 0;
+}
+
+/* Scene page Custom Fields: Stash cuts names at 130px, which hides the end of ours
+   (stash_battle_battles). Widened for the whole list so the values still line up. */
+.custom-fields:has(.detail-item[class*="custom-field-stash_battle_"]) .detail-item-title {
+  width: 22ch;
+  max-width: 22ch;
+}

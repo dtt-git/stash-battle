@@ -1860,14 +1860,14 @@
   var STASH_RATINGS_OPTIONS = [
     { value: "off", label: "Don't update", desc: "ELO is saved; your Stash ratings stay as they are." },
     {
-      value: "percentile",
-      label: "Percentile",
-      desc: "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1."
-    },
-    {
       value: "linear",
       label: "Straight-line",
       desc: "Rating = ELO converted back (1500 = 50, 10 ELO per point). Very high or low scenes stop at 100 or 1."
+    },
+    {
+      value: "percentile",
+      label: "Percentile",
+      desc: "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1."
     }
   ];
   function stashRatingsOption(value) {
@@ -2585,6 +2585,109 @@
     setTimeout(() => overlay.remove(), RATING_ANIM_MAX_TOTAL_MS);
   }
 
+  // src/ui/icons.ts
+  var SWORDS_PATHS = `
+  <path fill="currentColor" d="m24 29 5-5L6 1H1v5z"/>
+  <path fill="currentColor" d="M1 1v5l23 23 2.5-2.5z"/>
+  <path fill="currentColor" d="M33.424 32.808c.284-.284.458-.626.531-.968l-5.242-6.195-.7-.702c-.565-.564-1.57-.473-2.249.205l-.614.612c-.677.677-.768 1.683-.204 2.247l.741.741 6.15 5.205c.345-.072.688-.247.974-.532z"/>
+  <path fill="currentColor" d="M33.424 32.808c.284-.284.458-.626.531-.968l-1.342-1.586-.737 3.684c.331-.077.661-.243.935-.518zm-3.31-5.506-.888 4.44 1.26 1.067.82-4.1zm-1.4-1.657-.702-.702a1.2 1.2 0 0 0-.326-.224l-.978 4.892 1.26 1.066.957-4.783zm-2.402-.888a2 2 0 0 0-.548.392l-.614.61a2 2 0 0 0-.51.86c-.143.51-.047 1.036.306 1.388l.596.596zm0 0q0-.003 0 0"/>
+  <path fill="currentColor" d="M33.25 36a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5M29.626 22.324a1.034 1.034 0 0 1 0 1.462l-6.092 6.092a1.032 1.032 0 0 1-1.686-.336 1.03 1.03 0 0 1 .224-1.126l6.092-6.092a1.033 1.033 0 0 1 1.462 0"/>
+  <path fill="currentColor" d="M22.072 31.627a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5M29.626 24.073a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5"/>
+  <path fill="currentColor" d="M22.072 30.877a1 1 0 1 0 0-2 1 1 0 0 0 0 2M29.626 23.323a1 1 0 1 0 0-2 1 1 0 0 0 0 2M33.903 29.342a.76.76 0 0 1 0 1.078l-3.476 3.475a.762.762 0 0 1-1.078-1.078l3.476-3.475a.76.76 0 0 1 1.078 0M12 29l-5-5L30 1h5v5z"/>
+  <path fill="currentColor" d="M35 1v5L12 29l-2.5-2.5z"/>
+  <path fill="currentColor" d="M2.576 32.808a1.95 1.95 0 0 1-.531-.968l5.242-6.195.7-.702c.565-.564 1.57-.473 2.249.205l.613.612c.677.677.768 1.683.204 2.247l-.741.741-6.15 5.205a1.95 1.95 0 0 1-.974-.532z"/>
+  <path fill="currentColor" d="M2.576 32.808a1.95 1.95 0 0 1-.531-.968l1.342-1.586.737 3.684a1.93 1.93 0 0 1-.935-.518zm3.31-5.506.888 4.44-1.26 1.067-.82-4.1zm1.4-1.657.702-.702a1.2 1.2 0 0 1 .326-.224l.978 4.892-1.26 1.066-.957-4.783zm2.402-.888c.195.095.382.225.548.392l.613.612c.254.254.425.554.51.86.143.51.047 1.035-.306 1.387l-.596.596zm0 0q0-.003 0 0"/>
+  <path fill="currentColor" d="M2.75 36a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5M6.374 22.324a1.034 1.034 0 0 0 0 1.462l6.092 6.092a1.033 1.033 0 1 0 1.462-1.462l-6.092-6.092a1.033 1.033 0 0 0-1.462 0"/>
+  <path fill="currentColor" d="M13.928 31.627a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5M6.374 24.073a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5"/>
+  <path fill="currentColor" d="M13.928 30.877a1 1 0 1 0 0-2 1 1 0 0 0 0 2M6.374 23.323a1 1 0 1 0 0-2 1 1 0 0 0 0 2M2.097 29.342a.76.76 0 0 0 0 1.078l3.476 3.475a.763.763 0 0 0 1.078-1.078l-3.476-3.475a.76.76 0 0 0-1.078 0"/>
+`;
+
+  // src/ui/sceneElo.ts
+  var ITEM_CLASS = "sb-scene-elo";
+  var TITLE = "Stash Battle ELO, and rank in your library. Click to battle this scene.";
+  function labelText(scene, rank) {
+    const value = elo(scene);
+    if (value === null) return "ELO · Unrated";
+    return `ELO ${Math.round(value)}${rank !== null ? ` · #${rank}` : ""}`;
+  }
+  async function sceneAndRank(sceneId) {
+    const { scenes } = await getAllScenesCached();
+    const index = scenes.findIndex((s) => s.id === sceneId);
+    if (index >= 0) return { scene: scenes[index], rank: isRated(scenes[index]) ? index + 1 : null };
+    const scene = await fetchSceneById(sceneId);
+    return scene ? { scene, rank: null } : null;
+  }
+  var openBattle = () => {
+  };
+  function createItem() {
+    const item = document.createElement("span");
+    item.className = ITEM_CLASS;
+    item.innerHTML = `
+      <button type="button" class="minimal btn btn-secondary sb-scene-elo-button" title="${TITLE}">
+        <svg class="svg-inline--fa fa-icon" aria-hidden="true" focusable="false" viewBox="0 0 36 36" width="1em" height="1em">${SWORDS_PATHS}</svg>
+        <span class="sb-scene-elo-value"></span>
+      </button>`;
+    item.querySelector("button")?.addEventListener("click", () => openBattle());
+    return item;
+  }
+  function placeItem(toolbar, item) {
+    const playCount = toolbar.querySelector('button[title="Play Count"]')?.closest(".scene-toolbar-group > *");
+    if (playCount) {
+      playCount.before(item);
+      return true;
+    }
+    const group = toolbar.querySelector(".scene-toolbar-group:last-child");
+    if (!group) return false;
+    group.prepend(item);
+    return true;
+  }
+  var rendering = null;
+  async function renderSceneElo(force = false) {
+    const sceneId = getSceneIdFromUrl();
+    const toolbar = document.querySelector(".scene-toolbar");
+    if (!sceneId || !toolbar) return;
+    const existing = toolbar.querySelector(`.${ITEM_CLASS}`);
+    if (!force && existing?.dataset.sceneId === sceneId) return;
+    if (rendering === sceneId) return;
+    rendering = sceneId;
+    try {
+      if (!await sceneCustomFieldsSupported()) return;
+      const result = await sceneAndRank(sceneId);
+      if (!result || getSceneIdFromUrl() !== sceneId) return;
+      const target = document.querySelector(".scene-toolbar");
+      if (!target) return;
+      let item = target.querySelector(`.${ITEM_CLASS}`);
+      if (!item) {
+        item = createItem();
+        if (!placeItem(target, item)) return;
+      }
+      item.dataset.sceneId = sceneId;
+      const value = item.querySelector(".sb-scene-elo-value");
+      if (value) value.textContent = labelText(result.scene, result.rank);
+    } catch (e) {
+      console.warn("[Stash Battle] Couldn't show the scene's ELO:", e);
+    } finally {
+      rendering = null;
+    }
+  }
+  function refreshSceneElo() {
+    void renderSceneElo(true);
+  }
+  function registerSceneElo(onClick) {
+    openBattle = onClick;
+    let queued = false;
+    const check = () => {
+      queued = false;
+      if (getSceneIdFromUrl()) void renderSceneElo();
+    };
+    new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      setTimeout(check, 50);
+    }).observe(document.body, { childList: true, subtree: true });
+    check();
+  }
+
   // src/ui/ratingPreview.ts
   var NOW_RATINGS = [100, 100, 96, 85, 74, 70, 62, 45, 20, null];
   var BATTLED_ELO = [2150, 1980, 1700, 1650, 1600, 1550, 1500, 1400, 1250, 1100];
@@ -2814,7 +2917,7 @@
     const messageFor = /* @__PURE__ */ new Map();
     const messageByHtml = /* @__PURE__ */ new Map();
     for (const start of ["ratings", "fresh"]) {
-      for (const mode of ["off", "percentile", "linear"]) {
+      for (const mode of ["off", "linear", "percentile"]) {
         const changes = setupRatingChanges(scenes, start, mode).size;
         const html = ratingsMessage(start, mode, changes);
         let message = messageByHtml.get(html);
@@ -3298,6 +3401,7 @@
     cancelDeleteDialog();
     cancelConfirmDialog();
     holdStashListRefresh(false);
+    refreshSceneElo();
     if (state.resettingElo && !isSetupRunning()) {
       state.resettingElo = false;
       hideSetupScreen(modal);
@@ -3319,21 +3423,7 @@
   var NAV_ITEM_CLASS = "col-4 col-sm-3 col-md-2 col-lg-auto nav-link";
   var LINK_CLASS = "minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center btn btn-primary";
   var LINK_HTML = `
-            <svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">
-                <path fill="currentColor" d="m24 29 5-5L6 1H1v5z"/>
-                <path fill="currentColor" d="M1 1v5l23 23 2.5-2.5z"/>
-                <path fill="currentColor" d="M33.424 32.808c.284-.284.458-.626.531-.968l-5.242-6.195-.7-.702c-.565-.564-1.57-.473-2.249.205l-.614.612c-.677.677-.768 1.683-.204 2.247l.741.741 6.15 5.205c.345-.072.688-.247.974-.532z"/>
-                <path fill="currentColor" d="M33.424 32.808c.284-.284.458-.626.531-.968l-1.342-1.586-.737 3.684c.331-.077.661-.243.935-.518zm-3.31-5.506-.888 4.44 1.26 1.067.82-4.1zm-1.4-1.657-.702-.702a1.2 1.2 0 0 0-.326-.224l-.978 4.892 1.26 1.066.957-4.783zm-2.402-.888a2 2 0 0 0-.548.392l-.614.61a2 2 0 0 0-.51.86c-.143.51-.047 1.036.306 1.388l.596.596zm0 0q0-.003 0 0"/>
-                <path fill="currentColor" d="M33.25 36a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5M29.626 22.324a1.034 1.034 0 0 1 0 1.462l-6.092 6.092a1.032 1.032 0 0 1-1.686-.336 1.03 1.03 0 0 1 .224-1.126l6.092-6.092a1.033 1.033 0 0 1 1.462 0"/>
-                <path fill="currentColor" d="M22.072 31.627a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5M29.626 24.073a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5"/>
-                <path fill="currentColor" d="M22.072 30.877a1 1 0 1 0 0-2 1 1 0 0 0 0 2M29.626 23.323a1 1 0 1 0 0-2 1 1 0 0 0 0 2M33.903 29.342a.76.76 0 0 1 0 1.078l-3.476 3.475a.762.762 0 0 1-1.078-1.078l3.476-3.475a.76.76 0 0 1 1.078 0M12 29l-5-5L30 1h5v5z"/>
-                <path fill="currentColor" d="M35 1v5L12 29l-2.5-2.5z"/>
-                <path fill="currentColor" d="M2.576 32.808a1.95 1.95 0 0 1-.531-.968l5.242-6.195.7-.702c.565-.564 1.57-.473 2.249.205l.613.612c.677.677.768 1.683.204 2.247l-.741.741-6.15 5.205a1.95 1.95 0 0 1-.974-.532z"/>
-                <path fill="currentColor" d="M2.576 32.808a1.95 1.95 0 0 1-.531-.968l1.342-1.586.737 3.684a1.93 1.93 0 0 1-.935-.518zm3.31-5.506.888 4.44-1.26 1.067-.82-4.1zm1.4-1.657.702-.702a1.2 1.2 0 0 1 .326-.224l.978 4.892-1.26 1.066-.957-4.783zm2.402-.888c.195.095.382.225.548.392l.613.612c.254.254.425.554.51.86.143.51.047 1.035-.306 1.387l-.596.596zm0 0q0-.003 0 0"/>
-                <path fill="currentColor" d="M2.75 36a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5M6.374 22.324a1.034 1.034 0 0 0 0 1.462l6.092 6.092a1.033 1.033 0 1 0 1.462-1.462l-6.092-6.092a1.033 1.033 0 0 0-1.462 0"/>
-                <path fill="currentColor" d="M13.928 31.627a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5M6.374 24.073a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5"/>
-                <path fill="currentColor" d="M13.928 30.877a1 1 0 1 0 0-2 1 1 0 0 0 0 2M6.374 23.323a1 1 0 1 0 0-2 1 1 0 0 0 0 2M2.097 29.342a.76.76 0 0 0 0 1.078l3.476 3.475a.763.763 0 0 0 1.078-1.078l-3.476-3.475a.76.76 0 0 0-1.078 0"/>
-            </svg>
+            <svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">${SWORDS_PATHS}</svg>
             <span>Battle</span>
         `;
   function shouldShowNavButton() {
@@ -3420,6 +3510,7 @@
     console.log("[Stash Battle] Initialized");
     registerDeleteDialogBridge();
     registerNavButton();
+    registerSceneElo(() => void openModal());
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

@@ -25,10 +25,11 @@ The plugin is authored in **strict TypeScript** under [`src/`](src/) and bundled
 
 ### Entry Flow
 
-1. `init()` fires on `DOMContentLoaded`: `registerDeleteDialogBridge()` and `registerNavButton()`
+1. `init()` fires on `DOMContentLoaded`: `registerDeleteDialogBridge()`, `registerNavButton()` and `registerSceneElo(openModal)`
 2. **Nav button** (`ui/navButton.ts`): where Stash has the plugin patch API, a `BattleNavItem` React component is patched into `MainNavBar.MenuItems` with `PluginApi.patch.before` (after Stash's own page links). It reads the route on every render and re-renders on `PluginApi.Event`'s `stash:location`, showing only on `/`, `/scenes` and `/scenes/*`. Without the patch API it falls back to injecting the button into the DOM and re-adding it from a `MutationObserver`.
 3. Clicking the button calls `openModal()`: settings and the custom-fields check load in parallel, then either the one-time **ELO setup** shows (see ELO Setup) or the battle UI loads
-4. If opened from an individual scene page (`/scenes/123`), the scene is forced onto the left side of a new battle — unless it's already one of the two scenes in the current pair, in which case the existing pair is restored
+4. **Scene page ELO** (`ui/sceneElo.ts`): on `/scenes/:id`, an item (`.sb-scene-elo`) goes into `.scene-toolbar`, in front of Play Count: a single Stash `minimal btn btn-secondary` button holding the swords (from `ui/icons.ts`, shared with the navbar) and `ELO 1740 · #50`, so the icon and text highlight together; its padding and gap match the count buttons next to it. ScenePage isn't a patchable component, so it's DOM injection, re-added from a `MutationObserver` (batched with a 50 ms timer; animation frames don't run in background tabs) whenever React re-renders the toolbar. ELO and rank come from `getAllScenesCached()` (index in the ELO-sorted cache, the same as the cards; a scene newer than the cache is fetched, without a rank). Stash's own custom-field filter can't do the count: in v0.31.1 numeric comparisons don't match (Common Pitfalls #19). Clicking it calls `openModal()`; `closeModal()` calls `refreshSceneElo()` so it shows the new ELO.
+5. If opened from an individual scene page (`/scenes/123`), the scene is forced onto the left side of a new battle — unless it's already one of the two scenes in the current pair, in which case the existing pair is restored
 
 ### Core State
 
@@ -91,6 +92,8 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | `ui/settingsPanel.ts` | Battle / Settings tab bar (`showTab`, `getActiveTab`), preview volume + mute button, Settings tab rows, `bindSettingsControls` / `syncSettingsControls` |
 | `ui/deleteDialog.ts` | Clean mode: bridge that opens Stash's own `DeleteScenesDialog` (`registerDeleteDialogBridge`, `confirmDeleteScene`) |
 | `ui/navButton.ts` | `registerNavButton`, `shouldShowNavButton` |
+| `ui/sceneElo.ts` | `registerSceneElo`, `refreshSceneElo`: the ELO and rank on Stash's scene pages (toolbar) |
+| `ui/icons.ts` | `SWORDS_PATHS`: the crossed swords (navbar button, scene page ELO) |
 | `ui/modal.ts` | `openModal`, `closeModal`, keyboard handler, Stash ratings switch confirmation, Reset ELO |
 | `main.ts` | Entry point: `init()` + `DOMContentLoaded` bootstrap |
 
@@ -246,8 +249,8 @@ Scenes without `stash_battle_elo` count as **1500** in Swiss (`effectiveElo(scen
 
 Both in `score.ts`; only scenes **with an ELO** are ever written.
 
-- **Percentile** (`percentileRatings`): `rating = 100 − round(99 × i / (N − 1))`, where `i` is the scene's position in the ELO ranking of the **whole library** (0 = top) and `N` the number of scenes with an ELO. Tied scenes share the **middle position** of their tie group, so a fully tied library (a fresh start) is 50 everywhere; a single scene is 50. Rounding inside the bracket keeps a middle tie at 50, not 51.
 - **Straight-line** (`linearRating`): `clamp(round(50 + (elo − 1500) / 10), 1, 100)`, the exact inverse of `seed` — after "Use my ratings" every scene converts back to its own rating. 1995+ shows 100 and 1014− shows 1.
+- **Percentile** (`percentileRatings`): `rating = 100 − round(99 × i / (N − 1))`, where `i` is the scene's position in the ELO ranking of the **whole library** (0 = top) and `N` the number of scenes with an ELO. Tied scenes share the **middle position** of their tie group, so a fully tied library (a fresh start) is 50 everywhere; a single scene is 50. Rounding inside the bracket keeps a middle tie at 50, not 51.
 - `stashRatingTargets(scenes, mode)` gives every target; `stashRatingChanges(scenes, mode)` only the ones that differ from the scene's current `rating100`.
 
 ---
@@ -511,7 +514,7 @@ The plugin reads Stash's URL filter parameters to determine which scenes to show
 - **`c`** parameters: structured criteria (JSON-encoded with `()` instead of `{}`)
 - **`sortby`** / **`sortdir`**: sort options
 
-`getSceneFilter()` parses these into a GraphQL `SceneFilterType`. Supported criterion types: boolean, stringEnum, multi, hierarchicalMulti, resolution, orientation, duplicated, and standard numeric/string comparisons. **Custom-field criteria are not handled** (no special case for Stash's `custom_fields` criterion list), so a Scenes-page filter on `stash_battle_elo` isn't known to carry into Stash Battle; untested.
+`getSceneFilter()` parses these into a GraphQL `SceneFilterType`. Supported criterion types: boolean, stringEnum, multi, hierarchicalMulti, resolution, orientation, duplicated, and standard numeric/string comparisons. **Custom-field criteria are not handled** (no special case for Stash's `custom_fields` criterion list), so a Scenes-page filter on `stash_battle_elo` isn't known to carry into Stash Battle; untested. Stash's own numeric custom-field filters are broken anyway (Common Pitfalls #19).
 
 ---
 
@@ -568,3 +571,4 @@ All data comes from Stash's GraphQL API:
 17. **Setup flags and `configurePlugin`**: because `configurePlugin` replaces the whole map, `eloSetupAt` / `eloSetupMode` / `stashRatings` must go through `updateSettings` / `updateSettingsNow` and `normalize()`, or the next settings save drops them.
 
 18. **The cache's `rating100` drives the per-battle sync**: after a full sync it's updated in memory but not in IndexedDB, so a reload within 5 minutes can make the first sync rewrite a few ratings to the same values (harmless, but it touches `updated_at`).
+19. **Stash's custom-field filters don't compare numbers** (v0.31.1): on a numeric field like `stash_battle_elo`, `EQUALS` and `GREATER_THAN` match nothing, `LESS_THAN` matches every scene, and `BETWEEN` matches nothing; `NOT_NULL` and boolean `EQUALS true` work. The filter value seems to be compared as text against the stored number (SQLite sorts every number below every text). Same family as [stashapp/stash#5682](https://github.com/stashapp/stash/issues/5682). So ranks are counted client-side, and Scenes-page filters on ELO or battles give wrong results in Stash itself, before Stash Battle sees them. Don't store ELO as text to work around it: it would break numeric order everywhere else.

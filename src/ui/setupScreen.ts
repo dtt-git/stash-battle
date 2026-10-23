@@ -185,7 +185,7 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
   const messageFor = new Map<string, Element>();
   const messageByHtml = new Map<string, Element>();
   for (const start of ["ratings", "fresh"] as const) {
-    for (const mode of ["off", "percentile", "linear"] as const) {
+    for (const mode of ["off", "linear", "percentile"] as const) {
       const changes = setupRatingChanges(scenes, start, mode).size;
       const html = ratingsMessage(start, mode, changes);
       let message = messageByHtml.get(html);

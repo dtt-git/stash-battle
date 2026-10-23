@@ -7,7 +7,7 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
 ### ⚠️ Before you update
 
 - **Requires Stash v0.31.0 or newer.** ELO is stored in scene custom fields, which Stash added in v0.31.0. On an older Stash, Stash Battle shows a message instead of loading.
-- **Stash Battle no longer changes your Stash star ratings by default.** Every battle still updates rankings, but in Stash Battle's own ELO score. If you want your star ratings to keep following your rankings, set **Settings → Stash ratings update mode** to Percentile or Straight-line, either in the setup screen or later in Settings. **Straight-line with "Use my ratings" is closest to how 2.x worked.**
+- **Stash Battle no longer changes your Stash star ratings by default.** Every battle still updates rankings, but in Stash Battle's own ELO score. If you want your star ratings to keep following your rankings, set **Settings → Stash ratings update mode** to Straight-line or Percentile, either in the setup screen or later in Settings. **Straight-line with "Use my ratings" is closest to how 2.x worked.**
 - **Take a Stash backup first** (Settings → Tasks → Backup), especially if you turn on a Stash ratings update mode, which rewrites ratings.
 
 ### New
@@ -18,10 +18,11 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
   - **Start everyone at 1500**: every scene starts equal.
   
   A live 10-scene preview shows what each choice does, and how many of your ratings would change, before anything is written.
-- **Stash ratings update mode** (Settings): Don't update (the default), **Percentile** (rating = percentile in your library: the top scene is 100, the bottom 1), or **Straight-line** (rating = ELO converted back, 1500 = 50). Switching tells you exactly how many ratings will change. While it's on, each battle writes only the ratings that changed, in one go, and Stash's own pages show the new ratings without a refresh.
+- **Stash ratings update mode** (Settings): Don't update (the default), **Straight-line** (rating = ELO converted back, 1500 = 50), or **Percentile** (rating = percentile in your library: the top scene is 100, the bottom 1). Switching tells you exactly how many ratings will change. While it's on, each battle writes only the ratings that changed, in one go, and Stash's own pages show the new ratings without a refresh.
 - **Reset ELO** (Settings): start every scene's ELO over, with the same choices as the setup. Cancel any time before pressing Start.
 - **Placement → Start from the bottom** (a setting): a scene ignores its current ELO and climbs from your lowest scene, jumping further with each win, with a win streak badge and a Champion screen if it never loses. **This replaces Gauntlet**, with much shorter runs (about 8-21 battles in a 600-scene library).
 - **Cards** show each scene's ELO and rank (`ELO 1740 · #50`), how many battles it has had, and its Stash rating.
+- **Scene pages** show the scene's ELO and rank too, next to the play count and O count. Click it to battle that scene. Stash's Custom Fields list is widened so Stash Battle's field names aren't cut off.
 
 ### Changed
 
