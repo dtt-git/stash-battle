@@ -5,14 +5,13 @@ import {
   CACHE_DB_VERSION,
   CACHE_MAX_AGE_MS,
   CACHE_STORE_NAME,
-  ELO_FIELD,
-  GAMES_FIELD,
+  ELO_FIELD_KEYS,
 } from "./constants";
 import { getFindFilter, type ListFilters } from "./filters";
 import { FIND_SCENES_QUERY, graphqlQuery } from "./graphql";
-import { eloInsertionIndex, sortByElo } from "./score";
+import { eloCustomFields, eloInsertionIndex, sortByElo } from "./score";
 import { state } from "./state";
-import type { CacheEntry, FindScenesResult, Scene } from "./types";
+import type { CacheEntry, EloFields, FindScenesResult, Scene } from "./types";
 
 // Open IndexedDB database
 function openCacheDB(): Promise<IDBDatabase> {
@@ -377,15 +376,10 @@ export async function getFilteredScenesCached(
 }
 
 /** Set (or with null, remove) the ELO fields on one scene object. */
-function applyElo(scene: Scene, value: { elo: number; games: number } | null): void {
+function applyElo(scene: Scene, value: EloFields | null): void {
   const fields = { ...scene.custom_fields };
-  if (value) {
-    fields[ELO_FIELD] = value.elo;
-    fields[GAMES_FIELD] = value.games;
-  } else {
-    delete fields[ELO_FIELD];
-    delete fields[GAMES_FIELD];
-  }
+  for (const key of ELO_FIELD_KEYS) delete fields[key];
+  if (value) Object.assign(fields, eloCustomFields(value));
   scene.custom_fields = fields;
 }
 
@@ -393,7 +387,7 @@ function applyElo(scene: Scene, value: { elo: number; games: number } | null): v
  * Set (or with null, remove) a scene's ELO on `scene` itself and on its cached copies, and move
  * the cached copies to their new place in the ELO order so ranks stay right.
  */
-export function setEloInCache(scene: Scene, value: { elo: number; games: number } | null): void {
+export function setEloInCache(scene: Scene, value: EloFields | null): void {
   applyElo(scene, value);
   for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
     const idx = pool ? pool.findIndex((s) => s.id === scene.id) : -1;
@@ -401,6 +395,16 @@ export function setEloInCache(scene: Scene, value: { elo: number; games: number 
     const [cached] = pool.splice(idx, 1);
     if (cached !== scene) applyElo(cached, value);
     pool.splice(value ? eloInsertionIndex(pool, value.elo) : pool.length, 0, cached);
+  }
+}
+
+/** Set the Stash rating on cached scenes (after Stash Battle wrote them). Order is ELO, so unchanged. */
+export function setRatingsInCache(ratings: Map<string, number>): void {
+  for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+    for (const scene of pool ?? []) {
+      const rating = ratings.get(scene.id);
+      if (rating !== undefined) scene.rating100 = rating;
+    }
   }
 }
 

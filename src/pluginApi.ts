@@ -23,6 +23,24 @@ export interface PluginApiLike {
   };
   /** Stash's own events, e.g. "stash:location" after each SPA navigation. */
   Event?: EventTarget;
+  utils?: {
+    StashService?: {
+      /** Stash's Apollo client: the cache behind Stash's own pages. */
+      getClient?(): ApolloClientLike;
+    };
+  };
+}
+
+/** The parts of Apollo's InMemoryCache that Stash Battle uses to keep Stash's pages current. */
+export interface ApolloCacheLike {
+  identify(object: { __typename: string; id: string }): string | undefined;
+  modify(options: { id: string; fields: Record<string, (existing: unknown) => unknown> }): boolean;
+  evict(options: { id: string; fieldName?: string }): boolean;
+  gc(): string[];
+}
+
+export interface ApolloClientLike {
+  cache: ApolloCacheLike;
 }
 
 declare global {

@@ -3,10 +3,12 @@ import { test } from "node:test";
 
 import {
   afterSetup,
+  battles,
   compareByElo,
   elo,
   eloInsertionIndex,
-  games,
+  isSeeded,
+  kGames,
   linearRating,
   percentileRatings,
   seed,
@@ -15,10 +17,11 @@ import {
 } from "../src/score";
 import type { Scene } from "../src/types";
 
-function scene(id: string, eloValue?: unknown, gamesValue?: unknown): Scene {
+function scene(id: string, eloValue?: unknown, battlesValue?: unknown, seededValue?: unknown): Scene {
   const custom_fields: Record<string, unknown> = {};
   if (eloValue !== undefined) custom_fields.stash_battle_elo = eloValue;
-  if (gamesValue !== undefined) custom_fields.stash_battle_games = gamesValue;
+  if (battlesValue !== undefined) custom_fields.stash_battle_battles = battlesValue;
+  if (seededValue !== undefined) custom_fields.stash_battle_seeded = seededValue;
   return { id, custom_fields };
 }
 
@@ -49,10 +52,23 @@ test("elo and games read numbers, numeric strings, and treat anything else as mi
   assert.equal(elo(scene("a", "abc")), null);
   assert.equal(elo({ id: "a" }), null);
   assert.equal(elo({ id: "a", custom_fields: null }), null);
-  assert.equal(games(scene("a", 1500, 12)), 12);
-  assert.equal(games(scene("a", 1500, "3")), 3);
-  assert.equal(games(scene("a", 1500)), 0);
-  assert.equal(games(scene("a", 1500, -4)), 0);
+  assert.equal(battles(scene("a", 1500, 12)), 12);
+  assert.equal(battles(scene("a", 1500, "3")), 3);
+  assert.equal(battles(scene("a", 1500)), 0);
+  assert.equal(battles(scene("a", 1500, -4)), 0);
+});
+
+test("kGames is real battles plus the head start (10) for seeded scenes only", () => {
+  assert.equal(kGames(scene("a", 1740, 3, true)), 13);
+  assert.equal(kGames(scene("a", 1740, 0, true)), 10, "seeded, never battled: past the K 40 stage");
+  assert.equal(kGames(scene("a", 1500, 3, false)), 3);
+  assert.equal(kGames(scene("a", 1500, 3)), 3);
+  assert.equal(isSeeded(scene("a", 1500, 0, "true")), true);
+  assert.equal(isSeeded(scene("a", 1500, 0, 1)), true, "Stash stores true as 1");
+  assert.equal(kGames(scene("a", 1740, 2, 1)), 12);
+  assert.equal(isSeeded(scene("a", 1500, 0, false)), false);
+  assert.equal(isSeeded(scene("a", 1500, 0, 0)), false);
+  assert.equal(isSeeded({ id: "a" }), false);
 });
 
 test("percentileRatings spreads ranks evenly from 100 to 1", () => {
@@ -109,17 +125,26 @@ const previewScenes = (): Scene[] =>
   PREVIEW_NOW.map((rating100, i) => ({ id: String(i), rating100, custom_fields: { other_plugin: "x" } }));
 
 test("startingElo seeds rated scenes from their rating, or starts everyone at 1500", () => {
-  assert.deepEqual(startingElo({ id: "a", rating100: 74 }, "ratings"), { elo: 1740, games: 10 });
+  assert.deepEqual(startingElo({ id: "a", rating100: 74 }, "ratings"), { elo: 1740, battles: 0, seeded: true });
   assert.equal(startingElo({ id: "a", rating100: null }, "ratings"), null);
   assert.equal(startingElo({ id: "a" }, "ratings"), null);
-  assert.deepEqual(startingElo({ id: "a", rating100: 74 }, "fresh"), { elo: 1500, games: 0 });
-  assert.deepEqual(startingElo({ id: "a" }, "fresh"), { elo: 1500, games: 0 });
+  assert.deepEqual(startingElo({ id: "a", rating100: 74 }, "fresh"), { elo: 1500, battles: 0, seeded: false });
+  assert.deepEqual(startingElo({ id: "a" }, "fresh"), { elo: 1500, battles: 0, seeded: false });
 });
 
 test("afterSetup replaces only our fields, and drops an old ELO when the scene starts unrated", () => {
-  const before: Scene = { id: "a", rating100: null, custom_fields: { other_plugin: "x", stash_battle_elo: 1612, stash_battle_games: 4 } };
+  const before: Scene = {
+    id: "a",
+    rating100: null,
+    custom_fields: { other_plugin: "x", stash_battle_elo: 1612, stash_battle_battles: 4, stash_battle_seeded: true },
+  };
   assert.deepEqual(afterSetup(before, "ratings").custom_fields, { other_plugin: "x" });
-  assert.deepEqual(afterSetup(before, "fresh").custom_fields, { other_plugin: "x", stash_battle_elo: 1500, stash_battle_games: 0 });
+  assert.deepEqual(afterSetup(before, "fresh").custom_fields, {
+    other_plugin: "x",
+    stash_battle_elo: 1500,
+    stash_battle_battles: 0,
+    stash_battle_seeded: false,
+  });
   assert.equal(before.custom_fields?.stash_battle_elo, 1612, "original untouched");
 });
 

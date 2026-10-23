@@ -1,7 +1,7 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
 import { clearFilteredCache, removeSceneEverywhere } from "../cache";
-import { CHAMPION_UNRATED_RATING, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
+import { CHAMPION_UNRATED_ELO, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
 import { eloResult } from "../elo";
 import { readFilters } from "../filters";
 import { fetchSceneById } from "../graphql";
@@ -15,7 +15,7 @@ import {
 import { recordPlacementResult } from "../placement";
 import { writeElo } from "../rating";
 import { findExistingSceneIds } from "../sceneActions";
-import { effectiveElo, games } from "../score";
+import { battles, effectiveElo, kGames } from "../score";
 import { isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { saveState } from "../storage";
 import type { Mode, Rank, Scene } from "../types";
@@ -82,6 +82,9 @@ export function createMainUI(): string {
           </p>
 
           <p id="sb-pool-status" class="sb-pool-status" hidden></p>
+          <p id="sb-ratings-note" class="sb-pool-status sb-ratings-note" hidden>
+            Stash ratings aren't being changed · <a href="#" data-action="open-settings">change in Settings</a>
+          </p>
 
           <div class="sb-content">
             <div id="sb-comparison-area" class="sb-comparison-area">
@@ -111,6 +114,12 @@ export function updateModeInfo(): void {
   const info = document.getElementById("sb-mode-info");
   const mode = MODES.find((m) => m.mode === state.currentMode);
   if (info && mode) info.innerHTML = `<strong>${mode.icon} ${mode.title}:</strong> ${mode.tip.replace(/\n/g, "<br>")}`;
+}
+
+/** Battle tab note while the "Stash ratings" setting is "Don't update". */
+export function updateRatingsNote(): void {
+  const note = document.getElementById("sb-ratings-note");
+  if (note) note.hidden = state.settings.stashRatings !== "off";
 }
 
 /** "Which scenes am I rating?" line above the cards: the Scenes page filter or the whole library. */
@@ -533,8 +542,7 @@ async function deleteFromBattle(scene: Scene): Promise<void> {
 
 /** ELO used in battle math: unrated scenes count as the "Unrated scene rating" in Swiss, the bottom in Champion. */
 function battleElo(scene: Scene): number {
-  const unrated = state.currentMode === "swiss" ? state.settings.unratedRating : CHAMPION_UNRATED_RATING;
-  return effectiveElo(scene, unrated);
+  return state.currentMode === "champion" ? effectiveElo(scene, CHAMPION_UNRATED_ELO) : effectiveElo(scene);
 }
 
 interface EloChange {
@@ -542,14 +550,14 @@ interface EloChange {
   to: number;
 }
 
-/** Two-sided ELO for a pick (Swiss and Champion): both scenes' ELO and games change and are saved. */
+/** Two-sided ELO for a pick (Swiss and Champion): both scenes' ELO and battles change and are saved. */
 function resolveComparison(winner: Scene, loser: Scene): { winner: EloChange; loser: EloChange } {
-  const winnerSide = { elo: battleElo(winner), games: games(winner) };
-  const loserSide = { elo: battleElo(loser), games: games(loser) };
+  const winnerSide = { elo: battleElo(winner), kGames: kGames(winner) };
+  const loserSide = { elo: battleElo(loser), kGames: kGames(loser) };
   const result = eloResult(winnerSide, loserSide);
 
-  void writeElo(winner, result.winner, winnerSide.games + 1);
-  void writeElo(loser, result.loser, loserSide.games + 1);
+  void writeElo(winner, result.winner, battles(winner) + 1);
+  void writeElo(loser, result.loser, battles(loser) + 1);
 
   return {
     winner: { from: winnerSide.elo, to: result.winner },

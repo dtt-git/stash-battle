@@ -17,7 +17,6 @@ export const DEFAULT_SETTINGS: Settings = {
   eloSetupAt: null,
   eloSetupMode: null,
   openInNewTab: false,
-  unratedRating: 50,
   placementFromBottom: false,
   previewVolume: 50,
   autoplayPreviews: true,
@@ -38,10 +37,10 @@ export const SWISS_OPPONENT_REACH_MULTIPLIER = 2;
 export const CLIMB_OPPONENT_PICK_WINDOW = 5;
 
 /**
- * Rating an unrated scene counts as in Champion: 0, the bottom (ELO 1000), so a newcomer climbs
- * from there as before. Swiss uses the "Unrated scene rating" setting instead.
+ * ELO an unrated scene counts as in Champion: 1000, the bottom (what a 0 rating seeds to), so a
+ * newcomer climbs from there as before. Swiss counts unrated scenes as ELO_START (1500).
  */
-export const CHAMPION_UNRATED_RATING = 0;
+export const CHAMPION_UNRATED_ELO = 1000;
 
 /** Show a UI warning when Champion's opponent pool is smaller than this (filter opponents on). */
 export const CLIMB_SMALL_POOL_WARN_AT = 10;
@@ -50,12 +49,17 @@ export const CLIMB_SMALL_POOL_WARN_AT = 10;
 
 /** Scene custom field keys. Writes use `partial`, so other plugins' fields are never touched. */
 export const ELO_FIELD = "stash_battle_elo";
-export const GAMES_FIELD = "stash_battle_games";
+/** Real battles that moved this scene's ELO (Placement adds its run's battles when the scene lands). */
+export const BATTLES_FIELD = "stash_battle_battles";
+/** True when the scene's starting ELO came from its Stash rating (setup's "Use my ratings"). */
+export const SEEDED_FIELD = "stash_battle_seeded";
+/** All of Stash Battle's per-scene fields (removed together when a scene becomes unrated). */
+export const ELO_FIELD_KEYS = [ELO_FIELD, BATTLES_FIELD, SEEDED_FIELD];
 
 export const ELO_START = 1500;
 export const ELO_DIVISOR = 400;
 
-/** K by games played: [games below which this K applies, K]; the last entry has no limit. */
+/** K by K-games (battles, plus the head start if seeded): [below this count, K]; the last has no limit. */
 export const ELO_K_TIERS: readonly (readonly [number, number])[] = [
   [10, 40],
   [30, 24],
@@ -68,8 +72,12 @@ export const ELO_K_TIERS: readonly (readonly [number, number])[] = [
  */
 export const ELO_PER_RATING_POINT = 10;
 
-/** Games credited to scenes seeded from their Stash rating (their rating already says something). */
-export const SEEDED_GAMES = 10;
+/**
+ * Head start (counted as battles for K only) for scenes seeded from their Stash rating: their
+ * rating already says something, so they skip the biggest swings. Changing it applies to every
+ * seeded scene at once, because it isn't stored.
+ */
+export const SEEDED_HEAD_START = 10;
 
 /** ELO gap above the top / below the bottom scene when Placement lands a scene at an edge. */
 export const PLACEMENT_EDGE_GAP = 25;

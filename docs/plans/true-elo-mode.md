@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: stage4-settings
     content: "Stage 4: settings - stashRatings dropdown (off / percentile / linear, off by default; warning + full sync when the mode changes; per-battle sync of changed ratings batched into one request), Reset ELO button, refresh Stash's own page cache after writes"
-    status: pending
+    status: completed
   - id: stage5-docs
     content: "Stage 5: DOCUMENTATION.md, README, CHANGELOG, version 3.0.0"
     status: pending
@@ -72,25 +72,25 @@ flowchart LR
   Score -->|"no ELO"| Unrated["unrated"]
   Modes["Swiss / Placement / Champion"] --> Score
   Modes --> Write["rating.ts: writeElo()"]
-  Write --> CF["custom_fields partial: elo, games"]
+  Write --> CF["custom_fields partial: elo, battles, seeded"]
   Write -->|"stashRatings not off"| Sync["sync: changed ratings only, one batched request"]
   Sync -->|percentile| Pct["rating100 = rank in library"]
   Sync -->|linear| Lin["rating100 = 50 + (elo - 1500) / 10"]
 ```
 
-**Stored per scene** (flat numbers, so they can be filtered in Stash's UI):
+**Stored per scene** (flat values, so they can be filtered in Stash's UI). Changed in Stage 4's review, replacing the earlier `stash_battle_games`:
 - `stash_battle_elo`: the scene's ELO.
-- `stash_battle_games`: how many rated battles the scene has had. K is worked out from this count, so the thresholds can be retuned without rewriting any scene data.
+- `stash_battle_battles`: real battles that moved this scene's ELO. Cards show it as "Battles: N".
   - It goes up by 1 for both scenes in every Swiss and Champion battle, since both scenes' ELO moves.
   - Placement (including "Start from the bottom" runs) adds the run's battle count to the scene once, when it lands. Its opponents don't change, so they don't count.
-    - These modes never use K, because they set the ELO directly.
-    - Counting the run means a placed scene enters Swiss at K 24 (about 10-14 battles in a 600-scene library) instead of a newcomer's 40.
-    - `games` means "battles this ELO is based on", so opponents, whose ELO isn't touched, don't count.
-  - Stash's `play_count` no longer affects K.
+    - Counting the run means a placed scene enters Swiss with a lower K instead of a newcomer's 40.
+- `stash_battle_seeded`: true when the starting ELO came from the scene's Stash rating ("Use my ratings"). Stash stores it as 1. "Start everyone at 1500" writes false.
+- **K is worked out, never stored:** it comes from `kGames` = battles, plus a head start of 10 (`SEEDED_HEAD_START`) for seeded scenes. Their rating already says something, so they skip the K 40 stage. Changing the thresholds or the head start applies to every scene immediately, with no rewriting.
+- Stash's `play_count` doesn't affect K.
 
 **ELO math** (constants in [src/constants.ts](src/constants.ts) so they can be tuned):
 - Standard scale: start 1500, divisor 400, no clamp.
-- K is 40 while `games` is under 10, 24 while under 30, then 16. Each scene uses its own K, so a new scene moves a lot while an established opponent moves only a little.
+- K is 40 while `kGames` is under 10, 24 while under 30, then 16. Each scene uses its own K, so a new scene moves a lot while an established opponent moves only a little.
 - This replaces the current K based on `play_count`, the shrunken divisor of 40, and the special high K for climbers (`CLIMB_K_PLAY_COUNT`).
 - Points don't creep:
   - Every battle in Swiss and Champion moves both scenes.
@@ -106,6 +106,7 @@ flowchart LR
   - The ranking covers the whole library, not the current filter.
   - With a single scene (`N = 1`), it gets 50.
   - Tied scenes use the middle position of their tie group. That way, a library where every scene is at 1500 shows 50 everywhere instead of 100.
+    - This means one battle can shift a whole tie group's rating by a point while seeded ELOs still tie (48 ratings on one live pick). Brian chose to keep it over a tie-break (Oct 22), since ties fade as battles spread ELO.
 - **Straight-line:** `rating100 = clamp(round(50 + (elo - 1500) / 10), 1, 100)`, the exact inverse of `seed`.
   - In effect, it's the current rating system without its cap on the ELO underneath.
   - After a "Use my ratings" setup, Straight-line changes nothing at first, because every scene converts back to its original rating.
@@ -122,11 +123,11 @@ flowchart LR
 **One-time ELO setup** (new screen in the Battle tab):
 - **When:** shown on the first modal open after the upgrade, after settings load and the capability check, and before the pools load. Battling is blocked until a choice is made.
 - **Use my ratings:**
-  - Writes `stash_battle_elo = seed(rating100)` and `stash_battle_games = 10` for every scene that has a rating. `games` starts at 10 because the existing rating already says something. It deliberately ignores `play_count`, which counts watches, not comparisons, and isn't changed by Battle.
+  - Writes `stash_battle_elo = seed(rating100)`, `stash_battle_battles = 0` and `stash_battle_seeded = true` for every scene that has a rating. The seeded flag gives K its head start of 10, because the existing rating already says something. It deliberately ignores `play_count`, which counts watches, not comparisons, and isn't changed by Stash Battle.
   - Unrated scenes stay unrated (no ELO).
   - Writes go out as aliased `sceneUpdate` mutations, about 50 per request (roughly 12 requests for your 600 scenes), with a progress screen.
 - **Start everyone at 1500:**
-  - Writes `stash_battle_elo = 1500` and `stash_battle_games = 0` for every scene, rated or not.
+  - Writes `stash_battle_elo = 1500`, `stash_battle_battles = 0` and `stash_battle_seeded = false` for every scene, rated or not.
   - Every scene gets the same values, so this is a single `bulkSceneUpdate`.
 - **Stash ratings question:**
   - Don't update is preselected. The screen says Battle won't change Stash ratings unless one of the other options is chosen, and that this can be changed later in Settings.
@@ -166,7 +167,7 @@ flowchart LR
 **"Stash ratings" dropdown** (`stashRatings: "off" | "percentile" | "linear"`, default `"off"`):
 - **New control:** the Settings tab has no dropdown yet, so `settingControl` in [src/ui/settingsPanel.ts](src/ui/settingsPanel.ts) gets a `<select data-setting>` case. It's bound on `change`, and `syncSettingsControls` covers selects.
 - **Under the dropdown:** a one-line description of the selected option, so the difference is clear without the docs.
-- **Don't update:** battles write ELO and `games` only. The Battle tab shows a small note: "Stash ratings aren't being changed · change in Settings".
+- **Don't update:** battles write ELO and the battle count only. The Battle tab shows a small note: "Stash ratings aren't being changed · change in Settings".
 - **Switching to Percentile or Straight-line** (from any other option):
   - A warning explains what the chosen option does, shows how many scenes' ratings would change, and suggests a backup.
   - Confirming runs a full sync with progress.
@@ -185,17 +186,17 @@ flowchart LR
 
 ## Mode behavior
 
-- **Swiss:** standard two-sided ELO; both scenes' ELO and `games` change. Unrated scenes start at `seed(unratedRating)`, so the setting keeps its meaning (50 means 1500).
+- **Swiss:** standard two-sided ELO; both scenes' ELO and battle count change. Unrated scenes count as 1500. (The "Unrated scene rating" setting was removed in Stage 4's review: with true ELO, 1500 is the standard start, and Placement handles slotting newcomers in.)
 - **Placement:**
   - The search logic stays the same, ranking by ELO.
   - The final ELO is the midpoint of the two neighbouring scenes' ELO, or a neighbour's ELO plus or minus 25 at the top or bottom edge.
   - The integer-gap workaround in `placementRating` goes away.
-  - `games` goes up by the number of battles in the run.
+  - The battle count goes up by the number of battles in the run.
   - **"Start from the bottom" option** (`placementFromBottom` setting, off by default; a row in the Settings tab's Battles section and a BOOLEAN in the yml):
     - **Purpose:** a "climb the ladder" run for fun. It ignores the scene's current ELO and makes it prove itself from the bottom.
     - **Start:** the first opponent is the bottom scene of the pool.
     - **Climbing:** each win doubles the jump up the ladder (1, 2, 4, 8... ranks), and a win streak badge counts the wins.
-    - **First loss:** the scene's range is now known, and the run narrows it down by halving the range, like normal Placement. It lands with the same midpoint rule and the same `games` increase.
+    - **First loss:** the scene's range is now known, and the run narrows it down by halving the range, like normal Placement. It lands with the same midpoint rule and the same battle-count increase.
     - **End screen:** shows the streak alongside the usual rank and ELO. Beating the top scene shows the victory screen.
     - **Cost:** a run takes about 12 battles for a scene that belongs near the bottom, 16 for the middle and 18 for the top in a 600-scene library. Normal Placement takes 2-4 battles to confirm a rated scene and about 10 for an unrated one.
     - **Mid-run changes:** changing the setting during a run restarts that scene's run from the new start point. Nothing is lost, because Placement writes only when the scene lands.
@@ -292,7 +293,7 @@ Another agent read Stash's plugin architecture docs and suggested four changes. 
      - cards show `ELO 1740 · #50` plus the Stash rating ([src/ui/sceneCard.ts](src/ui/sceneCard.ts)),
      - rating animations count ELO deltas,
      - end screens ([src/ui/screens.ts](src/ui/screens.ts)) show the final ELO and rank.
-4. **Settings and Stash rating sync.**
+4. **Settings and Stash rating sync.** (Done; see [true-elo-handoff.md](true-elo-handoff.md).)
    - Add `stashRatings` to `Settings`, `DEFAULT_SETTINGS` and `normalize()` ([src/settings.ts](src/settings.ts)); an unknown value becomes `"off"`.
    - Add it as a dropdown row in the Settings tab ([src/ui/settingsPanel.ts](src/ui/settingsPanel.ts)), with the new select control and the description line. It isn't added to [plugins/stash-battle/stash-battle.yml](plugins/stash-battle/stash-battle.yml).
    - Remove `funMode` from all of these, including the yml.

@@ -2,11 +2,11 @@
 // then optionally sync Stash ratings from the new ELO. Re-running it overwrites, so an
 // interrupted setup is safe to repeat.
 
-import { ELO_FIELD, ELO_START, GAMES_FIELD, SETUP_BATCH_SIZE } from "./constants";
-import { graphqlQuery } from "./graphql";
+import { ELO_FIELD_KEYS, ELO_START, SETUP_BATCH_SIZE } from "./constants";
+import { graphqlQuery, refreshStashCache } from "./graphql";
 import { writeStashRatings } from "./rating";
-import { afterSetup, isRated, startingElo, stashRatingChanges } from "./score";
-import type { EloStart, Scene, StashRatingsMode } from "./types";
+import { afterSetup, eloCustomFields, isRated, startingElo, stashRatingChanges } from "./score";
+import type { EloFields, EloStart, Scene, StashRatingsMode } from "./types";
 
 export type SetupPhase = "elo" | "ratings";
 
@@ -64,8 +64,7 @@ async function seedFromRatings(rated: Scene[], onProgress: SetupProgress): Promi
     `;
     const variables = Object.fromEntries(
       batch.map((scene, i) => {
-        const initial = startingElo(scene, "ratings") as { elo: number; games: number };
-        const partial = { [ELO_FIELD]: initial.elo, [GAMES_FIELD]: initial.games };
+        const partial = eloCustomFields(startingElo(scene, "ratings") as EloFields);
         return [`s${i}`, { id: scene.id, custom_fields: { partial } }];
       }),
     );
@@ -97,7 +96,7 @@ export async function runEloSetup(
     const stale = scenes.filter((scene) => scene.rating100 == null && isRated(scene)).map((scene) => scene.id);
     if (stale.length > 0) {
       await graphqlQuery(BULK_UPDATE_MUTATION, {
-        input: { ids: stale, custom_fields: { remove: [ELO_FIELD, GAMES_FIELD] } },
+        input: { ids: stale, custom_fields: { remove: ELO_FIELD_KEYS } },
       });
       summary.eloCleared = stale.length;
     }
@@ -106,7 +105,7 @@ export async function runEloSetup(
     onProgress("elo", 0, ids.length);
     if (ids.length > 0) {
       await graphqlQuery(BULK_UPDATE_MUTATION, {
-        input: { ids, custom_fields: { partial: { [ELO_FIELD]: ELO_START, [GAMES_FIELD]: 0 } } },
+        input: { ids, custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }) } },
       });
     }
     onProgress("elo", ids.length, ids.length);
@@ -120,6 +119,12 @@ export async function runEloSetup(
     onProgress("ratings", changes.size, changes.size);
     summary.ratingsWritten = changes.size;
   }
+
+  // Stash's own pages: every scene's ELO (or its removal) and any changed rating
+  refreshStashCache(
+    scenes.map((scene) => ({ id: scene.id, elo: startingElo(scene, start), rating100: changes.get(scene.id) })),
+    changes.size > 0,
+  );
 
   console.log(
     `[Stash Battle] ✅ ELO setup (${start}, Stash ratings ${stashRatings}): ${summary.eloWritten} ELO written, ${summary.eloCleared} cleared, ${summary.ratingsWritten} Stash ratings written`,

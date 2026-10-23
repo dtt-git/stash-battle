@@ -1,6 +1,7 @@
 // One-time ELO setup screen, shown in the Battle tab in place of the battle until it's done.
-// Two questions side by side (how ELO starts, whether Battle writes Stash ratings) above a
-// shared preview, then a progress view while eloSetup.ts writes, then a summary.
+// Two questions side by side (how ELO starts, whether Stash Battle writes Stash ratings) above
+// a shared preview, then a progress view while eloSetup.ts writes, then a summary. Reset ELO
+// (Settings) shows the same screen in reset mode, with a Cancel button.
 
 import { clearSceneCache } from "../cache";
 import { fetchSetupScenes, runEloSetup, setupRatingChanges, type SetupPhase, type SetupSummary } from "../eloSetup";
@@ -10,12 +11,22 @@ import { resetRunState, resetShuffle, state } from "../state";
 import { saveState } from "../storage";
 import type { EloStart, Scene, StashRatingsMode } from "../types";
 import { showRatingPreview } from "./ratingPreview";
+import { STASH_RATINGS_OPTIONS } from "./stashRatingsText";
 
 /** On the Battle panel while setup shows; CSS hides the battle UI (modes, cards, actions). */
 const SETUP_ACTIVE_CLASS = "sb-setup-active";
 
 /** True from Start until the writes finish or fail; reopening Battle meanwhile keeps the progress. */
 let running = false;
+
+export interface SetupScreenOptions {
+  /** Reset ELO: everything already has an ELO; the current Stash ratings option is preselected. */
+  reset?: boolean;
+  /** Reset mode's Cancel button (before anything is written). */
+  onCancel?: () => void;
+}
+
+let options: SetupScreenOptions = {};
 
 interface Choice {
   start: EloStart;
@@ -28,13 +39,19 @@ function setupArea(root: ParentNode): HTMLElement | null {
   return root.querySelector<HTMLElement>("#sb-setup-area");
 }
 
+/** True while setup is writing (Start pressed, not finished or failed yet). */
+export function isSetupRunning(): boolean {
+  return running;
+}
+
 /** Show the setup in the Battle tab. `onDone` runs once setup has finished and been saved. */
-export function showSetupScreen(root: ParentNode, onDone: () => void): void {
+export function showSetupScreen(root: ParentNode, onDone: () => void, screenOptions: SetupScreenOptions = {}): void {
   const area = setupArea(root);
   if (!area) return;
   area.closest(".sb-tab-panel")?.classList.add(SETUP_ACTIVE_CLASS);
   area.hidden = false;
   if (running) return;
+  options = screenOptions;
   void loadChoices(area, onDone);
 }
 
@@ -102,17 +119,21 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
       ? " Before 3.0, ratings changed after every battle; Straight-line with Use my ratings is closest to that."
       : "";
 
-  const choice: Choice = { start: "ratings", stashRatings: "off" };
+  const reset = options.reset === true;
+  const choice: Choice = { start: "ratings", stashRatings: reset ? state.settings.stashRatings : "off" };
 
   area.innerHTML = `
       <div class="sb-setup">
-        <h2 class="sb-setup-title">Set up ELO</h2>
+        <h2 class="sb-setup-title">${reset ? "Reset ELO" : "Set up ELO"}</h2>
         <p class="sb-setup-intro">
-          Stash Battle now gives each scene an ELO score, saved in its custom fields. Wins raise it,
-          losses lower it. Choose how it starts. This runs once.
+          ${
+            reset
+              ? "Choose how ELO starts again. This overwrites every scene's ELO and battle count."
+              : "Stash Battle now gives each scene an ELO score, saved in its custom fields. Wins raise it, losses lower it. Choose how it starts. This runs once."
+          }
         </p>
         ${
-          withElo > 0
+          withElo > 0 && !reset
             ? `<p class="sb-setup-warning">${plural(withElo, "scene")} already ${withElo === 1 ? "has" : "have"} an ELO from an earlier setup that didn't finish. Setting up again overwrites ${withElo === 1 ? "it" : "them"}.</p>`
             : ""
         }
@@ -136,21 +157,9 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
           </fieldset>
           <fieldset class="sb-setup-question">
             <legend>Should Stash Battle change your Stash ratings?</legend>
-            ${radio("stashRatings", "off", "Don't update", "ELO is saved; your Stash ratings stay as they are.", true)}
-            ${radio(
-              "stashRatings",
-              "percentile",
-              "Percentile",
-              "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1.",
-              false,
-            )}
-            ${radio(
-              "stashRatings",
-              "linear",
-              "Straight-line",
-              "Rating = ELO converted back (1500 = 50, 10 ELO per point). Very high or low scenes stop at 100 or 1.",
-              false,
-            )}
+            ${STASH_RATINGS_OPTIONS.map(({ value, label, desc }) =>
+              radio("stashRatings", value, label, desc, value === choice.stashRatings),
+            ).join("")}
             <p class="sb-setup-note">You can change this later in Settings.${upgradeNote}</p>
           </fieldset>
         </div>
@@ -158,9 +167,12 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
         <h3 class="sb-setup-subtitle">Preview</h3>
         <div data-role="preview"></div>
         <div class="sb-setup-actions">
+          ${reset ? `<button type="button" class="btn btn-secondary" data-role="cancel">Cancel</button>` : ""}
           <button type="button" class="btn btn-primary" data-role="start">Start ELO</button>
         </div>
       </div>`;
+
+  area.querySelector('[data-role="cancel"]')?.addEventListener("click", () => options.onCancel?.());
 
   const slot = area.querySelector<HTMLElement>('[data-role="ratings-warning"]') as HTMLElement;
   const preview = area.querySelector<HTMLElement>('[data-role="preview"]') as HTMLElement;
@@ -225,6 +237,10 @@ function progressHtml(phase: SetupPhase, done: number, total: number): string {
 async function runSetup(area: HTMLElement, scenes: Scene[], choice: Choice, onDone: () => void): Promise<void> {
   running = true;
   area.innerHTML = progressHtml("elo", 0, 0);
+  // A reset clears the "setup finished" flag first, so if it's interrupted Stash Battle asks again
+  if (state.settings.eloSetupAt && !(await updateSettingsNow({ eloSetupAt: null, eloSetupMode: null }))) {
+    console.warn("[Stash Battle] Couldn't clear the setup flag before resetting ELO; continuing");
+  }
   let summary: SetupSummary;
   try {
     summary = await runEloSetup(scenes, choice.start, choice.stashRatings, (phase, done, total) => {
@@ -277,10 +293,13 @@ async function finishSetup(area: HTMLElement, summary: SetupSummary, choice: Cho
       : `${plural(summary.eloWritten, "scene")} start at 1500 ELO.`;
   const clearedLine =
     summary.eloCleared > 0 ? `<li>${plural(summary.eloCleared, "scene")} without a Stash rating had an old ELO removed.</li>` : "";
+  const optionLabel = choice.stashRatings === "percentile" ? "Percentile" : "Straight-line";
   const ratingsLine =
     choice.stashRatings === "off"
       ? "Stash ratings weren't changed, and battles won't change them."
-      : `${plural(summary.ratingsWritten, "Stash rating")} updated (${choice.stashRatings === "percentile" ? "Percentile" : "Straight-line"}).`;
+      : summary.ratingsWritten === 0
+        ? `Stash ratings already matched (${optionLabel}), so none changed. Battles keep them in step from now on.`
+        : `${plural(summary.ratingsWritten, "Stash rating")} updated (${optionLabel}). Battles keep them in step from now on.`;
 
   area.innerHTML = `
       <div class="sb-setup sb-setup-done">

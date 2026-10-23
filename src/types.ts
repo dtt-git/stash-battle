@@ -15,7 +15,6 @@ export interface Settings {
   eloSetupAt: string | null; // When the one-time ELO setup finished (ISO time); null = not yet
   eloSetupMode: EloStart | null; // How that setup started ELO
   openInNewTab: boolean; // Thumbnail click opens the scene in a new tab
-  unratedRating: number; // Rating unrated scenes count as in Swiss ELO math / matchmaking (via seed)
   placementFromBottom: boolean; // Placement runs start at the bottom scene and climb (replaces Gauntlet)
   previewVolume: number; // 0-100, 0 = muted
   autoplayPreviews: boolean; // Loop both previews (muted) without hovering
@@ -45,13 +44,20 @@ export interface Scene {
   date?: string | null;
   rating100?: number | null;
   play_count?: number | null;
-  /** Stash's scene custom fields map (ours: stash_battle_elo / stash_battle_games). */
+  /** Stash's scene custom fields map (ours: stash_battle_elo / _battles / _seeded). */
   custom_fields?: Record<string, unknown> | null;
   paths?: ScenePaths | null;
   files?: SceneFile[] | null;
   studio?: NamedRef | null;
   performers?: NamedRef[] | null;
   tags?: NamedRef[] | null;
+}
+
+/** Stash Battle's per-scene data, stored as scene custom fields (see constants.ts). */
+export interface EloFields {
+  elo: number;
+  battles: number;
+  seeded: boolean;
 }
 
 /** Rank position in the opponent pool (1 = top), or null when unknown. */

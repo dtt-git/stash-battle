@@ -2,10 +2,10 @@
 
 import { ELO_DIVISOR, ELO_K_TIERS } from "./constants";
 
-/** K for a scene with this many rated games: new scenes move a lot, established ones little. */
-export function eloKFactor(games: number): number {
+/** K for a scene with this many K-games (see kGames): new scenes move a lot, established ones little. */
+export function eloKFactor(kGames: number): number {
   for (const [below, k] of ELO_K_TIERS) {
-    if (games < below) return k;
+    if (kGames < below) return k;
   }
   return ELO_K_TIERS[ELO_K_TIERS.length - 1][1];
 }
@@ -17,7 +17,8 @@ export function eloExpected(elo: number, opponentElo: number): number {
 
 export interface EloSide {
   elo: number;
-  games: number;
+  /** Battles plus any seeded head start (score.ts kGames): sets this side's K. */
+  kGames: number;
 }
 
 /** Stored ELO precision (one decimal), so small late-career changes aren't rounded away. */
@@ -34,7 +35,7 @@ export function roundElo(elo: number): number {
 export function eloResult(winner: EloSide, loser: EloSide): { winner: number; loser: number } {
   const surprise = 1 - eloExpected(winner.elo, loser.elo);
   return {
-    winner: roundElo(winner.elo + eloKFactor(winner.games) * surprise),
-    loser: roundElo(loser.elo - eloKFactor(loser.games) * surprise),
+    winner: roundElo(winner.elo + eloKFactor(winner.kGames) * surprise),
+    loser: roundElo(loser.elo - eloKFactor(loser.kGames) * surprise),
   };
 }

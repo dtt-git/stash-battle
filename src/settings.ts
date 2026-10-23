@@ -42,7 +42,7 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
   const bool = (key: keyof Settings): boolean =>
     typeof raw[key] === "boolean" ? (raw[key] as boolean) : (base[key] as boolean);
   return {
-    // A missing or unknown value is "off". (The removed funMode key is simply dropped.)
+    // A missing or unknown value is "off". (Removed keys, funMode and unratedRating, are dropped.)
     stashRatings: oneOf(raw.stashRatings, STASH_RATINGS_MODES, "off"),
     // Setup flags have no fallback: raw always carries them (stored config, or current + patch)
     eloSetupAt: typeof raw.eloSetupAt === "string" && raw.eloSetupAt ? raw.eloSetupAt : null,
@@ -53,7 +53,6 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
     cleanMode: bool("cleanMode"),
     pauseMediaOnOpen: bool("pauseMediaOnOpen"),
     placementFromBottom: bool("placementFromBottom"),
-    unratedRating: clampPercent(raw.unratedRating ?? base.unratedRating, base.unratedRating),
     previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
   };
 }

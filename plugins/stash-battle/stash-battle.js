@@ -1,5 +1,49 @@
 "use strict";
 (() => {
+  // src/constants.ts
+  var STORAGE_KEY = "stash-battle-state";
+  var CACHE_DB_NAME = "stash-battle-cache";
+  var CACHE_DB_VERSION = 2;
+  var CACHE_STORE_NAME = "scenes";
+  var CACHE_MAX_AGE_MS = 5 * 60 * 1e3;
+  var PLUGIN_ID = "stash-battle";
+  var DEFAULT_SETTINGS = {
+    stashRatings: "off",
+    eloSetupAt: null,
+    eloSetupMode: null,
+    openInNewTab: false,
+    placementFromBottom: false,
+    previewVolume: 50,
+    autoplayPreviews: true,
+    filterOpponents: false,
+    cleanMode: false,
+    pauseMediaOnOpen: true
+  };
+  var LEGACY_FILTER_OPPONENTS_KEY = "sb_filterOpponents";
+  var LEGACY_MUTE_PREVIEWS_KEY = "sb_mutePreviews";
+  var SWISS_OPPONENT_REACH_INITIAL = 10;
+  var SWISS_OPPONENT_REACH_MULTIPLIER = 2;
+  var CLIMB_OPPONENT_PICK_WINDOW = 5;
+  var CHAMPION_UNRATED_ELO = 1e3;
+  var CLIMB_SMALL_POOL_WARN_AT = 10;
+  var ELO_FIELD = "stash_battle_elo";
+  var BATTLES_FIELD = "stash_battle_battles";
+  var SEEDED_FIELD = "stash_battle_seeded";
+  var ELO_FIELD_KEYS = [ELO_FIELD, BATTLES_FIELD, SEEDED_FIELD];
+  var ELO_START = 1500;
+  var ELO_DIVISOR = 400;
+  var ELO_K_TIERS = [
+    [10, 40],
+    [30, 24],
+    [Infinity, 16]
+  ];
+  var ELO_PER_RATING_POINT = 10;
+  var SEEDED_HEAD_START = 10;
+  var PLACEMENT_EDGE_GAP = 25;
+  var PLACEMENT_MAX_JUMP_SHARE = 0.1;
+  var PLACEMENT_MIN_MAX_JUMP = 4;
+  var SETUP_BATCH_SIZE = 50;
+
   // src/graphql.ts
   async function graphqlQuery(query, variables = {}) {
     const response = await fetch("/graphql", {
@@ -60,6 +104,43 @@
       return true;
     }));
     return customFieldsSupport;
+  }
+  function refreshStashCache(updates, ratingsChanged) {
+    let cache;
+    try {
+      cache = window.PluginApi?.utils?.StashService?.getClient?.()?.cache;
+    } catch {
+      cache = void 0;
+    }
+    if (!cache) return;
+    try {
+      for (const update of updates) {
+        const id = cache.identify({ __typename: "Scene", id: update.id });
+        if (!id) continue;
+        const fields = {};
+        if (update.rating100 !== void 0) fields.rating100 = () => update.rating100;
+        if (update.elo !== void 0) {
+          const value = update.elo;
+          fields.custom_fields = (existing) => {
+            const next = { ...existing ?? {} };
+            for (const key of ELO_FIELD_KEYS) delete next[key];
+            if (value) {
+              next[ELO_FIELD] = value.elo;
+              next[BATTLES_FIELD] = value.battles;
+              next[SEEDED_FIELD] = value.seeded;
+            }
+            return next;
+          };
+        }
+        cache.modify({ id, fields });
+      }
+      if (ratingsChanged) {
+        cache.evict({ id: "ROOT_QUERY", fieldName: "findScenes" });
+        cache.gc();
+      }
+    } catch (e) {
+      console.warn("[Stash Battle] Could not update Stash's page cache:", e);
+    }
   }
   function getSceneIdFromUrl() {
     const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
@@ -172,49 +253,6 @@
     const request = new CustomEvent(OPEN_EVENT, { detail: scene, cancelable: true });
     return !window.dispatchEvent(request);
   }
-
-  // src/constants.ts
-  var STORAGE_KEY = "stash-battle-state";
-  var CACHE_DB_NAME = "stash-battle-cache";
-  var CACHE_DB_VERSION = 2;
-  var CACHE_STORE_NAME = "scenes";
-  var CACHE_MAX_AGE_MS = 5 * 60 * 1e3;
-  var PLUGIN_ID = "stash-battle";
-  var DEFAULT_SETTINGS = {
-    stashRatings: "off",
-    eloSetupAt: null,
-    eloSetupMode: null,
-    openInNewTab: false,
-    unratedRating: 50,
-    placementFromBottom: false,
-    previewVolume: 50,
-    autoplayPreviews: true,
-    filterOpponents: false,
-    cleanMode: false,
-    pauseMediaOnOpen: true
-  };
-  var LEGACY_FILTER_OPPONENTS_KEY = "sb_filterOpponents";
-  var LEGACY_MUTE_PREVIEWS_KEY = "sb_mutePreviews";
-  var SWISS_OPPONENT_REACH_INITIAL = 10;
-  var SWISS_OPPONENT_REACH_MULTIPLIER = 2;
-  var CLIMB_OPPONENT_PICK_WINDOW = 5;
-  var CHAMPION_UNRATED_RATING = 0;
-  var CLIMB_SMALL_POOL_WARN_AT = 10;
-  var ELO_FIELD = "stash_battle_elo";
-  var GAMES_FIELD = "stash_battle_games";
-  var ELO_START = 1500;
-  var ELO_DIVISOR = 400;
-  var ELO_K_TIERS = [
-    [10, 40],
-    [30, 24],
-    [Infinity, 16]
-  ];
-  var ELO_PER_RATING_POINT = 10;
-  var SEEDED_GAMES = 10;
-  var PLACEMENT_EDGE_GAP = 25;
-  var PLACEMENT_MAX_JUMP_SHARE = 0.1;
-  var PLACEMENT_MIN_MAX_JUMP = 4;
-  var SETUP_BATCH_SIZE = 50;
 
   // src/filters.ts
   function getSearchParams() {
@@ -395,9 +433,9 @@
   }
 
   // src/elo.ts
-  function eloKFactor(games2) {
+  function eloKFactor(kGames2) {
     for (const [below, k] of ELO_K_TIERS) {
-      if (games2 < below) return k;
+      if (kGames2 < below) return k;
     }
     return ELO_K_TIERS[ELO_K_TIERS.length - 1][1];
   }
@@ -410,8 +448,8 @@
   function eloResult(winner, loser) {
     const surprise = 1 - eloExpected(winner.elo, loser.elo);
     return {
-      winner: roundElo(winner.elo + eloKFactor(winner.games) * surprise),
-      loser: roundElo(loser.elo - eloKFactor(loser.games) * surprise)
+      winner: roundElo(winner.elo + eloKFactor(winner.kGames) * surprise),
+      loser: roundElo(loser.elo - eloKFactor(loser.kGames) * surprise)
     };
   }
 
@@ -430,15 +468,25 @@
   function isRated(scene) {
     return elo(scene) !== null;
   }
-  function games(scene) {
-    const n = readNumber(scene.custom_fields?.[GAMES_FIELD]);
+  function battles(scene) {
+    const n = readNumber(scene.custom_fields?.[BATTLES_FIELD]);
     return n !== null && n > 0 ? Math.floor(n) : 0;
+  }
+  function isSeeded(scene) {
+    const value = scene.custom_fields?.[SEEDED_FIELD];
+    return value === true || value === 1 || value === "true" || value === "1";
+  }
+  function kGames(scene) {
+    return battles(scene) + (isSeeded(scene) ? SEEDED_HEAD_START : 0);
+  }
+  function eloCustomFields(value) {
+    return { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
   }
   function seed(rating100) {
     return ELO_START + (rating100 - 50) * ELO_PER_RATING_POINT;
   }
-  function effectiveElo(scene, unratedRating) {
-    return elo(scene) ?? seed(unratedRating);
+  function effectiveElo(scene, unratedElo = ELO_START) {
+    return elo(scene) ?? unratedElo;
   }
   function linearRating(eloValue) {
     const rating = Math.round(50 + (eloValue - ELO_START) / ELO_PER_RATING_POINT);
@@ -482,18 +530,14 @@
     return changes;
   }
   function startingElo(scene, start) {
-    if (start === "fresh") return { elo: ELO_START, games: 0 };
-    return scene.rating100 != null ? { elo: seed(scene.rating100), games: SEEDED_GAMES } : null;
+    if (start === "fresh") return { elo: ELO_START, battles: 0, seeded: false };
+    return scene.rating100 != null ? { elo: seed(scene.rating100), battles: 0, seeded: true } : null;
   }
   function afterSetup(scene, start) {
     const custom_fields = { ...scene.custom_fields };
-    delete custom_fields[ELO_FIELD];
-    delete custom_fields[GAMES_FIELD];
+    for (const key of ELO_FIELD_KEYS) delete custom_fields[key];
     const initial = startingElo(scene, start);
-    if (initial) {
-      custom_fields[ELO_FIELD] = initial.elo;
-      custom_fields[GAMES_FIELD] = initial.games;
-    }
+    if (initial) Object.assign(custom_fields, eloCustomFields(initial));
     return { ...scene, custom_fields };
   }
   function compareByElo(a, b) {
@@ -534,6 +578,7 @@
     disableChoice: false,
     savedFilterParams: "",
     settings: { ...DEFAULT_SETTINGS },
+    resettingElo: false,
     shuffledFilteredScenes: [],
     shuffleIndex: 0,
     shuffleFilterKey: null,
@@ -566,7 +611,7 @@
     }
   }
   function isEloSetupPending() {
-    return !state.settings.eloSetupAt;
+    return !state.settings.eloSetupAt || state.resettingElo;
   }
 
   // src/cache.ts
@@ -851,13 +896,8 @@
   }
   function applyElo(scene, value) {
     const fields = { ...scene.custom_fields };
-    if (value) {
-      fields[ELO_FIELD] = value.elo;
-      fields[GAMES_FIELD] = value.games;
-    } else {
-      delete fields[ELO_FIELD];
-      delete fields[GAMES_FIELD];
-    }
+    for (const key of ELO_FIELD_KEYS) delete fields[key];
+    if (value) Object.assign(fields, eloCustomFields(value));
     scene.custom_fields = fields;
   }
   function setEloInCache(scene, value) {
@@ -868,6 +908,14 @@
       const [cached] = pool.splice(idx, 1);
       if (cached !== scene) applyElo(cached, value);
       pool.splice(value ? eloInsertionIndex(pool, value.elo) : pool.length, 0, cached);
+    }
+  }
+  function setRatingsInCache(ratings) {
+    for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
+      for (const scene of pool ?? []) {
+        const rating = ratings.get(scene.id);
+        if (rating !== void 0) scene.rating100 = rating;
+      }
     }
   }
   async function removeSceneEverywhere(sceneId) {
@@ -914,13 +962,16 @@
       window.dispatchEvent(new CustomEvent(SCENE_MISSING_EVENT, { detail: sceneId }));
     }
   }
-  async function writeElo(scene, elo2, games2) {
-    setEloInCache(scene, { elo: elo2, games: games2 });
+  async function writeElo(scene, elo2, battles2) {
+    const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene) };
+    setEloInCache(scene, value);
+    refreshStashCache([{ id: scene.id, elo: value }], false);
+    scheduleStashRatingSync();
     try {
       await graphqlQuery(SCENE_UPDATE_MUTATION, {
-        input: { id: scene.id, custom_fields: { partial: { [ELO_FIELD]: elo2, [GAMES_FIELD]: games2 } } }
+        input: { id: scene.id, custom_fields: { partial: eloCustomFields(value) } }
       });
-      console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo2} (${games2} games)`);
+      console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo2} (${battles2} battles)`);
     } catch (e) {
       reportWriteError(scene.id, "save ELO", e);
     }
@@ -945,6 +996,127 @@
     await graphqlQuery(mutation, variables);
     console.log(`[Stash Battle] 📝 Wrote ${ratings.size} Stash ratings (${values.length} distinct values)`);
   }
+  function applyStashRatings(ratings) {
+    setRatingsInCache(ratings);
+    refreshStashCache(
+      [...ratings].map(([id, rating100]) => ({ id, rating100 })),
+      ratings.size > 0
+    );
+  }
+  var SYNC_DEBOUNCE_MS = 500;
+  var syncTimer = null;
+  function scheduleStashRatingSync() {
+    if (state.settings.stashRatings === "off") return;
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      void syncStashRatings();
+    }, SYNC_DEBOUNCE_MS);
+  }
+  async function syncStashRatings() {
+    const mode = state.settings.stashRatings;
+    const scenes = state.memoryCache.allScenes;
+    if (mode === "off" || !scenes) return 0;
+    const changes = stashRatingChanges(scenes, mode);
+    if (changes.size === 0) return 0;
+    try {
+      await writeStashRatings(changes);
+      applyStashRatings(changes);
+      return changes.size;
+    } catch (e) {
+      console.error("[Stash Battle] Failed to sync Stash ratings:", e);
+      return 0;
+    }
+  }
+
+  // src/eloSetup.ts
+  var SETUP_SCENES_QUERY = `
+      query FindScenesForEloSetup {
+        findScenes(filter: { per_page: -1 }) {
+          scenes {
+            id
+            rating100
+            custom_fields
+          }
+        }
+      }
+    `;
+  async function fetchSetupScenes() {
+    const data = await graphqlQuery(SETUP_SCENES_QUERY);
+    return data.findScenes.scenes ?? [];
+  }
+  function setupRatingChanges(scenes, start, stashRatings) {
+    return stashRatingChanges(
+      scenes.map((scene) => afterSetup(scene, start)),
+      stashRatings
+    );
+  }
+  var BULK_UPDATE_MUTATION = `
+      mutation BulkSceneUpdate($input: BulkSceneUpdateInput!) {
+        bulkSceneUpdate(input: $input) {
+          id
+        }
+      }
+    `;
+  async function seedFromRatings(rated, onProgress) {
+    for (let start = 0; start < rated.length; start += SETUP_BATCH_SIZE) {
+      const batch = rated.slice(start, start + SETUP_BATCH_SIZE);
+      const mutation = `
+      mutation SeedElo(${batch.map((_, i) => `$s${i}: SceneUpdateInput!`).join(", ")}) {
+        ${batch.map((_, i) => `s${i}: sceneUpdate(input: $s${i}) { id }`).join("\n        ")}
+      }
+    `;
+      const variables = Object.fromEntries(
+        batch.map((scene, i) => {
+          const partial = eloCustomFields(startingElo(scene, "ratings"));
+          return [`s${i}`, { id: scene.id, custom_fields: { partial } }];
+        })
+      );
+      await graphqlQuery(mutation, variables);
+      onProgress("elo", start + batch.length, rated.length);
+    }
+  }
+  async function runEloSetup(scenes, start, stashRatings, onProgress) {
+    const summary = { eloWritten: 0, eloCleared: 0, ratingsWritten: 0 };
+    if (start === "ratings") {
+      const rated = scenes.filter((scene) => scene.rating100 != null);
+      onProgress("elo", 0, rated.length);
+      await seedFromRatings(rated, onProgress);
+      summary.eloWritten = rated.length;
+      const stale = scenes.filter((scene) => scene.rating100 == null && isRated(scene)).map((scene) => scene.id);
+      if (stale.length > 0) {
+        await graphqlQuery(BULK_UPDATE_MUTATION, {
+          input: { ids: stale, custom_fields: { remove: ELO_FIELD_KEYS } }
+        });
+        summary.eloCleared = stale.length;
+      }
+    } else {
+      const ids = scenes.map((scene) => scene.id);
+      onProgress("elo", 0, ids.length);
+      if (ids.length > 0) {
+        await graphqlQuery(BULK_UPDATE_MUTATION, {
+          input: { ids, custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }) } }
+        });
+      }
+      onProgress("elo", ids.length, ids.length);
+      summary.eloWritten = ids.length;
+    }
+    const changes = setupRatingChanges(scenes, start, stashRatings);
+    if (changes.size > 0) {
+      onProgress("ratings", 0, changes.size);
+      await writeStashRatings(changes);
+      onProgress("ratings", changes.size, changes.size);
+      summary.ratingsWritten = changes.size;
+    }
+    refreshStashCache(
+      scenes.map((scene) => ({ id: scene.id, elo: startingElo(scene, start), rating100: changes.get(scene.id) })),
+      changes.size > 0
+    );
+    console.log(
+      `[Stash Battle] ✅ ELO setup (${start}, Stash ratings ${stashRatings}): ${summary.eloWritten} ELO written, ${summary.eloCleared} cleared, ${summary.ratingsWritten} Stash ratings written`
+    );
+    return summary;
+  }
 
   // src/settings.ts
   var CONFIG_QUERY = `{ configuration { plugins } }`;
@@ -968,7 +1140,7 @@
   function normalize(raw, base) {
     const bool = (key) => typeof raw[key] === "boolean" ? raw[key] : base[key];
     return {
-      // A missing or unknown value is "off". (The removed funMode key is simply dropped.)
+      // A missing or unknown value is "off". (Removed keys, funMode and unratedRating, are dropped.)
       stashRatings: oneOf(raw.stashRatings, STASH_RATINGS_MODES, "off"),
       // Setup flags have no fallback: raw always carries them (stored config, or current + patch)
       eloSetupAt: typeof raw.eloSetupAt === "string" && raw.eloSetupAt ? raw.eloSetupAt : null,
@@ -979,7 +1151,6 @@
       cleanMode: bool("cleanMode"),
       pauseMediaOnOpen: bool("pauseMediaOnOpen"),
       placementFromBottom: bool("placementFromBottom"),
-      unratedRating: clampPercent(raw.unratedRating ?? base.unratedRating, base.unratedRating),
       previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume)
     };
   }
@@ -1086,6 +1257,72 @@
       console.error("[Stash Battle] Failed to load state:", e);
     }
     return false;
+  }
+
+  // src/ui/confirmDialog.ts
+  var cancelOpen = null;
+  function isConfirmDialogOpen() {
+    return cancelOpen !== null;
+  }
+  function cancelConfirmDialog() {
+    cancelOpen?.();
+  }
+  function confirmDialog(opts) {
+    cancelOpen?.();
+    const host = document.getElementById("sb-modal");
+    if (!host) return Promise.resolve(false);
+    const overlay = document.createElement("div");
+    overlay.className = "sb-dialog-backdrop";
+    overlay.innerHTML = `
+      <div class="sb-dialog" role="dialog" aria-modal="true" aria-labelledby="sb-dialog-title">
+        <h3 id="sb-dialog-title" class="sb-dialog-title">${opts.title}</h3>
+        <div class="sb-dialog-body">${opts.body}</div>
+        <p class="sb-dialog-error" hidden></p>
+        <div class="sb-dialog-actions">
+          <button type="button" class="btn btn-secondary" data-role="cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" data-role="confirm">${opts.confirmLabel}</button>
+        </div>
+      </div>`;
+    host.appendChild(overlay);
+    const confirmBtn = overlay.querySelector('[data-role="confirm"]');
+    const cancelBtn = overlay.querySelector('[data-role="cancel"]');
+    const error = overlay.querySelector(".sb-dialog-error");
+    confirmBtn.focus();
+    return new Promise((resolve) => {
+      let busy = false;
+      const close = (result) => {
+        overlay.remove();
+        cancelOpen = null;
+        resolve(result);
+      };
+      cancelOpen = () => {
+        if (!busy) close(false);
+      };
+      cancelBtn.addEventListener("click", () => cancelOpen?.());
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) cancelOpen?.();
+      });
+      confirmBtn.addEventListener("click", async () => {
+        if (!opts.action) {
+          close(true);
+          return;
+        }
+        busy = true;
+        error.hidden = true;
+        confirmBtn.disabled = cancelBtn.disabled = true;
+        confirmBtn.textContent = opts.workingLabel ?? "Working...";
+        try {
+          await opts.action();
+          close(true);
+        } catch (e) {
+          busy = false;
+          confirmBtn.disabled = cancelBtn.disabled = false;
+          confirmBtn.textContent = opts.confirmLabel;
+          error.textContent = `That didn't work: ${e instanceof Error ? e.message : String(e)}. You can try again.`;
+          error.hidden = false;
+        }
+      });
+    });
   }
 
   // src/navigation.ts
@@ -1280,7 +1517,7 @@
   }
   function pickSwissOpponent(scene1, rightPool) {
     const scene1IdxInPool = rightPool.findIndex((s) => s.id === scene1.id);
-    const effectiveScene1Idx = isRated(scene1) && scene1IdxInPool >= 0 ? scene1IdxInPool : eloInsertionIndex(rightPool, effectiveElo(scene1, state.settings.unratedRating));
+    const effectiveScene1Idx = isRated(scene1) && scene1IdxInPool >= 0 ? scene1IdxInPool : eloInsertionIndex(rightPool, effectiveElo(scene1));
     const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
     const candidates = [];
     for (let reach = Math.min(SWISS_OPPONENT_REACH_INITIAL, rightPool.length); candidates.length === 0 && reach <= rightPool.length; reach = Math.min(reach * SWISS_OPPONENT_REACH_MULTIPLIER, rightPool.length)) {
@@ -1305,7 +1542,7 @@
     return closest[Math.floor(Math.random() * closest.length)];
   }
   function getRemainingChampionOpponents(champion, rightPool, championIndex) {
-    const championElo = effectiveElo(champion, CHAMPION_UNRATED_RATING);
+    const championElo = effectiveElo(champion, CHAMPION_UNRATED_ELO);
     return rightPool.filter((s, idx) => {
       if (s.id === champion.id || state.championDefeated.includes(s.id)) return false;
       return idx < championIndex || (elo(s) ?? -Infinity) >= championElo;
@@ -1393,11 +1630,11 @@
     run.rangeHi = step.hi;
     if (step.done) {
       const newElo = landingElo(pool, step.slot);
-      const newGames = games(run.scene) + run.battles;
+      const newBattles = battles(run.scene) + run.battles;
       console.log(
         `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`
       );
-      await writeElo(run.scene, newElo, newGames);
+      await writeElo(run.scene, newElo, newBattles);
       return {
         done: true,
         scene: run.scene,
@@ -1443,10 +1680,10 @@
     const title = resolveSceneTitle(scene);
     const screenshotPath = scene.paths ? scene.paths.screenshot : null;
     const previewPath = scene.paths ? scene.paths.preview : null;
-    const { unratedRating, openInNewTab, cleanMode } = state.settings;
+    const { openInNewTab, cleanMode } = state.settings;
     const stashRating = scene.rating100 ? `${scene.rating100}/100` : "None";
     const eloValue = elo(scene);
-    const unratedAs = state.currentMode === "swiss" ? seed(unratedRating) : state.currentMode === "champion" ? seed(CHAMPION_UNRATED_RATING) : null;
+    const unratedAs = state.currentMode === "swiss" ? ELO_START : state.currentMode === "champion" ? CHAMPION_UNRATED_ELO : null;
     let eloLabel;
     if (eloValue !== null) {
       eloLabel = `ELO ${Math.round(eloValue)}${rank !== null && rank !== void 0 ? ` · #${rank}` : ""}`;
@@ -1488,6 +1725,7 @@
               <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
               <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
+              <div class="sb-meta-item sb-meta-battles"><strong>Battles:</strong> ${battles(scene)}</div>
               <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
@@ -1546,9 +1784,9 @@
     finishRunShowEndScreen(html);
   }
   function showPlacementScreen(result) {
-    const { scene, rank, battles, streak, fromBottom } = result;
+    const { scene, rank, battles: battles2, streak, fromBottom } = result;
     const streakText = fromBottom && streak > 0 ? `🔥 ${streak} win streak · ` : "";
-    const battlesText = battles ? ` · ${battles} battle${battles === 1 ? "" : "s"}` : "";
+    const battlesText = battles2 ? ` · ${battles2} battle${battles2 === 1 ? "" : "s"}` : "";
     const html = buildEndScreenHtml(
       scene,
       "📍",
@@ -1559,13 +1797,43 @@
     finishRunShowEndScreen(html);
   }
 
+  // src/ui/stashRatingsText.ts
+  var STASH_RATINGS_OPTIONS = [
+    { value: "off", label: "Don't update", desc: "ELO is saved; your Stash ratings stay as they are." },
+    {
+      value: "percentile",
+      label: "Percentile",
+      desc: "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1."
+    },
+    {
+      value: "linear",
+      label: "Straight-line",
+      desc: "Rating = ELO converted back (1500 = 50, 10 ELO per point). Very high or low scenes stop at 100 or 1."
+    }
+  ];
+  function stashRatingsOption(value) {
+    return STASH_RATINGS_OPTIONS.find((option) => option.value === value) ?? STASH_RATINGS_OPTIONS[0];
+  }
+
   // src/ui/settingsPanel.ts
   var SECTIONS = [
+    {
+      title: "ELO",
+      rows: [
+        // The hint is the selected option's description (kept current by syncSettingsControls)
+        { key: "stashRatings", title: "Stash ratings update mode", hint: "" },
+        {
+          action: "reset-elo",
+          title: "Reset ELO",
+          hint: "Start every scene's ELO over, from its Stash rating or at 1500",
+          button: "Reset ELO…"
+        }
+      ]
+    },
     {
       title: "Battles",
       rows: [
         { key: "filterOpponents", title: "Use filtered scenes for both sides", hint: "Opponents also come from the current scene list filter instead of your whole rated library" },
-        { key: "unratedRating", title: "Unrated scene rating", hint: "What unrated scenes count as in Swiss. 0 starts them at the bottom; 50 counts them as 1500 ELO, a classic ELO start" },
         { key: "placementFromBottom", title: "Placement: start from the bottom", hint: "Placement ignores the scene's current ELO: it starts against the bottom scene and climbs, jumping further with each win (this replaces Gauntlet)" }
       ]
     },
@@ -1590,8 +1858,11 @@
     return volume < 50 ? "🔉" : "🔊";
   }
   function settingControl(key) {
-    if (key === "unratedRating") {
-      return `<input type="number" min="0" max="100" step="1" data-setting="${key}" value="${state.settings[key]}" class="form-control form-control-sm input-control sb-setting-number">`;
+    if (key === "stashRatings") {
+      const options2 = STASH_RATINGS_OPTIONS.map(
+        ({ value, label }) => `<option value="${value}" ${value === state.settings.stashRatings ? "selected" : ""}>${label}</option>`
+      ).join("");
+      return `<select data-setting="${key}" class="form-control form-control-sm sb-setting-select" aria-label="Stash ratings update mode">${options2}</select>`;
     }
     const id = `sb-setting-${key}`;
     return `
@@ -1616,22 +1887,26 @@
       </div>
     `;
   }
+  function settingRowHtml(row) {
+    const hint = "key" in row && row.key === "stashRatings" ? stashRatingsOption(state.settings.stashRatings).desc : row.hint;
+    const hintFor = "key" in row ? ` data-hint-for="${row.key}"` : "";
+    const control = "key" in row ? settingControl(row.key) : `<button type="button" class="btn btn-secondary btn-sm" data-action="${row.action}">${row.button}</button>`;
+    return `
+            <div class="setting">
+              <div>
+                <h3>${row.title}</h3>
+                <div class="sub-heading"${hintFor}>${hint}</div>
+              </div>
+              <div>${control}</div>
+            </div>`;
+  }
   function createSettingsTab() {
     const sections = SECTIONS.map(
       ({ title, rows }) => `
         <div class="setting-section">
           <h1>${title}</h1>
           <div class="card">
-            ${rows.map(
-        ({ key, title: rowTitle, hint }) => `
-            <div class="setting">
-              <div>
-                <h3>${rowTitle}</h3>
-                <div class="sub-heading">${hint}</div>
-              </div>
-              <div>${settingControl(key)}</div>
-            </div>`
-      ).join("")}
+            ${rows.map(settingRowHtml).join("")}
           </div>
         </div>`
     ).join("");
@@ -1648,6 +1923,12 @@
       const value = state.settings[key];
       if (input.type === "checkbox") input.checked = Boolean(value);
       else input.value = String(value);
+    });
+    root.querySelectorAll("select[data-setting]").forEach((select) => {
+      select.value = String(state.settings[select.dataset.setting]);
+    });
+    root.querySelectorAll('[data-hint-for="stashRatings"]').forEach((hint) => {
+      hint.textContent = stashRatingsOption(state.settings.stashRatings).desc;
     });
     const volume = state.settings.previewVolume;
     root.querySelectorAll(".sb-volume-icon").forEach((el) => {
@@ -1667,7 +1948,7 @@
       panel.hidden = panel.dataset.panel !== tab;
     });
   }
-  function bindSettingsControls(root, onChange, onTabChange) {
+  function bindSettingsControls(root, onChange, onTabChange, beforeChange = async () => true) {
     const apply = (patch, key) => {
       updateSettings(patch);
       syncSettingsControls(root);
@@ -1679,6 +1960,19 @@
       input.addEventListener(eventName, () => {
         const value = input.type === "checkbox" ? input.checked : Number(input.value);
         apply({ [key]: value }, key);
+      });
+    });
+    root.querySelectorAll("select[data-setting]").forEach((select) => {
+      const key = select.dataset.setting;
+      select.addEventListener("change", async () => {
+        const value = select.value;
+        select.disabled = true;
+        try {
+          if (await beforeChange(key, value)) apply({ [key]: value }, key);
+          else syncSettingsControls(root);
+        } finally {
+          select.disabled = false;
+        }
       });
     });
     root.querySelectorAll(".sb-volume-icon").forEach((btn) => {
@@ -1759,6 +2053,9 @@
           </p>
 
           <p id="sb-pool-status" class="sb-pool-status" hidden></p>
+          <p id="sb-ratings-note" class="sb-pool-status sb-ratings-note" hidden>
+            Stash ratings aren't being changed · <a href="#" data-action="open-settings">change in Settings</a>
+          </p>
 
           <div class="sb-content">
             <div id="sb-comparison-area" class="sb-comparison-area">
@@ -1786,6 +2083,10 @@
     const info = document.getElementById("sb-mode-info");
     const mode = MODES2.find((m) => m.mode === state.currentMode);
     if (info && mode) info.innerHTML = `<strong>${mode.icon} ${mode.title}:</strong> ${mode.tip.replace(/\n/g, "<br>")}`;
+  }
+  function updateRatingsNote() {
+    const note = document.getElementById("sb-ratings-note");
+    if (note) note.hidden = state.settings.stashRatings !== "off";
   }
   function updatePoolStatus() {
     const status = document.getElementById("sb-pool-status");
@@ -2102,15 +2403,14 @@
     await handleSceneGone(scene.id);
   }
   function battleElo(scene) {
-    const unrated = state.currentMode === "swiss" ? state.settings.unratedRating : CHAMPION_UNRATED_RATING;
-    return effectiveElo(scene, unrated);
+    return state.currentMode === "champion" ? effectiveElo(scene, CHAMPION_UNRATED_ELO) : effectiveElo(scene);
   }
   function resolveComparison(winner, loser) {
-    const winnerSide = { elo: battleElo(winner), games: games(winner) };
-    const loserSide = { elo: battleElo(loser), games: games(loser) };
+    const winnerSide = { elo: battleElo(winner), kGames: kGames(winner) };
+    const loserSide = { elo: battleElo(loser), kGames: kGames(loser) };
     const result = eloResult(winnerSide, loserSide);
-    void writeElo(winner, result.winner, winnerSide.games + 1);
-    void writeElo(loser, result.loser, loserSide.games + 1);
+    void writeElo(winner, result.winner, battles(winner) + 1);
+    void writeElo(loser, result.loser, battles(loser) + 1);
     return {
       winner: { from: winnerSide.elo, to: result.winner },
       loser: { from: loserSide.elo, to: result.loser }
@@ -2224,92 +2524,6 @@
     setTimeout(() => overlay.remove(), RATING_ANIM_MAX_TOTAL_MS);
   }
 
-  // src/eloSetup.ts
-  var SETUP_SCENES_QUERY = `
-      query FindScenesForEloSetup {
-        findScenes(filter: { per_page: -1 }) {
-          scenes {
-            id
-            rating100
-            custom_fields
-          }
-        }
-      }
-    `;
-  async function fetchSetupScenes() {
-    const data = await graphqlQuery(SETUP_SCENES_QUERY);
-    return data.findScenes.scenes ?? [];
-  }
-  function setupRatingChanges(scenes, start, stashRatings) {
-    return stashRatingChanges(
-      scenes.map((scene) => afterSetup(scene, start)),
-      stashRatings
-    );
-  }
-  var BULK_UPDATE_MUTATION = `
-      mutation BulkSceneUpdate($input: BulkSceneUpdateInput!) {
-        bulkSceneUpdate(input: $input) {
-          id
-        }
-      }
-    `;
-  async function seedFromRatings(rated, onProgress) {
-    for (let start = 0; start < rated.length; start += SETUP_BATCH_SIZE) {
-      const batch = rated.slice(start, start + SETUP_BATCH_SIZE);
-      const mutation = `
-      mutation SeedElo(${batch.map((_, i) => `$s${i}: SceneUpdateInput!`).join(", ")}) {
-        ${batch.map((_, i) => `s${i}: sceneUpdate(input: $s${i}) { id }`).join("\n        ")}
-      }
-    `;
-      const variables = Object.fromEntries(
-        batch.map((scene, i) => {
-          const initial = startingElo(scene, "ratings");
-          const partial = { [ELO_FIELD]: initial.elo, [GAMES_FIELD]: initial.games };
-          return [`s${i}`, { id: scene.id, custom_fields: { partial } }];
-        })
-      );
-      await graphqlQuery(mutation, variables);
-      onProgress("elo", start + batch.length, rated.length);
-    }
-  }
-  async function runEloSetup(scenes, start, stashRatings, onProgress) {
-    const summary = { eloWritten: 0, eloCleared: 0, ratingsWritten: 0 };
-    if (start === "ratings") {
-      const rated = scenes.filter((scene) => scene.rating100 != null);
-      onProgress("elo", 0, rated.length);
-      await seedFromRatings(rated, onProgress);
-      summary.eloWritten = rated.length;
-      const stale = scenes.filter((scene) => scene.rating100 == null && isRated(scene)).map((scene) => scene.id);
-      if (stale.length > 0) {
-        await graphqlQuery(BULK_UPDATE_MUTATION, {
-          input: { ids: stale, custom_fields: { remove: [ELO_FIELD, GAMES_FIELD] } }
-        });
-        summary.eloCleared = stale.length;
-      }
-    } else {
-      const ids = scenes.map((scene) => scene.id);
-      onProgress("elo", 0, ids.length);
-      if (ids.length > 0) {
-        await graphqlQuery(BULK_UPDATE_MUTATION, {
-          input: { ids, custom_fields: { partial: { [ELO_FIELD]: ELO_START, [GAMES_FIELD]: 0 } } }
-        });
-      }
-      onProgress("elo", ids.length, ids.length);
-      summary.eloWritten = ids.length;
-    }
-    const changes = setupRatingChanges(scenes, start, stashRatings);
-    if (changes.size > 0) {
-      onProgress("ratings", 0, changes.size);
-      await writeStashRatings(changes);
-      onProgress("ratings", changes.size, changes.size);
-      summary.ratingsWritten = changes.size;
-    }
-    console.log(
-      `[Stash Battle] ✅ ELO setup (${start}, Stash ratings ${stashRatings}): ${summary.eloWritten} ELO written, ${summary.eloCleared} cleared, ${summary.ratingsWritten} Stash ratings written`
-    );
-    return summary;
-  }
-
   // src/ui/ratingPreview.ts
   var NOW_RATINGS = [100, 100, 96, 85, 74, 70, 62, 45, 20, null];
   var BATTLED_ELO = [2150, 1980, 1700, 1650, 1600, 1550, 1500, 1400, 1250, 1100];
@@ -2335,11 +2549,11 @@
               <span class="${classes.join(" ")}"${fill}>${rating ?? "–"}</span>
             </div>`;
   }
-  function rowHtml(label, cells, note, options = {}) {
+  function rowHtml(label, cells, note, options2 = {}) {
     return `
-          <div class="sb-pv-row${options.muted ? " sb-pv-muted" : ""}">
+          <div class="sb-pv-row${options2.muted ? " sb-pv-muted" : ""}">
             <div class="sb-pv-label">${label}</div>
-            <div class="sb-pv-squares">${cells.map((cell) => squareHtml(cell, options.showChange ?? false)).join("")}
+            <div class="sb-pv-squares">${cells.map((cell) => squareHtml(cell, options2.showChange ?? false)).join("")}
             </div>
             <div class="sb-pv-note">${note}</div>
           </div>`;
@@ -2418,16 +2632,21 @@
   // src/ui/setupScreen.ts
   var SETUP_ACTIVE_CLASS = "sb-setup-active";
   var running = false;
+  var options = {};
   var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
   function setupArea(root) {
     return root.querySelector("#sb-setup-area");
   }
-  function showSetupScreen(root, onDone) {
+  function isSetupRunning() {
+    return running;
+  }
+  function showSetupScreen(root, onDone, screenOptions = {}) {
     const area = setupArea(root);
     if (!area) return;
     area.closest(".sb-tab-panel")?.classList.add(SETUP_ACTIVE_CLASS);
     area.hidden = false;
     if (running) return;
+    options = screenOptions;
     void loadChoices(area, onDone);
   }
   function hideSetupScreen(root) {
@@ -2483,15 +2702,15 @@
     const unrated = total - rated;
     const withElo = scenes.filter(isRated).length;
     const upgradeNote = !state.settings.eloSetupAt && !hadFunMode() ? " Before 3.0, ratings changed after every battle; Straight-line with Use my ratings is closest to that." : "";
-    const choice = { start: "ratings", stashRatings: "off" };
+    const reset = options.reset === true;
+    const choice = { start: "ratings", stashRatings: reset ? state.settings.stashRatings : "off" };
     area.innerHTML = `
       <div class="sb-setup">
-        <h2 class="sb-setup-title">Set up ELO</h2>
+        <h2 class="sb-setup-title">${reset ? "Reset ELO" : "Set up ELO"}</h2>
         <p class="sb-setup-intro">
-          Stash Battle now gives each scene an ELO score, saved in its custom fields. Wins raise it,
-          losses lower it. Choose how it starts. This runs once.
+          ${reset ? "Choose how ELO starts again. This overwrites every scene's ELO and battle count." : "Stash Battle now gives each scene an ELO score, saved in its custom fields. Wins raise it, losses lower it. Choose how it starts. This runs once."}
         </p>
-        ${withElo > 0 ? `<p class="sb-setup-warning">${plural(withElo, "scene")} already ${withElo === 1 ? "has" : "have"} an ELO from an earlier setup that didn't finish. Setting up again overwrites ${withElo === 1 ? "it" : "them"}.</p>` : ""}
+        ${withElo > 0 && !reset ? `<p class="sb-setup-warning">${plural(withElo, "scene")} already ${withElo === 1 ? "has" : "have"} an ELO from an earlier setup that didn't finish. Setting up again overwrites ${withElo === 1 ? "it" : "them"}.</p>` : ""}
         <div class="sb-setup-questions">
           <fieldset class="sb-setup-question">
             <legend>How should ELO start?</legend>
@@ -2512,21 +2731,9 @@
           </fieldset>
           <fieldset class="sb-setup-question">
             <legend>Should Stash Battle change your Stash ratings?</legend>
-            ${radio("stashRatings", "off", "Don't update", "ELO is saved; your Stash ratings stay as they are.", true)}
-            ${radio(
-      "stashRatings",
-      "percentile",
-      "Percentile",
-      "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1.",
-      false
-    )}
-            ${radio(
-      "stashRatings",
-      "linear",
-      "Straight-line",
-      "Rating = ELO converted back (1500 = 50, 10 ELO per point). Very high or low scenes stop at 100 or 1.",
-      false
-    )}
+            ${STASH_RATINGS_OPTIONS.map(
+      ({ value, label, desc }) => radio("stashRatings", value, label, desc, value === choice.stashRatings)
+    ).join("")}
             <p class="sb-setup-note">You can change this later in Settings.${upgradeNote}</p>
           </fieldset>
         </div>
@@ -2534,9 +2741,11 @@
         <h3 class="sb-setup-subtitle">Preview</h3>
         <div data-role="preview"></div>
         <div class="sb-setup-actions">
+          ${reset ? `<button type="button" class="btn btn-secondary" data-role="cancel">Cancel</button>` : ""}
           <button type="button" class="btn btn-primary" data-role="start">Start ELO</button>
         </div>
       </div>`;
+    area.querySelector('[data-role="cancel"]')?.addEventListener("click", () => options.onCancel?.());
     const slot = area.querySelector('[data-role="ratings-warning"]');
     const preview = area.querySelector('[data-role="preview"]');
     const startBtn = area.querySelector('[data-role="start"]');
@@ -2589,6 +2798,9 @@
   async function runSetup(area, scenes, choice, onDone) {
     running = true;
     area.innerHTML = progressHtml("elo", 0, 0);
+    if (state.settings.eloSetupAt && !await updateSettingsNow({ eloSetupAt: null, eloSetupMode: null })) {
+      console.warn("[Stash Battle] Couldn't clear the setup flag before resetting ELO; continuing");
+    }
     let summary;
     try {
       summary = await runEloSetup(scenes, choice.start, choice.stashRatings, (phase, done, total) => {
@@ -2630,7 +2842,8 @@
     running = false;
     const eloLine2 = choice.start === "ratings" ? `${plural(summary.eloWritten, "scene")} got a starting ELO from ${summary.eloWritten === 1 ? "its" : "their"} rating. Unrated scenes stay unrated until they battle.` : `${plural(summary.eloWritten, "scene")} start at 1500 ELO.`;
     const clearedLine = summary.eloCleared > 0 ? `<li>${plural(summary.eloCleared, "scene")} without a Stash rating had an old ELO removed.</li>` : "";
-    const ratingsLine = choice.stashRatings === "off" ? "Stash ratings weren't changed, and battles won't change them." : `${plural(summary.ratingsWritten, "Stash rating")} updated (${choice.stashRatings === "percentile" ? "Percentile" : "Straight-line"}).`;
+    const optionLabel = choice.stashRatings === "percentile" ? "Percentile" : "Straight-line";
+    const ratingsLine = choice.stashRatings === "off" ? "Stash ratings weren't changed, and battles won't change them." : summary.ratingsWritten === 0 ? `Stash ratings already matched (${optionLabel}), so none changed. Battles keep them in step from now on.` : `${plural(summary.ratingsWritten, "Stash rating")} updated (${optionLabel}). Battles keep them in step from now on.`;
     area.innerHTML = `
       <div class="sb-setup sb-setup-done">
         <h2 class="sb-setup-title">✅ ELO is ready</h2>
@@ -2672,8 +2885,76 @@
     }
     renderPair([left, right], [state.currentRanks.left, state.currentRanks.right]);
   }
+  async function confirmSettingChange(key, value) {
+    if (key !== "stashRatings") return true;
+    const next = value;
+    if (next === "off" || next === state.settings.stashRatings) return true;
+    let changes;
+    try {
+      changes = stashRatingChanges(await fetchSetupScenes(), next);
+    } catch (e) {
+      console.error("[Stash Battle] Couldn't load scenes to switch Stash ratings:", e);
+      await confirmDialog({
+        title: "Couldn't load your scenes",
+        body: "<p>Stash Battle needs your whole library to work out the new Stash ratings. Nothing was changed; try again.</p>",
+        confirmLabel: "OK"
+      });
+      return false;
+    }
+    if (changes.size === 0) return true;
+    const { label, desc } = stashRatingsOption(next);
+    const count = `${changes.size} Stash rating${changes.size === 1 ? "" : "s"}`;
+    return confirmDialog({
+      title: `Switch Stash ratings update mode to ${label}?`,
+      body: `
+        <p>${desc}</p>
+        <p><strong>${count} change now.</strong> After that, battles keep Stash ratings in step with
+        ELO, and a star rating you change by hand in Stash is overwritten the next time Stash Battle
+        writes that scene.</p>
+        <p>Take a Stash backup first (Settings → Tasks → Backup).</p>`,
+      confirmLabel: `Update ${count}`,
+      workingLabel: "Updating...",
+      action: async () => {
+        await writeStashRatings(changes);
+        applyStashRatings(changes);
+      }
+    });
+  }
+  async function startResetElo(modal) {
+    const ratingsOn = state.settings.stashRatings !== "off";
+    const ok = await confirmDialog({
+      title: "Reset ELO?",
+      body: `
+        <p>Every scene's ELO and battle count will be overwritten. Next you choose how ELO starts
+        again: from your Stash ratings, or 1500 for everyone.${ratingsOn ? " Stash ratings are then updated from the new ELO." : ""}</p>
+        <p>Nothing changes until you press Start on the next screen.</p>`,
+      confirmLabel: "Continue"
+    });
+    if (!ok) return;
+    state.resettingElo = true;
+    showTab(modal, "battle");
+    modal.querySelectorAll(".sb-hover-preview").forEach((v) => v.pause());
+    showSetupScreen(modal, () => afterSetup2(modal), {
+      reset: true,
+      onCancel: () => {
+        state.resettingElo = false;
+        hideSetupScreen(modal);
+        if (state.currentPair.left && state.currentPair.right) void restoreCurrentPair();
+        else void loadNewPair();
+      }
+    });
+  }
+  function afterSetup2(modal) {
+    state.resettingElo = false;
+    syncSettingsControls(modal);
+    updateRatingsNote();
+    void loadNewPair(getSceneIdFromUrl());
+  }
   function onSettingChanged(key) {
     switch (key) {
+      case "stashRatings":
+        updateRatingsNote();
+        break;
       case "filterOpponents":
         if (state.currentMode !== "swiss") resetRunState();
         saveState();
@@ -2695,7 +2976,6 @@
         break;
       case "openInNewTab":
       case "cleanMode":
-      case "unratedRating":
         rerenderCurrentPair();
         break;
     }
@@ -2753,6 +3033,7 @@
       document.body.classList.add(BATTLE_OPEN_CLASS);
       showTab(existingModal, "battle");
       syncSettingsControls(existingModal);
+      updateRatingsNote();
       if (modalKeyHandler) {
         document.removeEventListener("keydown", modalKeyHandler, true);
         document.addEventListener("keydown", modalKeyHandler, true);
@@ -2760,7 +3041,7 @@
       const modalContent2 = existingModal.querySelector(".sb-modal-content");
       if (modalContent2) modalContent2.focus();
       if (isEloSetupPending()) {
-        showSetupScreen(existingModal, () => void loadNewPair(getSceneIdFromUrl()));
+        showSetupScreen(existingModal, () => afterSetup2(existingModal));
         return;
       }
       hideSetupScreen(existingModal);
@@ -2821,7 +3102,14 @@
       modeInfoBtn.setAttribute("aria-expanded", String(!modeInfo.hidden));
     });
     showTab(modal, "battle");
-    bindSettingsControls(modal, onSettingChanged, () => applyPreviewSettings());
+    bindSettingsControls(modal, onSettingChanged, () => applyPreviewSettings(), confirmSettingChange);
+    updateRatingsNote();
+    modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));
+    modal.querySelector('[data-action="open-settings"]')?.addEventListener("click", (e) => {
+      e.preventDefault();
+      showTab(modal, "settings");
+      applyPreviewSettings();
+    });
     modal.querySelector("#sb-skip-btn")?.addEventListener("click", skipPair);
     const refreshCacheBtn = modal.querySelector("#sb-refresh-cache-btn");
     if (refreshCacheBtn) {
@@ -2846,7 +3134,7 @@
     }
     if (isEloSetupPending()) {
       console.log("[Stash Battle] 🧭 ELO setup not done yet, showing setup");
-      showSetupScreen(modal, () => void loadNewPair(getSceneIdFromUrl()));
+      showSetupScreen(modal, () => afterSetup2(modal));
     } else if (forceSceneBattle) {
       console.log(`[Stash Battle] 🎯 Starting battle with scene ${scenePageId} from scene page`);
       loadNewPair(scenePageId);
@@ -2873,6 +3161,13 @@
       }
       if (isDeleteDialogOpen()) return;
       e.stopImmediatePropagation();
+      if (isConfirmDialogOpen()) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancelConfirmDialog();
+        }
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         closeModal();
@@ -2938,6 +3233,11 @@
     const modal = document.getElementById("sb-modal");
     if (!modal || modal.classList.contains("sb-modal-hidden")) return;
     cancelDeleteDialog();
+    cancelConfirmDialog();
+    if (state.resettingElo && !isSetupRunning()) {
+      state.resettingElo = false;
+      hideSetupScreen(modal);
+    }
     modal.querySelectorAll(".sb-hover-preview").forEach((v) => v.pause());
     modal.classList.add("sb-modal-closing");
     setTimeout(() => {

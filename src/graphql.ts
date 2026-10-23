@@ -1,6 +1,8 @@
 // GraphQL access against the Stash backend.
 
-import type { FindSceneResult, Scene } from "./types";
+import { BATTLES_FIELD, ELO_FIELD, ELO_FIELD_KEYS, SEEDED_FIELD } from "./constants";
+import type { ApolloCacheLike } from "./pluginApi";
+import type { EloFields, FindSceneResult, Scene } from "./types";
 
 export async function graphqlQuery<T = unknown>(
   query: string,
@@ -74,6 +76,59 @@ export function sceneCustomFieldsSupported(): Promise<boolean> {
       return true;
     });
   return customFieldsSupport;
+}
+
+/** A change Stash Battle wrote to a scene, to mirror into Stash's own page cache. */
+export interface StashCacheUpdate {
+  id: string;
+  rating100?: number;
+  /** New ELO fields, or null when they were removed. */
+  elo?: EloFields | null;
+}
+
+/**
+ * Stash Battle writes with plain fetch, so Stash's own pages (Apollo) never see the changes and
+ * keep showing old ratings until refreshed. Mirror the changes into Apollo's cached scenes, and
+ * when ratings changed, drop cached scene lists so rating-sorted lists re-sort. Does nothing if
+ * Stash doesn't expose its client.
+ */
+export function refreshStashCache(updates: StashCacheUpdate[], ratingsChanged: boolean): void {
+  let cache: ApolloCacheLike | undefined;
+  try {
+    cache = window.PluginApi?.utils?.StashService?.getClient?.()?.cache;
+  } catch {
+    cache = undefined;
+  }
+  if (!cache) return;
+  try {
+    for (const update of updates) {
+      const id = cache.identify({ __typename: "Scene", id: update.id });
+      if (!id) continue;
+      const fields: Record<string, (existing: unknown) => unknown> = {};
+      if (update.rating100 !== undefined) fields.rating100 = () => update.rating100;
+      if (update.elo !== undefined) {
+        const value = update.elo;
+        fields.custom_fields = (existing) => {
+          const next = { ...((existing as Record<string, unknown> | null) ?? {}) };
+          for (const key of ELO_FIELD_KEYS) delete next[key];
+          if (value) {
+            next[ELO_FIELD] = value.elo;
+            next[BATTLES_FIELD] = value.battles;
+            next[SEEDED_FIELD] = value.seeded;
+          }
+          return next;
+        };
+      }
+      // Apollo only calls modifiers for fields it has cached, so missing ones are skipped
+      cache.modify({ id, fields });
+    }
+    if (ratingsChanged) {
+      cache.evict({ id: "ROOT_QUERY", fieldName: "findScenes" });
+      cache.gc();
+    }
+  } catch (e) {
+    console.warn("[Stash Battle] Could not update Stash's page cache:", e);
+  }
 }
 
 // Extract scene ID from individual scene pages like /scenes/123

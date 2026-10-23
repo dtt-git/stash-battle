@@ -340,23 +340,39 @@
   font-size: 0.82rem;
 }
 
-.sb-setting-number {
-  width: 80px;
-  /* Right edge in line with the switches (the control column is wider than the box) */
+.sb-setting-select {
+  width: auto;
+  min-width: 140px;
   margin-left: auto;
-  text-align: right;
+}
+
+/* Stash turns off the native select arrow (appearance: none): draw a chevron so it reads as a dropdown */
+.sb-settings-tab .sb-setting-select,
+.sb-settings-tab .sb-setting-select:focus {
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23bbb' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 8px;
+}
+
+/* Action buttons (Reset ELO) line up with the other controls' right edge */
+.sb-settings-tab .setting > div:last-child .btn[data-action] {
+  display: block;
+  margin-left: auto;
+  margin-right: 0; /* Stash's own settings rows give buttons a 0.25rem right margin */
 }
 
 /* The modal's own dark palette instead of Stash's default blue-grey inputs */
-.sb-settings-tab .sb-setting-number {
-  background: #121212;
+.sb-settings-tab .sb-setting-select {
+  background-color: #121212;
   border: 1px solid #444;
   color: #ddd;
   box-shadow: none;
 }
 
-.sb-settings-tab .sb-setting-number:focus {
-  background: #121212;
+.sb-settings-tab .sb-setting-select:focus {
+  background-color: #121212;
   border-color: var(--primary, #137cbd);
   color: #fff;
   box-shadow: none;
@@ -1130,6 +1146,7 @@ body.sb-battle-open > .modal {
   }
 
   .sb-meta-plays,
+  .sb-meta-battles,
   .sb-tags-row {
     display: none;
   }
@@ -1158,6 +1175,7 @@ body.sb-battle-open > .modal {
   }
 
   .sb-meta-plays,
+  .sb-meta-battles,
   .sb-tags-row {
     display: none;
   }
@@ -1646,4 +1664,84 @@ body.sb-battle-open > .modal {
   .sb-pv-note:empty {
     display: none;
   }
+}
+
+/* Narrow screens: the dropdown and Reset ELO rows stack (text, then the control) instead of squeezing */
+@media (max-width: 640px) {
+  .sb-settings-tab .setting:has(.sb-setting-select),
+  .sb-settings-tab .setting:has([data-action]) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .sb-settings-tab .setting:has(.sb-setting-select) .sb-setting-select {
+    width: 100%;
+  }
+
+  .sb-settings-tab .setting > div:last-child .btn[data-action] {
+    margin-left: 0;
+  }
+}
+
+/* Two buttons on Reset ELO's screen (Cancel, Start) */
+.sb-setup-actions .btn + .btn {
+  margin-left: 8px;
+}
+
+/* Battle tab: "Stash ratings aren't being changed" */
+.sb-ratings-note {
+  margin-top: -6px;
+}
+
+.sb-ratings-note a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* ---------- Confirmation dialog (inside the Stash Battle modal) ---------- */
+
+.sb-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.sb-dialog {
+  width: min(480px, 100%);
+  padding: 18px 20px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: #ddd;
+  line-height: 1.45;
+}
+
+.sb-dialog-title {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+  color: #fff;
+}
+
+.sb-dialog-body p {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+}
+
+.sb-dialog-error {
+  margin: 0 0 10px;
+  color: #ff8a8a;
+  font-size: 0.9rem;
+}
+
+.sb-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
 }

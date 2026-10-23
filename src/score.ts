@@ -1,9 +1,18 @@
 // A scene's ELO (read from its custom fields), ELO ordering, and conversions between ELO and
 // Stash's 1-100 rating. Pure functions: no state, no I/O.
 
-import { ELO_FIELD, ELO_PER_RATING_POINT, ELO_START, GAMES_FIELD, PLACEMENT_EDGE_GAP, SEEDED_GAMES } from "./constants";
+import {
+  BATTLES_FIELD,
+  ELO_FIELD,
+  ELO_FIELD_KEYS,
+  ELO_PER_RATING_POINT,
+  ELO_START,
+  PLACEMENT_EDGE_GAP,
+  SEEDED_FIELD,
+  SEEDED_HEAD_START,
+} from "./constants";
 import { roundElo } from "./elo";
-import type { EloStart, Scene, StashRatingsMode } from "./types";
+import type { EloFields, EloStart, Scene, StashRatingsMode } from "./types";
 
 /** Custom field values should come back as numbers; numeric strings are accepted too. */
 function readNumber(value: unknown): number | null {
@@ -24,10 +33,26 @@ export function isRated(scene: Scene): boolean {
   return elo(scene) !== null;
 }
 
-/** Rated battles the scene's ELO is based on (sets its K). */
-export function games(scene: Scene): number {
-  const n = readNumber(scene.custom_fields?.[GAMES_FIELD]);
+/** Real battles that moved the scene's ELO. */
+export function battles(scene: Scene): number {
+  const n = readNumber(scene.custom_fields?.[BATTLES_FIELD]);
   return n !== null && n > 0 ? Math.floor(n) : 0;
+}
+
+/** The scene's starting ELO came from its Stash rating. (Stash stores `true` as 1.) */
+export function isSeeded(scene: Scene): boolean {
+  const value = scene.custom_fields?.[SEEDED_FIELD];
+  return value === true || value === 1 || value === "true" || value === "1";
+}
+
+/** The count K is based on: real battles, plus the head start for seeded scenes. */
+export function kGames(scene: Scene): number {
+  return battles(scene) + (isSeeded(scene) ? SEEDED_HEAD_START : 0);
+}
+
+/** EloFields as the custom fields map Stash stores. */
+export function eloCustomFields(value: EloFields): Record<string, unknown> {
+  return { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
 }
 
 /** Starting ELO for a 1-100 Stash rating: 50 is 1500, so 1-100 maps onto 1010-2000. */
@@ -35,9 +60,9 @@ export function seed(rating100: number): number {
   return ELO_START + (rating100 - 50) * ELO_PER_RATING_POINT;
 }
 
-/** ELO used in battle math: the stored ELO, or seed(unratedRating) for unrated scenes. */
-export function effectiveElo(scene: Scene, unratedRating: number): number {
-  return elo(scene) ?? seed(unratedRating);
+/** ELO used in battle math: the stored ELO, or `unratedElo` for unrated scenes (1500 by default). */
+export function effectiveElo(scene: Scene, unratedElo: number = ELO_START): number {
+  return elo(scene) ?? unratedElo;
 }
 
 /** Straight-line Stash rating: the inverse of seed(), clamped to 1-100. */
@@ -103,21 +128,17 @@ export function stashRatingChanges(scenes: Scene[], mode: StashRatingsMode): Map
  * ELO and games a scene gets from the one-time setup, or null when it starts unrated.
  * "ratings" seeds rated scenes from their Stash rating; "fresh" starts every scene at 1500.
  */
-export function startingElo(scene: Scene, start: EloStart): { elo: number; games: number } | null {
-  if (start === "fresh") return { elo: ELO_START, games: 0 };
-  return scene.rating100 != null ? { elo: seed(scene.rating100), games: SEEDED_GAMES } : null;
+export function startingElo(scene: Scene, start: EloStart): EloFields | null {
+  if (start === "fresh") return { elo: ELO_START, battles: 0, seeded: false };
+  return scene.rating100 != null ? { elo: seed(scene.rating100), battles: 0, seeded: true } : null;
 }
 
 /** A copy of the scene as it would be right after setup (its ELO fields replaced). */
 export function afterSetup(scene: Scene, start: EloStart): Scene {
   const custom_fields = { ...scene.custom_fields };
-  delete custom_fields[ELO_FIELD];
-  delete custom_fields[GAMES_FIELD];
+  for (const key of ELO_FIELD_KEYS) delete custom_fields[key];
   const initial = startingElo(scene, start);
-  if (initial) {
-    custom_fields[ELO_FIELD] = initial.elo;
-    custom_fields[GAMES_FIELD] = initial.games;
-  }
+  if (initial) Object.assign(custom_fields, eloCustomFields(initial));
   return { ...scene, custom_fields };
 }
 

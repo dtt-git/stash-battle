@@ -31,6 +31,7 @@ export interface BattleState {
   savedFilterParams: string; // Stored URL filter params to detect changes
   // User settings (defaults until loadSettings() resolves)
   settings: Settings;
+  resettingElo: boolean; // Reset ELO's setup screen is showing (battles wait, like a first setup)
   // Shuffle state for the left-side pool (prevents repeats when skipping)
   shuffledFilteredScenes: Scene[];
   shuffleIndex: number;
@@ -52,6 +53,7 @@ export const state: BattleState = {
   disableChoice: false,
   savedFilterParams: "",
   settings: { ...DEFAULT_SETTINGS },
+  resettingElo: false,
   shuffledFilteredScenes: [],
   shuffleIndex: 0,
   shuffleFilterKey: null,
@@ -90,7 +92,7 @@ export function isRunActive(): boolean {
   }
 }
 
-/** The one-time ELO setup hasn't finished yet, so Stash Battle shows it instead of loading pairs. */
+/** ELO setup hasn't finished (or Reset ELO is showing it), so it shows instead of loading pairs. */
 export function isEloSetupPending(): boolean {
-  return !state.settings.eloSetupAt;
+  return !state.settings.eloSetupAt || state.resettingElo;
 }

@@ -1,7 +1,7 @@
 // Renders an individual scene card (returns an HTML string).
 
-import { CHAMPION_UNRATED_RATING } from "../constants";
-import { elo, seed } from "../score";
+import { CHAMPION_UNRATED_ELO, ELO_START } from "../constants";
+import { battles, elo } from "../score";
 import { state } from "../state";
 import { isStashDeleteDialogAvailable } from "./deleteDialog";
 import type { Rank, Scene } from "../types";
@@ -37,18 +37,14 @@ export function createSceneCard(
 
   const screenshotPath = scene.paths ? scene.paths.screenshot : null;
   const previewPath = scene.paths ? scene.paths.preview : null;
-  const { unratedRating, openInNewTab, cleanMode } = state.settings;
+  const { openInNewTab, cleanMode } = state.settings;
   const stashRating = scene.rating100 ? `${scene.rating100}/100` : "None";
 
   // ELO badge: "ELO 1740 · #50" when rated (rank when known). Unrated scenes show the ELO they
   // count as in this mode in the same order, "ELO 1500 · Unrated" (Placement has none: "Unrated").
   const eloValue = elo(scene);
   const unratedAs =
-    state.currentMode === "swiss"
-      ? seed(unratedRating)
-      : state.currentMode === "champion"
-        ? seed(CHAMPION_UNRATED_RATING)
-        : null;
+    state.currentMode === "swiss" ? ELO_START : state.currentMode === "champion" ? CHAMPION_UNRATED_ELO : null;
   let eloLabel: string;
   if (eloValue !== null) {
     eloLabel = `ELO ${Math.round(eloValue)}${rank !== null && rank !== undefined ? ` · #${rank}` : ""}`;
@@ -101,6 +97,7 @@ export function createSceneCard(
               <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
               <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
+              <div class="sb-meta-item sb-meta-battles"><strong>Battles:</strong> ${battles(scene)}</div>
               <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>

@@ -2,7 +2,7 @@
 
 import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached } from "./cache";
 import {
-  CHAMPION_UNRATED_RATING,
+  CHAMPION_UNRATED_ELO,
   CLIMB_OPPONENT_PICK_WINDOW,
   SWISS_OPPONENT_REACH_INITIAL,
   SWISS_OPPONENT_REACH_MULTIPLIER,
@@ -10,7 +10,7 @@ import {
 import { readFilters, type ListFilters } from "./filters";
 import { landingElo, newPlacementRun, placementStep } from "./placement";
 import { writeElo } from "./rating";
-import { effectiveElo, elo, eloInsertionIndex, games, isRated } from "./score";
+import { battles, effectiveElo, elo, eloInsertionIndex, isRated } from "./score";
 import { state } from "./state";
 import type { ChampionPairResult, PlacementPairResult, Rank, Scene, SwissPairResult } from "./types";
 
@@ -174,11 +174,11 @@ function pickSwissOpponent(
   rightPool: Scene[],
 ): { scene2: Scene; ranks: [Rank, Rank] } {
   const scene1IdxInPool = rightPool.findIndex((s) => s.id === scene1.id);
-  // Rated scenes match around their own rank; unrated ones around where `unratedRating` would sit
+  // Rated scenes match around their own rank; unrated ones around where 1500 would sit
   const effectiveScene1Idx =
     isRated(scene1) && scene1IdxInPool >= 0
       ? scene1IdxInPool
-      : eloInsertionIndex(rightPool, effectiveElo(scene1, state.settings.unratedRating));
+      : eloInsertionIndex(rightPool, effectiveElo(scene1));
   const scene1RankInPool = scene1IdxInPool >= 0 ? scene1IdxInPool + 1 : null;
 
   const candidates: { scene: Scene; idx: number }[] = [];
@@ -216,7 +216,7 @@ function pickClosestChampionOpponent(remainingOpponents: Scene[]): Scene {
 
 /** Opponents above the champion in the ELO-sorted pool that it hasn't beaten in this run. */
 function getRemainingChampionOpponents(champion: Scene, rightPool: Scene[], championIndex: number): Scene[] {
-  const championElo = effectiveElo(champion, CHAMPION_UNRATED_RATING);
+  const championElo = effectiveElo(champion, CHAMPION_UNRATED_ELO);
   return rightPool.filter((s, idx) => {
     if (s.id === champion.id || state.championDefeated.includes(s.id)) return false;
     return idx < championIndex || (elo(s) ?? -Infinity) >= championElo;
@@ -335,13 +335,13 @@ export async function fetchPlacementPair(
   run.rangeHi = step.hi;
 
   if (step.done) {
-    // Only the placed scene's ELO changes; its games count the battles this run took
+    // Only the placed scene's ELO changes; it's credited with the battles this run took
     const newElo = landingElo(pool, step.slot);
-    const newGames = games(run.scene) + run.battles;
+    const newBattles = battles(run.scene) + run.battles;
     console.log(
       `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`,
     );
-    await writeElo(run.scene, newElo, newGames);
+    await writeElo(run.scene, newElo, newBattles);
     return {
       done: true,
       scene: run.scene,

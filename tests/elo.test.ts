@@ -20,33 +20,33 @@ test("expected score uses the standard 400 divisor", () => {
 });
 
 test("equal scenes with equal K trade exactly K/2", () => {
-  assert.deepEqual(eloResult({ elo: 1500, games: 0 }, { elo: 1500, games: 0 }), {
+  assert.deepEqual(eloResult({ elo: 1500, kGames: 0 }, { elo: 1500, kGames: 0 }), {
     winner: 1520,
     loser: 1480,
   });
 });
 
 test("each side uses its own K: a newcomer moves more than an established scene", () => {
-  const { winner, loser } = eloResult({ elo: 1500, games: 0 }, { elo: 1500, games: 50 });
+  const { winner, loser } = eloResult({ elo: 1500, kGames: 0 }, { elo: 1500, kGames: 50 });
   assert.equal(winner - 1500, 20);
   assert.equal(1500 - loser, 8);
 });
 
 test("with equal K, points are zero-sum at any ELO gap (the live 1900 vs 1920 case)", () => {
   for (const [w, l] of [[1900, 1920], [1500, 1900], [1900, 1500], [1234, 1777]]) {
-    const r = eloResult({ elo: w, games: 10 }, { elo: l, games: 10 });
+    const r = eloResult({ elo: w, kGames: 10 }, { elo: l, kGames: 10 });
     assert.ok(Math.abs(r.winner - w - (l - r.loser)) < 0.11, `${w} beats ${l}: +${r.winner - w} / -${l - r.loser}`);
   }
-  assert.deepEqual(eloResult({ elo: 1900, games: 10 }, { elo: 1920, games: 10 }), { winner: 1912.7, loser: 1907.3 });
+  assert.deepEqual(eloResult({ elo: 1900, kGames: 10 }, { elo: 1920, kGames: 10 }), { winner: 1912.7, loser: 1907.3 });
 });
 
 test("an upset moves more than an expected win, and nothing is clamped", () => {
-  const expectedWin = eloResult({ elo: 1900, games: 50 }, { elo: 1500, games: 50 });
-  const upset = eloResult({ elo: 1500, games: 50 }, { elo: 1900, games: 50 });
+  const expectedWin = eloResult({ elo: 1900, kGames: 50 }, { elo: 1500, kGames: 50 });
+  const upset = eloResult({ elo: 1500, kGames: 50 }, { elo: 1900, kGames: 50 });
   assert.equal(expectedWin.winner, 1901.5);
   assert.equal(expectedWin.loser, 1498.5);
   assert.equal(upset.winner, 1514.5);
   assert.equal(upset.loser, 1885.5, "a favourite that loses an upset drops as much as the winner gains");
-  assert.ok(eloResult({ elo: 2600, games: 50 }, { elo: 2600, games: 50 }).winner > 2600);
-  assert.ok(eloResult({ elo: 300, games: 50 }, { elo: 300, games: 50 }).loser < 300);
+  assert.ok(eloResult({ elo: 2600, kGames: 50 }, { elo: 2600, kGames: 50 }).winner > 2600);
+  assert.ok(eloResult({ elo: 300, kGames: 50 }, { elo: 300, kGames: 50 }).loser < 300);
 });
