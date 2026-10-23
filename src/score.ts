@@ -133,13 +133,23 @@ export function startingElo(scene: Scene, start: EloStart): EloFields | null {
   return scene.rating100 != null ? { elo: seed(scene.rating100), battles: 0, seeded: true } : null;
 }
 
+/** A copy of a custom fields map with the ELO fields set to `value` (or, with null, removed). */
+export function withEloFields(customFields: Record<string, unknown> | null | undefined, value: EloFields | null): Record<string, unknown> {
+  const fields = { ...customFields };
+  for (const key of ELO_FIELD_KEYS) delete fields[key];
+  if (value) Object.assign(fields, eloCustomFields(value));
+  return fields;
+}
+
+/** The scene's ELO fields, or null when it's unrated. */
+export function eloFields(scene: Scene): EloFields | null {
+  const value = elo(scene);
+  return value === null ? null : { elo: value, battles: battles(scene), seeded: isSeeded(scene) };
+}
+
 /** A copy of the scene as it would be right after setup (its ELO fields replaced). */
 export function afterSetup(scene: Scene, start: EloStart): Scene {
-  const custom_fields = { ...scene.custom_fields };
-  for (const key of ELO_FIELD_KEYS) delete custom_fields[key];
-  const initial = startingElo(scene, start);
-  if (initial) Object.assign(custom_fields, eloCustomFields(initial));
-  return { ...scene, custom_fields };
+  return { ...scene, custom_fields: withEloFields(scene.custom_fields, startingElo(scene, start)) };
 }
 
 /** Highest ELO first, unrated scenes last. Equal ELOs keep their order (Array.sort is stable). */
@@ -173,5 +183,8 @@ export function placementElo(aboveElo: number | null, belowElo: number | null): 
   if (aboveElo === null && belowElo === null) return ELO_START;
   if (aboveElo === null) return roundElo((belowElo as number) + PLACEMENT_EDGE_GAP);
   if (belowElo === null) return roundElo(aboveElo - PLACEMENT_EDGE_GAP);
-  return roundElo((aboveElo + belowElo) / 2);
+  // Neighbours 0.1 apart (or tied) have no room between them: take the upper one's ELO, which
+  // still sorts the scene below it (equal ELOs go below) and so in the same slot
+  const mid = roundElo((aboveElo + belowElo) / 2);
+  return mid > belowElo ? mid : aboveElo;
 }

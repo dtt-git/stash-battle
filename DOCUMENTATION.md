@@ -65,7 +65,7 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | Module | Responsibility |
 |---|---|
 | `types.ts` | Shared types: `Scene` (mirrors `SCENE_FRAGMENT`), `EloFields`, `Mode`, `Settings`, `StashRatingsMode`, `EloStart`, `PlacementRun`, `Pair`, `Ranks`, GraphQL response shapes, pair-result shapes |
-| `constants.ts` | Cache/storage keys, `DEFAULT_SETTINGS`, ELO constants (`ELO_START`, `ELO_DIVISOR`, `ELO_K_TIERS`, `SEEDED_HEAD_START`, `ELO_PER_RATING_POINT`), custom field keys (`ELO_FIELD`, `BATTLES_FIELD`, `SEEDED_FIELD`, `ELO_FIELD_KEYS`), Placement (`PLACEMENT_EDGE_GAP`, `PLACEMENT_MAX_JUMP_SHARE`, `PLACEMENT_MIN_MAX_JUMP`), Champion (`CHAMPION_UNRATED_ELO`, `CLIMB_OPPONENT_PICK_WINDOW`, `CLIMB_SMALL_POOL_WARN_AT`), Swiss reach, `SETUP_BATCH_SIZE` |
+| `constants.ts` | Cache/storage keys, `DEFAULT_SETTINGS`, ELO constants (`ELO_START`, `ELO_DIVISOR`, `ELO_K_TIERS`, `SEEDED_HEAD_START`, `ELO_PER_RATING_POINT`), custom field keys (`ELO_FIELD`, `BATTLES_FIELD`, `SEEDED_FIELD`, `ELO_FIELD_KEYS`), Placement (`PLACEMENT_EDGE_GAP`, `PLACEMENT_MAX_JUMP_SHARE`, `PLACEMENT_MIN_MAX_JUMP`), Champion (`CHAMPION_UNRATED_ELO`, `CLIMB_OPPONENT_PICK_WINDOW`, `CLIMB_SMALL_POOL_WARN_AT`), Swiss reach |
 | `state.ts` | Central mutable `state` object + `resetRunState()`, `resetShuffle()`, `isRunActive()`, `isEloSetupPending()` |
 | `settings.ts` | `loadSettings` / `updateSettings` / `updateSettingsNow` — settings in Stash plugin config (`configurePlugin`), `hadFunMode()` |
 | `elo.ts` | Pure ELO math: `eloKFactor`, `eloExpected`, `eloResult`, `roundElo` |
@@ -78,7 +78,7 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | `filters.ts` | URL filter parsing (`getSceneFilter`, `translateJSON`), `getFindFilter`, `readFilters`, `buildFilterKey`, `checkForFilters` |
 | `navigation.ts` | `navigateToUrl` (History API + popstate for React Router) |
 | `pairs.ts` | Matchmaking: `fetchSwissPair`, `fetchPlacementPair`, `fetchChampionPair`, `loadPoolSize`, filtered-pool shuffle (`getNextFilteredScene`, internal) |
-| `rating.ts` | Writes: `writeElo`, `clearElo`, `writeStashRatings`, `applyStashRatings`, `scheduleStashRatingSync` / `syncStashRatings`, `SCENE_MISSING_EVENT` |
+| `rating.ts` | Writes: `writeElo`, `clearElo`, `writeStashRatings`, `applyStashRatings`, `queueRatingWrite`, `scheduleStashRatingSync` / `syncStashRatings`, `SCENE_MISSING_EVENT` |
 | `eloSetup.ts` | One-time ELO setup: `fetchSetupScenes`, `setupRatingChanges`, `runEloSetup` |
 | `sceneActions.ts` | `findExistingSceneIds`, `isSceneNotFoundError` (deleted-scene detection) |
 | `ui/sceneCard.ts` | `createSceneCard`, `formatDuration` |
@@ -178,7 +178,8 @@ A JSON string of the current filter parameters. Stored alongside the filtered ca
 
 ### Keeping the cache current
 
-- **`setEloInCache(scene, fields | null)`** (called by `writeElo` / `clearElo` *before* the network write) sets the ELO fields on the scene object it's given and on its cached copies in **both** `allScenes` and `filteredScenes`, and moves the cached copies to their new place in the ELO order (`eloInsertionIndex`; unrated to the end). The scene object is passed (not just an id) because a scene restored from localStorage, like a saved champion, is a different object from the cached one.
+- **`setEloInCache(scene, fields | null)`** (called by `writeElo` / `clearElo` *before* the network write) sets the ELO fields on the scene object it's given and on its cached copies in **both** `allScenes` and `filteredScenes`, and moves the cached copies to their new place in the ELO order (`eloInsertionIndex`; unrated to the end). The scene object is passed (not just an id) because a scene restored from localStorage, like a saved champion, is a different object from the cached one. If the write fails, the old fields are put back (unless a later write has replaced them since).
+- **`latestScene(scene)`** returns the cached copy (all scenes, then filtered), or the scene itself. Objects held across battles (the Swiss shuffle, a saved pair, a Champion or Placement run) go stale once a background refresh swaps in new copies, so battle math (`resolveComparison`, Placement's landing) reads ELO and battles through it, and the Swiss left scene is taken from the current pool by id.
 - **`setRatingsInCache(map)`** sets `rating100` on cached scenes after Stash Battle wrote Stash ratings (order is ELO, so it doesn't move).
 - Neither updates the IndexedDB copy; it refreshes within 5 minutes.
 
@@ -258,7 +259,7 @@ Both in `score.ts`; only scenes **with an ELO** are ever written.
 **The screen:** two questions side by side (stacked on narrow screens), the Stash ratings message, a preview, and Start.
 
 1. **How should ELO start?**
-   - **Use my ratings:** every scene with a Stash rating gets `{ elo: seed(rating100), battles: 0, seeded: true }`. Unrated scenes stay unrated. Sent as aliased `sceneUpdate` mutations, `SETUP_BATCH_SIZE` (50) per request, with progress. On a re-run, scenes that have an ELO but no Stash rating get our fields **removed** (one `bulkSceneUpdate` with `remove`).
+   - **Use my ratings:** every scene with a Stash rating gets `{ elo: seed(rating100), battles: 0, seeded: true }`. Unrated scenes stay unrated. Scenes with the same Stash rating get the same fields, so it's one aliased `bulkSceneUpdate` per distinct rating, all in one request. On a re-run, scenes that have an ELO but no Stash rating get our fields **removed** (one `bulkSceneUpdate` with `remove`).
    - **Start everyone at 1500:** every scene gets `{ elo: 1500, battles: 0, seeded: false }` in a single `bulkSceneUpdate`.
 2. **Should Stash Battle change your Stash ratings?** — the three options (texts in `ui/stashRatingsText.ts`), "Don't update" preselected on first setup. The answer is saved as the `stashRatings` setting; if it isn't "off", the full sync (`writeStashRatings`) runs right after the ELO writes.
 
@@ -289,14 +290,14 @@ Both in `score.ts`; only scenes **with an ELO** are ever written.
 
 ### Per-battle sync (`rating.ts`)
 
-- `writeElo` / `clearElo` call `scheduleStashRatingSync()`: debounced `SYNC_DEBOUNCE_MS` (500 ms) so a pick's two writes share one sync; skipped on "off".
-- `syncStashRatings()` computes `stashRatingChanges` over the whole **all-scenes cache** and writes only scenes whose cached `rating100` differs: one request (`writeStashRatings`: one aliased `bulkSceneUpdate` per distinct value). Then `applyStashRatings` updates the cache and Stash's page cache.
+- `writeElo` / `clearElo` call `scheduleStashRatingSync()` once the write succeeds: debounced `SYNC_DEBOUNCE_MS` (500 ms) so a pick's two writes share one sync; skipped on "off". Switching the update mode schedules one too, to catch anything an old-mode sync changed after the switch was counted.
+- `syncStashRatings()` computes `stashRatingChanges` over the whole **all-scenes cache** and writes only scenes whose cached `rating100` differs: one request (`writeStashRatings`: one aliased `bulkSceneUpdate` per distinct value). Then `applyStashRatings` updates the cache and Stash's page cache. Syncs and the switch's full write run through `queueRatingWrite`, one at a time, so each starts from the ratings the last one wrote.
 - **Percentile and ties:** tied scenes share their group's middle rank, so when one member of a tie group leaves or joins it, the whole group's rating can move by 1. Seeded ELOs tie a lot at first (every scene with the same Stash rating starts equal), so early syncs can write dozens of ratings per battle; it fades as ELO spreads out. Kept deliberately over a tie-break, which would turn a fresh start into an arbitrary 100-1 spread.
 - While an update mode is on, a star edit made in Stash lasts until Stash Battle next writes that scene.
 
 ### Stash's own page cache (`refreshStashCache` in `graphql.ts`)
 
-Stash Battle writes with plain `fetch`, so Stash's pages (Apollo) wouldn't see the changes. After every write, the changes are mirrored into `PluginApi.utils.StashService.getClient().cache`: `cache.modify` on `Scene:<id>` for `rating100` and `custom_fields` (Apollo only calls modifiers for fields it has cached), and when ratings changed, `cache.evict({ id: "ROOT_QUERY", fieldName: "findScenes" })` + `gc()` so rating-sorted lists re-sort. Quietly does nothing if the client isn't exposed.
+Stash Battle writes with plain `fetch`, so Stash's pages (Apollo) wouldn't see the changes. After every write, the changes are mirrored into `PluginApi.utils.StashService.getClient().cache`: `cache.modify` on `Scene:<id>` for `rating100` and `custom_fields` (Apollo only calls modifiers for fields it has cached), and when ratings changed, `cache.evict({ id: "ROOT_QUERY", fieldName: "findScenes" })` + `gc()` so rating-sorted lists re-sort. While Stash Battle is open that drop is held back (`holdStashListRefresh`) and done once on close, so lists don't refetch every pick. Quietly does nothing if the client isn't exposed.
 
 ### Battle tab note
 
@@ -323,12 +324,12 @@ The default mode. Pairs scenes with similar ELO for meaningful comparisons.
 
 Finds a scene's spot with as few battles as possible — a bounded search with momentum. The search is pure and lives in [`src/placement.ts`](src/placement.ts) (so whole runs are simulated in `tests/placement.test.ts`); `fetchPlacementPair` (`pairs.ts`) and `handlePlacementChoice` (`mainUI.ts`) drive it.
 
-- The pool is the usual ELO-sorted opponent pool **minus** the scene being placed. The scene's slot lies in `[lo, hi)`. A **win** against index *i* sets `hi = i`; a **loss** sets `lo = i + 1`. Bounds are stored as the bounding opponents' ids (`aboveId` / `belowId`) and resolved to indices on every fetch, so a background cache refresh can't corrupt them.
+- The pool is the usual ELO-sorted opponent pool **minus** the scene being placed. The scene's slot lies in `[lo, hi)`. A **win** against index *i* sets `hi` to the top of *i*'s tie group; a **loss** sets `lo` to just below its bottom (for a scene with no ties, `hi = i` and `lo = i + 1`). Bounds are stored as the bounding opponents' ids (`aboveId` / `belowId`) and resolved to indices on every fetch, so a background cache refresh can't corrupt them.
 - **Rated scene**: starts right below its current ELO (`eloInsertionIndex`) and **gallops** — each same-direction result doubles the step (1, 2, 4, 8…), measured from the far edge of the last opponent's **tie group** (another scene with the same ELO teaches nothing). The first reversal switches to bisection. A correctly rated scene confirms in ~2 battles.
 - **Jump cap**: a gallop jump is at most `maxPlacementJump(pool)` = 10% of the pool (`PLACEMENT_MAX_JUMP_SHARE`), at least `PLACEMENT_MIN_MAX_JUMP` (4) ranks, and a jump that would pass the search range halves the range instead of landing on its end. So a winning streak climbs instead of leaping to #1. A rank gap can exceed the cap by the size of a tie group (the jump starts from the tie's far edge).
 - **Unrated scene**: plain bisection from the middle — ⌈log2(N+1)⌉ battles (≈9–10 for ~500 rated scenes).
 - Opponents with equal ELO are interchangeable: `pickAmongTies` chooses randomly among them within bounds.
-- **Done** when `lo >= hi`. ELO = `landingElo`: the midpoint of the nearest neighbours **with an ELO** above and below (`placementElo`), or `PLACEMENT_EDGE_GAP` (25) beyond the only one at an edge, 1500 with none. Written once via `writeElo` with `battles + run.battles`; nothing else changes.
+- **Done** when `lo >= hi`. ELO = `landingElo`: the midpoint of the nearest neighbours **with an ELO** above and below (`placementElo`), or `PLACEMENT_EDGE_GAP` (25) beyond the only one at an edge, 1500 with none. Neighbours too close to fit a value between (0.1 apart) give the upper one's ELO, which still sorts the scene into its slot. Written once via `writeElo` with `battles + run.battles`; nothing else changes.
 - The run is created when the pair **loads** (`battles = 0`), so Skip still works before the first choice and resets the run.
 - Badge on the scene: `📍 Narrowing between #lo and #hi`.
 
@@ -455,7 +456,7 @@ Stored in Stash's plugin config (`configuration.plugins["stash-battle"]`, writte
 | `cleanMode` | false | 🗑 delete button on each card |
 | `pauseMediaOnOpen` | **true** | Pause Stash's playing video/audio when Stash Battle opens. Stash's plugin settings page shows unset booleans as off, but a missing key means the default (on) |
 
-- `configurePlugin` **replaces** the whole map, so every save sends every key (`updateSettings` debounced 400ms for the slider; `updateSettingsNow` for setup's flags). Null values are left out.
+- `configurePlugin` **replaces** the whole map, so every save sends every key (`updateSettings` debounced 400ms for the slider; `updateSettingsNow` for setup's flags). Null values are left out. A save re-reads the stored config and puts only this tab's unsaved keys on top, so a tab that loaded settings before another tab finished the setup can't undo it.
 - `normalize()` drops removed keys (`funMode`, `unratedRating`) on the next save; an unknown `stashRatings` becomes `"off"`.
 - Users with no saved config get defaults overlaid with the pre-2.7 localStorage toggles (`sb_filterOpponents`; `sb_mutePreviews=1` → volume 0).
 - Every control has `data-setting="<key>"`; `bindSettingsControls` wires them generically and `onSettingChanged` in `modal.ts` applies side effects (reload pair for filterOpponents, restart a Placement run for placementFromBottom, re-render cards for openInNewTab/cleanMode, re-apply previews, the ratings note).
@@ -520,8 +521,8 @@ All data comes from Stash's GraphQL API:
 
 - **`findScenes`**: scene lists with `per_page: -1` (sorted client-side by ELO); a slim `id rating100 custom_fields` version for setup and the Stash ratings switch (`fetchSetupScenes`)
 - **`findScene`**: a single scene (scene page battle); aliased batches check whether the current pair still exists
-- **`sceneUpdate`** with `custom_fields: { partial | remove }`: ELO writes (`writeElo`, `clearElo`, setup's aliased batches). `partial` and `remove` can be combined in one input.
-- **`bulkSceneUpdate`**: "Start everyone at 1500" (one call, every id), removing stale ELO, and Stash rating writes (`writeStashRatings`: one aliased call per distinct value, in one request)
+- **`sceneUpdate`** with `custom_fields: { partial | remove }`: ELO writes (`writeElo`, `clearElo`). `partial` and `remove` can be combined in one input.
+- **`bulkSceneUpdate`**: setup ("Use my ratings": one aliased call per distinct rating; "Start everyone at 1500": one call, every id), removing stale ELO, and Stash rating writes (`writeStashRatings`: one aliased call per distinct value, in one request)
 - **`__type(name: "Scene")`** introspection: the custom-fields capability check
 - Clean mode deletes go through Stash's own dialog (its `scenesDestroy` mutation)
 - **`configuration { plugins }`** / **`configurePlugin`**: settings
@@ -544,7 +545,7 @@ All data comes from Stash's GraphQL API:
 
 6. **Pass the scene object to `writeElo`**, not an id: restored scenes (a saved champion, a forced scene-page scene) are separate objects from the cached ones, and `setEloInCache` updates both.
 
-7. **Placement ties**: scenes inside an ELO tie group are interchangeable as opponents; the final slot can land inside the group, and the landing ELO then equals the group's ELO.
+7. **Placement ties**: scenes inside an ELO tie group are interchangeable as opponents, and a result counts for the opponent's whole group (`placementBounds` snaps to the group's edge). A scene can only get an ELO above or below a group, not inside it, so this keeps the landing ELO strictly between its neighbours and the shown rank true. Right after "Start everyone at 1500" the whole library is one group, so a Placement run takes one battle and lands at 1525 or 1475; it gets useful once Swiss has spread ELO out.
 
 8. **Pool size for rank display**: `totalScenesCount` comes from `opponentPool.length`, not `allScenes.length`.
 

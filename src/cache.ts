@@ -5,11 +5,10 @@ import {
   CACHE_DB_VERSION,
   CACHE_MAX_AGE_MS,
   CACHE_STORE_NAME,
-  ELO_FIELD_KEYS,
 } from "./constants";
 import { getFindFilter, type ListFilters } from "./filters";
 import { FIND_SCENES_QUERY, graphqlQuery } from "./graphql";
-import { eloCustomFields, eloInsertionIndex, sortByElo } from "./score";
+import { eloInsertionIndex, sortByElo, withEloFields } from "./score";
 import { state } from "./state";
 import type { CacheEntry, EloFields, FindScenesResult, Scene } from "./types";
 
@@ -377,10 +376,21 @@ export async function getFilteredScenesCached(
 
 /** Set (or with null, remove) the ELO fields on one scene object. */
 function applyElo(scene: Scene, value: EloFields | null): void {
-  const fields = { ...scene.custom_fields };
-  for (const key of ELO_FIELD_KEYS) delete fields[key];
-  if (value) Object.assign(fields, eloCustomFields(value));
-  scene.custom_fields = fields;
+  scene.custom_fields = withEloFields(scene.custom_fields, value);
+}
+
+/**
+ * The cached copy of a scene (all scenes first, then the filtered ones), or the scene itself if
+ * neither has it. Scene objects held across battles (the shuffle, a saved pair, a Champion or
+ * Placement run) go stale once a background refresh swaps in new copies, so battle math reads
+ * ELO and battles from this instead.
+ */
+export function latestScene(scene: Scene): Scene {
+  return (
+    state.memoryCache.allScenes?.find((s) => s.id === scene.id) ??
+    state.memoryCache.filteredScenes?.find((s) => s.id === scene.id) ??
+    scene
+  );
 }
 
 /**

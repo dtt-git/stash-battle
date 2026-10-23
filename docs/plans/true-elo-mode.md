@@ -125,7 +125,7 @@ flowchart LR
 - **Use my ratings:**
   - Writes `stash_battle_elo = seed(rating100)`, `stash_battle_battles = 0` and `stash_battle_seeded = true` for every scene that has a rating. The seeded flag gives K its head start of 10, because the existing rating already says something. It deliberately ignores `play_count`, which counts watches, not comparisons, and isn't changed by Stash Battle.
   - Unrated scenes stay unrated (no ELO).
-  - Writes go out as aliased `sceneUpdate` mutations, about 50 per request (roughly 12 requests for your 600 scenes), with a progress screen.
+  - Scenes with the same rating get the same values, so the writes go out as one aliased `bulkSceneUpdate` per distinct rating (at most 100), all in one request. This was batches of 50 `sceneUpdate`s until the 3.0 code review (Oct 23); your 611 scenes use 11 distinct ratings, and a 100-alias request was checked live (read-only) without errors. The progress screen now goes from 0 to done in one step.
 - **Start everyone at 1500:**
   - Writes `stash_battle_elo = 1500`, `stash_battle_battles = 0` and `stash_battle_seeded = false` for every scene, rated or not.
   - Every scene gets the same values, so this is a single `bulkSceneUpdate`.

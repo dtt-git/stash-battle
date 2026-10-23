@@ -1,6 +1,6 @@
 // Core comparison UI: layout, pair rendering, choice handling, animations.
 
-import { clearFilteredCache, removeSceneEverywhere } from "../cache";
+import { clearFilteredCache, latestScene, removeSceneEverywhere } from "../cache";
 import { CHAMPION_UNRATED_ELO, CLIMB_SMALL_POOL_WARN_AT } from "../constants";
 import { eloResult } from "../elo";
 import { readFilters } from "../filters";
@@ -540,7 +540,7 @@ async function deleteFromBattle(scene: Scene): Promise<void> {
   await handleSceneGone(scene.id);
 }
 
-/** ELO used in battle math: unrated scenes count as the "Unrated scene rating" in Swiss, the bottom in Champion. */
+/** ELO used in battle math: unrated scenes count as ELO_START (1500) in Swiss, CHAMPION_UNRATED_ELO in Champion. */
 function battleElo(scene: Scene): number {
   return state.currentMode === "champion" ? effectiveElo(scene, CHAMPION_UNRATED_ELO) : effectiveElo(scene);
 }
@@ -552,12 +552,15 @@ interface EloChange {
 
 /** Two-sided ELO for a pick (Swiss and Champion): both scenes' ELO and battles change and are saved. */
 function resolveComparison(winner: Scene, loser: Scene): { winner: EloChange; loser: EloChange } {
-  const winnerSide = { elo: battleElo(winner), kGames: kGames(winner) };
-  const loserSide = { elo: battleElo(loser), kGames: kGames(loser) };
+  // The math reads the cached copies: the pair's own objects may predate a background refresh
+  const latestWinner = latestScene(winner);
+  const latestLoser = latestScene(loser);
+  const winnerSide = { elo: battleElo(latestWinner), kGames: kGames(latestWinner) };
+  const loserSide = { elo: battleElo(latestLoser), kGames: kGames(latestLoser) };
   const result = eloResult(winnerSide, loserSide);
 
-  void writeElo(winner, result.winner, battles(winner) + 1);
-  void writeElo(loser, result.loser, battles(loser) + 1);
+  void writeElo(winner, result.winner, battles(latestWinner) + 1);
+  void writeElo(loser, result.loser, battles(latestLoser) + 1);
 
   return {
     winner: { from: winnerSide.elo, to: result.winner },

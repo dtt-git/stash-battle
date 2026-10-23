@@ -42,7 +42,145 @@
   var PLACEMENT_EDGE_GAP = 25;
   var PLACEMENT_MAX_JUMP_SHARE = 0.1;
   var PLACEMENT_MIN_MAX_JUMP = 4;
-  var SETUP_BATCH_SIZE = 50;
+
+  // src/elo.ts
+  function eloKFactor(kGames2) {
+    for (const [below, k] of ELO_K_TIERS) {
+      if (kGames2 < below) return k;
+    }
+    return ELO_K_TIERS[ELO_K_TIERS.length - 1][1];
+  }
+  function eloExpected(elo2, opponentElo) {
+    return 1 / (1 + Math.pow(10, (opponentElo - elo2) / ELO_DIVISOR));
+  }
+  function roundElo(elo2) {
+    return Math.round(elo2 * 10) / 10;
+  }
+  function eloResult(winner, loser) {
+    const surprise = 1 - eloExpected(winner.elo, loser.elo);
+    return {
+      winner: roundElo(winner.elo + eloKFactor(winner.kGames) * surprise),
+      loser: roundElo(loser.elo - eloKFactor(loser.kGames) * surprise)
+    };
+  }
+
+  // src/score.ts
+  function readNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "string" && value.trim() !== "") {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  function elo(scene) {
+    return readNumber(scene.custom_fields?.[ELO_FIELD]);
+  }
+  function isRated(scene) {
+    return elo(scene) !== null;
+  }
+  function battles(scene) {
+    const n = readNumber(scene.custom_fields?.[BATTLES_FIELD]);
+    return n !== null && n > 0 ? Math.floor(n) : 0;
+  }
+  function isSeeded(scene) {
+    const value = scene.custom_fields?.[SEEDED_FIELD];
+    return value === true || value === 1 || value === "true" || value === "1";
+  }
+  function kGames(scene) {
+    return battles(scene) + (isSeeded(scene) ? SEEDED_HEAD_START : 0);
+  }
+  function eloCustomFields(value) {
+    return { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
+  }
+  function seed(rating100) {
+    return ELO_START + (rating100 - 50) * ELO_PER_RATING_POINT;
+  }
+  function effectiveElo(scene, unratedElo = ELO_START) {
+    return elo(scene) ?? unratedElo;
+  }
+  function linearRating(eloValue) {
+    const rating = Math.round(50 + (eloValue - ELO_START) / ELO_PER_RATING_POINT);
+    return Math.min(100, Math.max(1, rating));
+  }
+  function percentileRatings(scenes) {
+    const rated = scenes.map((scene) => ({ id: scene.id, elo: elo(scene) })).filter((s) => s.elo !== null).sort((a, b) => b.elo - a.elo);
+    const ratings = /* @__PURE__ */ new Map();
+    const n = rated.length;
+    if (n === 1) {
+      ratings.set(rated[0].id, 50);
+      return ratings;
+    }
+    let start = 0;
+    while (start < n) {
+      let end = start;
+      while (end + 1 < n && rated[end + 1].elo === rated[start].elo) end++;
+      const rating = 100 - Math.round(99 * ((start + end) / 2) / (n - 1));
+      for (let i = start; i <= end; i++) ratings.set(rated[i].id, rating);
+      start = end + 1;
+    }
+    return ratings;
+  }
+  function stashRatingTargets(scenes, mode) {
+    if (mode === "percentile") return percentileRatings(scenes);
+    const targets = /* @__PURE__ */ new Map();
+    if (mode === "linear") {
+      for (const scene of scenes) {
+        const value = elo(scene);
+        if (value !== null) targets.set(scene.id, linearRating(value));
+      }
+    }
+    return targets;
+  }
+  function stashRatingChanges(scenes, mode) {
+    const current = new Map(scenes.map((scene) => [scene.id, scene.rating100 ?? null]));
+    const changes = /* @__PURE__ */ new Map();
+    for (const [id, rating] of stashRatingTargets(scenes, mode)) {
+      if (current.get(id) !== rating) changes.set(id, rating);
+    }
+    return changes;
+  }
+  function startingElo(scene, start) {
+    if (start === "fresh") return { elo: ELO_START, battles: 0, seeded: false };
+    return scene.rating100 != null ? { elo: seed(scene.rating100), battles: 0, seeded: true } : null;
+  }
+  function withEloFields(customFields, value) {
+    const fields = { ...customFields };
+    for (const key of ELO_FIELD_KEYS) delete fields[key];
+    if (value) Object.assign(fields, eloCustomFields(value));
+    return fields;
+  }
+  function eloFields(scene) {
+    const value = elo(scene);
+    return value === null ? null : { elo: value, battles: battles(scene), seeded: isSeeded(scene) };
+  }
+  function afterSetup(scene, start) {
+    return { ...scene, custom_fields: withEloFields(scene.custom_fields, startingElo(scene, start)) };
+  }
+  function compareByElo(a, b) {
+    const eloA = elo(a);
+    const eloB = elo(b);
+    if (eloA === null) return eloB === null ? 0 : 1;
+    if (eloB === null) return -1;
+    return eloB - eloA;
+  }
+  function sortByElo(scenes) {
+    return scenes.sort(compareByElo);
+  }
+  function eloInsertionIndex(pool, eloValue) {
+    const idx = pool.findIndex((s) => {
+      const other = elo(s);
+      return other === null || other < eloValue;
+    });
+    return idx === -1 ? pool.length : idx;
+  }
+  function placementElo(aboveElo, belowElo) {
+    if (aboveElo === null && belowElo === null) return ELO_START;
+    if (aboveElo === null) return roundElo(belowElo + PLACEMENT_EDGE_GAP);
+    if (belowElo === null) return roundElo(aboveElo - PLACEMENT_EDGE_GAP);
+    const mid = roundElo((aboveElo + belowElo) / 2);
+    return mid > belowElo ? mid : aboveElo;
+  }
 
   // src/graphql.ts
   async function graphqlQuery(query, variables = {}) {
@@ -105,13 +243,31 @@
     }));
     return customFieldsSupport;
   }
-  function refreshStashCache(updates, ratingsChanged) {
-    let cache;
+  function stashApolloCache() {
     try {
-      cache = window.PluginApi?.utils?.StashService?.getClient?.()?.cache;
+      return window.PluginApi?.utils?.StashService?.getClient?.()?.cache;
     } catch {
-      cache = void 0;
+      return void 0;
     }
+  }
+  var holdListRefresh = false;
+  var listsStale = false;
+  function dropStashLists(cache = stashApolloCache()) {
+    listsStale = false;
+    if (!cache) return;
+    try {
+      cache.evict({ id: "ROOT_QUERY", fieldName: "findScenes" });
+      cache.gc();
+    } catch (e) {
+      console.warn("[Stash Battle] Could not refresh Stash's scene lists:", e);
+    }
+  }
+  function holdStashListRefresh(hold) {
+    holdListRefresh = hold;
+    if (!hold && listsStale) dropStashLists();
+  }
+  function refreshStashCache(updates, ratingsChanged) {
+    const cache = stashApolloCache();
     if (!cache) return;
     try {
       for (const update of updates) {
@@ -121,25 +277,16 @@
         if (update.rating100 !== void 0) fields.rating100 = () => update.rating100;
         if (update.elo !== void 0) {
           const value = update.elo;
-          fields.custom_fields = (existing) => {
-            const next = { ...existing ?? {} };
-            for (const key of ELO_FIELD_KEYS) delete next[key];
-            if (value) {
-              next[ELO_FIELD] = value.elo;
-              next[BATTLES_FIELD] = value.battles;
-              next[SEEDED_FIELD] = value.seeded;
-            }
-            return next;
-          };
+          fields.custom_fields = (existing) => withEloFields(existing, value);
         }
         cache.modify({ id, fields });
       }
-      if (ratingsChanged) {
-        cache.evict({ id: "ROOT_QUERY", fieldName: "findScenes" });
-        cache.gc();
-      }
     } catch (e) {
       console.warn("[Stash Battle] Could not update Stash's page cache:", e);
+    }
+    if (ratingsChanged) {
+      listsStale = true;
+      if (!holdListRefresh) dropStashLists(cache);
     }
   }
   function getSceneIdFromUrl() {
@@ -430,138 +577,6 @@
       sceneFilter,
       filterActive: Boolean(sceneFilter || searchParams.has("c") || searchParams.get("q"))
     };
-  }
-
-  // src/elo.ts
-  function eloKFactor(kGames2) {
-    for (const [below, k] of ELO_K_TIERS) {
-      if (kGames2 < below) return k;
-    }
-    return ELO_K_TIERS[ELO_K_TIERS.length - 1][1];
-  }
-  function eloExpected(elo2, opponentElo) {
-    return 1 / (1 + Math.pow(10, (opponentElo - elo2) / ELO_DIVISOR));
-  }
-  function roundElo(elo2) {
-    return Math.round(elo2 * 10) / 10;
-  }
-  function eloResult(winner, loser) {
-    const surprise = 1 - eloExpected(winner.elo, loser.elo);
-    return {
-      winner: roundElo(winner.elo + eloKFactor(winner.kGames) * surprise),
-      loser: roundElo(loser.elo - eloKFactor(loser.kGames) * surprise)
-    };
-  }
-
-  // src/score.ts
-  function readNumber(value) {
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    if (typeof value === "string" && value.trim() !== "") {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : null;
-    }
-    return null;
-  }
-  function elo(scene) {
-    return readNumber(scene.custom_fields?.[ELO_FIELD]);
-  }
-  function isRated(scene) {
-    return elo(scene) !== null;
-  }
-  function battles(scene) {
-    const n = readNumber(scene.custom_fields?.[BATTLES_FIELD]);
-    return n !== null && n > 0 ? Math.floor(n) : 0;
-  }
-  function isSeeded(scene) {
-    const value = scene.custom_fields?.[SEEDED_FIELD];
-    return value === true || value === 1 || value === "true" || value === "1";
-  }
-  function kGames(scene) {
-    return battles(scene) + (isSeeded(scene) ? SEEDED_HEAD_START : 0);
-  }
-  function eloCustomFields(value) {
-    return { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
-  }
-  function seed(rating100) {
-    return ELO_START + (rating100 - 50) * ELO_PER_RATING_POINT;
-  }
-  function effectiveElo(scene, unratedElo = ELO_START) {
-    return elo(scene) ?? unratedElo;
-  }
-  function linearRating(eloValue) {
-    const rating = Math.round(50 + (eloValue - ELO_START) / ELO_PER_RATING_POINT);
-    return Math.min(100, Math.max(1, rating));
-  }
-  function percentileRatings(scenes) {
-    const rated = scenes.map((scene) => ({ id: scene.id, elo: elo(scene) })).filter((s) => s.elo !== null).sort((a, b) => b.elo - a.elo);
-    const ratings = /* @__PURE__ */ new Map();
-    const n = rated.length;
-    if (n === 1) {
-      ratings.set(rated[0].id, 50);
-      return ratings;
-    }
-    let start = 0;
-    while (start < n) {
-      let end = start;
-      while (end + 1 < n && rated[end + 1].elo === rated[start].elo) end++;
-      const rating = 100 - Math.round(99 * ((start + end) / 2) / (n - 1));
-      for (let i = start; i <= end; i++) ratings.set(rated[i].id, rating);
-      start = end + 1;
-    }
-    return ratings;
-  }
-  function stashRatingTargets(scenes, mode) {
-    if (mode === "percentile") return percentileRatings(scenes);
-    const targets = /* @__PURE__ */ new Map();
-    if (mode === "linear") {
-      for (const scene of scenes) {
-        const value = elo(scene);
-        if (value !== null) targets.set(scene.id, linearRating(value));
-      }
-    }
-    return targets;
-  }
-  function stashRatingChanges(scenes, mode) {
-    const current = new Map(scenes.map((scene) => [scene.id, scene.rating100 ?? null]));
-    const changes = /* @__PURE__ */ new Map();
-    for (const [id, rating] of stashRatingTargets(scenes, mode)) {
-      if (current.get(id) !== rating) changes.set(id, rating);
-    }
-    return changes;
-  }
-  function startingElo(scene, start) {
-    if (start === "fresh") return { elo: ELO_START, battles: 0, seeded: false };
-    return scene.rating100 != null ? { elo: seed(scene.rating100), battles: 0, seeded: true } : null;
-  }
-  function afterSetup(scene, start) {
-    const custom_fields = { ...scene.custom_fields };
-    for (const key of ELO_FIELD_KEYS) delete custom_fields[key];
-    const initial = startingElo(scene, start);
-    if (initial) Object.assign(custom_fields, eloCustomFields(initial));
-    return { ...scene, custom_fields };
-  }
-  function compareByElo(a, b) {
-    const eloA = elo(a);
-    const eloB = elo(b);
-    if (eloA === null) return eloB === null ? 0 : 1;
-    if (eloB === null) return -1;
-    return eloB - eloA;
-  }
-  function sortByElo(scenes) {
-    return scenes.sort(compareByElo);
-  }
-  function eloInsertionIndex(pool, eloValue) {
-    const idx = pool.findIndex((s) => {
-      const other = elo(s);
-      return other === null || other < eloValue;
-    });
-    return idx === -1 ? pool.length : idx;
-  }
-  function placementElo(aboveElo, belowElo) {
-    if (aboveElo === null && belowElo === null) return ELO_START;
-    if (aboveElo === null) return roundElo(belowElo + PLACEMENT_EDGE_GAP);
-    if (belowElo === null) return roundElo(aboveElo - PLACEMENT_EDGE_GAP);
-    return roundElo((aboveElo + belowElo) / 2);
   }
 
   // src/state.ts
@@ -895,10 +910,10 @@
     return { scenes, count };
   }
   function applyElo(scene, value) {
-    const fields = { ...scene.custom_fields };
-    for (const key of ELO_FIELD_KEYS) delete fields[key];
-    if (value) Object.assign(fields, eloCustomFields(value));
-    scene.custom_fields = fields;
+    scene.custom_fields = withEloFields(scene.custom_fields, value);
+  }
+  function latestScene(scene) {
+    return state.memoryCache.allScenes?.find((s) => s.id === scene.id) ?? state.memoryCache.filteredScenes?.find((s) => s.id === scene.id) ?? scene;
   }
   function setEloInCache(scene, value) {
     applyElo(scene, value);
@@ -962,18 +977,31 @@
       window.dispatchEvent(new CustomEvent(SCENE_MISSING_EVENT, { detail: sceneId }));
     }
   }
-  async function writeElo(scene, elo2, battles2) {
-    const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene) };
+  function sameElo(a, b) {
+    if (a === null || b === null) return a === b;
+    return a.elo === b.elo && a.battles === b.battles && a.seeded === b.seeded;
+  }
+  async function saveEloFields(scene, value, customFields, what) {
+    const previous = eloFields(latestScene(scene));
     setEloInCache(scene, value);
     refreshStashCache([{ id: scene.id, elo: value }], false);
-    scheduleStashRatingSync();
     try {
-      await graphqlQuery(SCENE_UPDATE_MUTATION, {
-        input: { id: scene.id, custom_fields: { partial: eloCustomFields(value) } }
-      });
-      console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo2} (${battles2} battles)`);
+      await graphqlQuery(SCENE_UPDATE_MUTATION, { input: { id: scene.id, custom_fields: customFields } });
     } catch (e) {
-      reportWriteError(scene.id, "save ELO", e);
+      reportWriteError(scene.id, what, e);
+      if (sameElo(eloFields(latestScene(scene)), value)) {
+        setEloInCache(scene, previous);
+        refreshStashCache([{ id: scene.id, elo: previous }], false);
+      }
+      return false;
+    }
+    scheduleStashRatingSync();
+    return true;
+  }
+  async function writeElo(scene, elo2, battles2) {
+    const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene) };
+    if (await saveEloFields(scene, value, { partial: eloCustomFields(value) }, "save ELO")) {
+      console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo2} (${battles2} battles)`);
     }
   }
   async function writeStashRatings(ratings) {
@@ -1013,20 +1041,28 @@
       void syncStashRatings();
     }, SYNC_DEBOUNCE_MS);
   }
-  async function syncStashRatings() {
-    const mode = state.settings.stashRatings;
-    const scenes = state.memoryCache.allScenes;
-    if (mode === "off" || !scenes) return 0;
-    const changes = stashRatingChanges(scenes, mode);
-    if (changes.size === 0) return 0;
-    try {
-      await writeStashRatings(changes);
-      applyStashRatings(changes);
-      return changes.size;
-    } catch (e) {
-      console.error("[Stash Battle] Failed to sync Stash ratings:", e);
-      return 0;
-    }
+  var ratingWrites = Promise.resolve();
+  function queueRatingWrite(task) {
+    const run = ratingWrites.then(task);
+    ratingWrites = run.catch(() => void 0);
+    return run;
+  }
+  function syncStashRatings() {
+    return queueRatingWrite(async () => {
+      const mode = state.settings.stashRatings;
+      const scenes = state.memoryCache.allScenes;
+      if (mode === "off" || !scenes) return 0;
+      const changes = stashRatingChanges(scenes, mode);
+      if (changes.size === 0) return 0;
+      try {
+        await writeStashRatings(changes);
+        applyStashRatings(changes);
+        return changes.size;
+      } catch (e) {
+        console.error("[Stash Battle] Failed to sync Stash ratings:", e);
+        return 0;
+      }
+    });
   }
 
   // src/eloSetup.ts
@@ -1058,30 +1094,36 @@
         }
       }
     `;
-  async function seedFromRatings(rated, onProgress) {
-    for (let start = 0; start < rated.length; start += SETUP_BATCH_SIZE) {
-      const batch = rated.slice(start, start + SETUP_BATCH_SIZE);
-      const mutation = `
-      mutation SeedElo(${batch.map((_, i) => `$s${i}: SceneUpdateInput!`).join(", ")}) {
-        ${batch.map((_, i) => `s${i}: sceneUpdate(input: $s${i}) { id }`).join("\n        ")}
+  async function seedFromRatings(rated) {
+    const idsByRating = /* @__PURE__ */ new Map();
+    for (const scene of rated) {
+      const rating = scene.rating100;
+      const ids = idsByRating.get(rating) ?? [];
+      ids.push(scene.id);
+      idsByRating.set(rating, ids);
+    }
+    if (idsByRating.size === 0) return;
+    const values = [...idsByRating.keys()];
+    const mutation = `
+      mutation SeedElo(${values.map((r) => `$s${r}: BulkSceneUpdateInput!`).join(", ")}) {
+        ${values.map((r) => `s${r}: bulkSceneUpdate(input: $s${r}) { id }`).join("\n        ")}
       }
     `;
-      const variables = Object.fromEntries(
-        batch.map((scene, i) => {
-          const partial = eloCustomFields(startingElo(scene, "ratings"));
-          return [`s${i}`, { id: scene.id, custom_fields: { partial } }];
-        })
-      );
-      await graphqlQuery(mutation, variables);
-      onProgress("elo", start + batch.length, rated.length);
-    }
+    const variables = Object.fromEntries(
+      values.map((r) => {
+        const partial = eloCustomFields({ elo: seed(r), battles: 0, seeded: true });
+        return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial } }];
+      })
+    );
+    await graphqlQuery(mutation, variables);
   }
   async function runEloSetup(scenes, start, stashRatings, onProgress) {
     const summary = { eloWritten: 0, eloCleared: 0, ratingsWritten: 0 };
     if (start === "ratings") {
       const rated = scenes.filter((scene) => scene.rating100 != null);
       onProgress("elo", 0, rated.length);
-      await seedFromRatings(rated, onProgress);
+      await seedFromRatings(rated);
+      onProgress("elo", rated.length, rated.length);
       summary.eloWritten = rated.length;
       const stale = scenes.filter((scene) => scene.rating100 == null && isRated(scene)).map((scene) => scene.id);
       if (stale.length > 0) {
@@ -1165,10 +1207,7 @@
   }
   async function loadSettings() {
     try {
-      const data = await graphqlQuery(
-        CONFIG_QUERY
-      );
-      const stored = data.configuration.plugins?.[PLUGIN_ID];
+      const stored = await fetchStoredConfig();
       legacyFunMode = stored?.funMode === true;
       state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
       return true;
@@ -1180,18 +1219,32 @@
   function hadFunMode() {
     return legacyFunMode;
   }
+  var unsaved = /* @__PURE__ */ new Set();
+  async function fetchStoredConfig() {
+    const data = await graphqlQuery(
+      CONFIG_QUERY
+    );
+    return data.configuration.plugins?.[PLUGIN_ID];
+  }
   async function persistSettings() {
+    const keys = [...unsaved];
+    unsaved.clear();
     try {
-      const input = Object.fromEntries(Object.entries(state.settings).filter(([, value]) => value !== null));
+      const stored = await fetchStoredConfig();
+      const merged = stored ? { ...normalize(stored, state.settings) } : { ...state.settings };
+      for (const key of keys) merged[key] = state.settings[key];
+      const input = Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null));
       await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
       return true;
     } catch (e) {
       console.error("[Stash Battle] Failed to save settings:", e);
+      for (const key of keys) unsaved.add(key);
       return false;
     }
   }
   function updateSettings(patch) {
     state.settings = normalize({ ...state.settings, ...patch }, state.settings);
+    for (const key of Object.keys(patch)) unsaved.add(key);
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
@@ -1200,6 +1253,7 @@
   }
   async function updateSettingsNow(patch) {
     state.settings = normalize({ ...state.settings, ...patch }, state.settings);
+    for (const key of Object.keys(patch)) unsaved.add(key);
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -1350,10 +1404,19 @@
       rangeHi: 0
     };
   }
+  function tieGroupEdge(pool, idx, dir) {
+    const value = elo(pool[idx]);
+    let edge = idx;
+    while (edge + dir >= 0 && edge + dir < pool.length && elo(pool[edge + dir]) === value) edge += dir;
+    return edge;
+  }
   function placementBounds(run, pool) {
     const aboveIdx = run.aboveId ? pool.findIndex((s) => s.id === run.aboveId) : -1;
     const belowIdx = run.belowId ? pool.findIndex((s) => s.id === run.belowId) : -1;
-    return { lo: aboveIdx + 1, hi: belowIdx >= 0 ? belowIdx : pool.length };
+    return {
+      lo: aboveIdx >= 0 ? tieGroupEdge(pool, aboveIdx, 1) + 1 : 0,
+      hi: belowIdx >= 0 ? tieGroupEdge(pool, belowIdx, -1) : pool.length
+    };
   }
   function bottomIndex(pool) {
     for (let i = pool.length - 1; i >= 0; i--) {
@@ -1373,12 +1436,7 @@
       const lastIdx = pool.findIndex((s) => s.id === run.lastOpponentId);
       if (lastIdx >= 0) {
         const dir = run.lastWon ? -1 : 1;
-        const lastElo = elo(pool[lastIdx]);
-        let edge = lastIdx;
-        while (edge + dir >= 0 && edge + dir < pool.length && elo(pool[edge + dir]) === lastElo) {
-          edge += dir;
-        }
-        const target = edge + dir * Math.min(run.step, maxPlacementJump(pool.length));
+        const target = tieGroupEdge(pool, lastIdx, dir) + dir * Math.min(run.step, maxPlacementJump(pool.length));
         if (target >= lo && target < hi) return target;
       }
     }
@@ -1451,7 +1509,8 @@
     if (state.shuffleIndex >= state.shuffledFilteredScenes.length) {
       startNewPass(leftPool);
     }
-    const scene = state.shuffledFilteredScenes[state.shuffleIndex];
+    const shuffled = state.shuffledFilteredScenes[state.shuffleIndex];
+    const scene = leftPool.find((s) => s.id === shuffled.id) ?? shuffled;
     state.shuffleIndex++;
     lastShownSceneId = scene.id;
     console.log(
@@ -1630,7 +1689,7 @@
     run.rangeHi = step.hi;
     if (step.done) {
       const newElo = landingElo(pool, step.slot);
-      const newBattles = battles(run.scene) + run.battles;
+      const newBattles = battles(latestScene(run.scene)) + run.battles;
       console.log(
         `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`
       );
@@ -2406,11 +2465,13 @@
     return state.currentMode === "champion" ? effectiveElo(scene, CHAMPION_UNRATED_ELO) : effectiveElo(scene);
   }
   function resolveComparison(winner, loser) {
-    const winnerSide = { elo: battleElo(winner), kGames: kGames(winner) };
-    const loserSide = { elo: battleElo(loser), kGames: kGames(loser) };
+    const latestWinner = latestScene(winner);
+    const latestLoser = latestScene(loser);
+    const winnerSide = { elo: battleElo(latestWinner), kGames: kGames(latestWinner) };
+    const loserSide = { elo: battleElo(latestLoser), kGames: kGames(latestLoser) };
     const result = eloResult(winnerSide, loserSide);
-    void writeElo(winner, result.winner, battles(winner) + 1);
-    void writeElo(loser, result.loser, battles(loser) + 1);
+    void writeElo(winner, result.winner, battles(latestWinner) + 1);
+    void writeElo(loser, result.loser, battles(latestLoser) + 1);
     return {
       winner: { from: winnerSide.elo, to: result.winner },
       loser: { from: loserSide.elo, to: result.loser }
@@ -2914,10 +2975,10 @@
         <p>Take a Stash backup first (Settings → Tasks → Backup).</p>`,
       confirmLabel: `Update ${count}`,
       workingLabel: "Updating...",
-      action: async () => {
+      action: () => queueRatingWrite(async () => {
         await writeStashRatings(changes);
         applyStashRatings(changes);
-      }
+      })
     });
   }
   async function startResetElo(modal) {
@@ -2954,6 +3015,7 @@
     switch (key) {
       case "stashRatings":
         updateRatingsNote();
+        scheduleStashRatingSync();
         break;
       case "filterOpponents":
         if (state.currentMode !== "swiss") resetRunState();
@@ -2994,6 +3056,7 @@
       return;
     }
     addKeySwallowers();
+    holdStashListRefresh(true);
     if (state.settings.pauseMediaOnOpen) {
       document.querySelectorAll("video, audio").forEach((v) => v.pause());
     }
@@ -3234,6 +3297,7 @@
     if (!modal || modal.classList.contains("sb-modal-hidden")) return;
     cancelDeleteDialog();
     cancelConfirmDialog();
+    holdStashListRefresh(false);
     if (state.resettingElo && !isSetupRunning()) {
       state.resettingElo = false;
       hideSetupScreen(modal);

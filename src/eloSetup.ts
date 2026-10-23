@@ -2,11 +2,11 @@
 // then optionally sync Stash ratings from the new ELO. Re-running it overwrites, so an
 // interrupted setup is safe to repeat.
 
-import { ELO_FIELD_KEYS, ELO_START, SETUP_BATCH_SIZE } from "./constants";
+import { ELO_FIELD_KEYS, ELO_START } from "./constants";
 import { graphqlQuery, refreshStashCache } from "./graphql";
 import { writeStashRatings } from "./rating";
-import { afterSetup, eloCustomFields, isRated, startingElo, stashRatingChanges } from "./score";
-import type { EloFields, EloStart, Scene, StashRatingsMode } from "./types";
+import { afterSetup, eloCustomFields, isRated, seed, startingElo, stashRatingChanges } from "./score";
+import type { EloStart, Scene, StashRatingsMode } from "./types";
 
 export type SetupPhase = "elo" | "ratings";
 
@@ -53,24 +53,33 @@ const BULK_UPDATE_MUTATION = `
       }
     `;
 
-/** Seed each rated scene from its own rating: aliased sceneUpdates, SETUP_BATCH_SIZE per request. */
-async function seedFromRatings(rated: Scene[], onProgress: SetupProgress): Promise<void> {
-  for (let start = 0; start < rated.length; start += SETUP_BATCH_SIZE) {
-    const batch = rated.slice(start, start + SETUP_BATCH_SIZE);
-    const mutation = `
-      mutation SeedElo(${batch.map((_, i) => `$s${i}: SceneUpdateInput!`).join(", ")}) {
-        ${batch.map((_, i) => `s${i}: sceneUpdate(input: $s${i}) { id }`).join("\n        ")}
+/**
+ * Seed each rated scene from its own rating. Scenes with the same Stash rating get the same
+ * starting fields, so it's one aliased bulkSceneUpdate per distinct rating, all in one request.
+ */
+async function seedFromRatings(rated: Scene[]): Promise<void> {
+  const idsByRating = new Map<number, string[]>();
+  for (const scene of rated) {
+    const rating = scene.rating100 as number;
+    const ids = idsByRating.get(rating) ?? [];
+    ids.push(scene.id);
+    idsByRating.set(rating, ids);
+  }
+  if (idsByRating.size === 0) return;
+
+  const values = [...idsByRating.keys()];
+  const mutation = `
+      mutation SeedElo(${values.map((r) => `$s${r}: BulkSceneUpdateInput!`).join(", ")}) {
+        ${values.map((r) => `s${r}: bulkSceneUpdate(input: $s${r}) { id }`).join("\n        ")}
       }
     `;
-    const variables = Object.fromEntries(
-      batch.map((scene, i) => {
-        const partial = eloCustomFields(startingElo(scene, "ratings") as EloFields);
-        return [`s${i}`, { id: scene.id, custom_fields: { partial } }];
-      }),
-    );
-    await graphqlQuery(mutation, variables);
-    onProgress("elo", start + batch.length, rated.length);
-  }
+  const variables = Object.fromEntries(
+    values.map((r) => {
+      const partial = eloCustomFields({ elo: seed(r), battles: 0, seeded: true });
+      return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial } }];
+    }),
+  );
+  await graphqlQuery(mutation, variables);
 }
 
 /**
@@ -89,7 +98,8 @@ export async function runEloSetup(
   if (start === "ratings") {
     const rated = scenes.filter((scene) => scene.rating100 != null);
     onProgress("elo", 0, rated.length);
-    await seedFromRatings(rated, onProgress);
+    await seedFromRatings(rated);
+    onProgress("elo", rated.length, rated.length);
     summary.eloWritten = rated.length;
 
     // Only matters on a re-run: scenes with an ELO but no Stash rating become unrated again

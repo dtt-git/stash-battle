@@ -1,6 +1,6 @@
 // Matchmaking: build the scene pairs for each comparison mode.
 
-import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached } from "./cache";
+import { clearFilteredCache, getAllScenesCached, getFilteredScenesCached, latestScene } from "./cache";
 import {
   CHAMPION_UNRATED_ELO,
   CLIMB_OPPONENT_PICK_WINDOW,
@@ -74,7 +74,9 @@ function getNextFilteredScene(leftPool: Scene[], filterKey: string): Scene | nul
     startNewPass(leftPool);
   }
 
-  const scene = state.shuffledFilteredScenes[state.shuffleIndex];
+  const shuffled = state.shuffledFilteredScenes[state.shuffleIndex];
+  // The shuffle keeps its pass's scene objects; a background refresh may have replaced them since
+  const scene = leftPool.find((s) => s.id === shuffled.id) ?? shuffled;
   state.shuffleIndex++;
   lastShownSceneId = scene.id;
   console.log(
@@ -337,7 +339,7 @@ export async function fetchPlacementPair(
   if (step.done) {
     // Only the placed scene's ELO changes; it's credited with the battles this run took
     const newElo = landingElo(pool, step.slot);
-    const newBattles = battles(run.scene) + run.battles;
+    const newBattles = battles(latestScene(run.scene)) + run.battles;
     console.log(
       `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`,
     );

@@ -2,8 +2,8 @@
 
 import { clearSceneCache } from "../cache";
 import { fetchSetupScenes } from "../eloSetup";
-import { getSceneIdFromUrl, sceneCustomFieldsSupported } from "../graphql";
-import { applyStashRatings, SCENE_MISSING_EVENT, writeStashRatings } from "../rating";
+import { getSceneIdFromUrl, holdStashListRefresh, sceneCustomFieldsSupported } from "../graphql";
+import { applyStashRatings, queueRatingWrite, SCENE_MISSING_EVENT, scheduleStashRatingSync, writeStashRatings } from "../rating";
 import { stashRatingChanges } from "../score";
 import { loadSettings } from "../settings";
 import { isEloSetupPending, resetRunState, resetShuffle, state } from "../state";
@@ -80,10 +80,11 @@ async function confirmSettingChange(key: keyof Settings, value: string): Promise
         <p>Take a Stash backup first (Settings → Tasks → Backup).</p>`,
     confirmLabel: `Update ${count}`,
     workingLabel: "Updating...",
-    action: async () => {
-      await writeStashRatings(changes);
-      applyStashRatings(changes);
-    },
+    action: () =>
+      queueRatingWrite(async () => {
+        await writeStashRatings(changes);
+        applyStashRatings(changes);
+      }),
   });
 }
 
@@ -126,6 +127,8 @@ function onSettingChanged(key: keyof Settings): void {
   switch (key) {
     case "stashRatings":
       updateRatingsNote();
+      // Catch anything a per-battle sync under the old mode changed after the switch was counted
+      scheduleStashRatingSync();
       break;
     case "filterOpponents":
       // switching the toggle counts as changing filters: reset any run
@@ -172,6 +175,7 @@ export async function openModal(): Promise<void> {
     return;
   }
   addKeySwallowers();
+  holdStashListRefresh(true);
 
   // Optionally pause whatever Stash is playing so it doesn't overlap the battle previews
   if (state.settings.pauseMediaOnOpen) {
@@ -521,6 +525,8 @@ export function closeModal(): void {
 
   cancelDeleteDialog();
   cancelConfirmDialog();
+  // Stash's scene lists show the ratings written while Stash Battle was open
+  holdStashListRefresh(false);
   // Closing Stash Battle on Reset ELO's choices (before Start) cancels the reset
   if (state.resettingElo && !isSetupRunning()) {
     state.resettingElo = false;

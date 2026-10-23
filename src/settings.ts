@@ -75,10 +75,7 @@ function legacyDefaults(): Settings {
  */
 export async function loadSettings(): Promise<boolean> {
   try {
-    const data = await graphqlQuery<{ configuration: { plugins: Record<string, Record<string, unknown>> } }>(
-      CONFIG_QUERY,
-    );
-    const stored = data.configuration.plugins?.[PLUGIN_ID];
+    const stored = await fetchStoredConfig();
     legacyFunMode = stored?.funMode === true;
     state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
     return true;
@@ -93,14 +90,34 @@ export function hadFunMode(): boolean {
   return legacyFunMode;
 }
 
+/** Settings changed in this tab and not saved yet. */
+const unsaved = new Set<keyof Settings>();
+
+/** The stored config map, fresh from Stash (undefined if Stash Battle never saved one). */
+async function fetchStoredConfig(): Promise<Record<string, unknown> | undefined> {
+  const data = await graphqlQuery<{ configuration: { plugins: Record<string, Record<string, unknown>> } }>(
+    CONFIG_QUERY,
+  );
+  return data.configuration.plugins?.[PLUGIN_ID];
+}
+
 async function persistSettings(): Promise<boolean> {
+  const keys = [...unsaved];
+  unsaved.clear();
   try {
-    // configurePlugin replaces the whole map, so always send every key (unset ones are left out)
-    const input = Object.fromEntries(Object.entries(state.settings).filter(([, value]) => value !== null));
+    // configurePlugin replaces the whole map, so this tab's unsaved changes go on top of the
+    // stored config, not this tab's copy of it: another tab may have saved since this one loaded
+    // (finished the ELO setup, say), and an older copy would undo that.
+    const stored = await fetchStoredConfig();
+    const merged: Record<string, unknown> = stored ? { ...normalize(stored, state.settings) } : { ...state.settings };
+    for (const key of keys) merged[key] = state.settings[key];
+    // Unset keys are left out
+    const input = Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null));
     await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
     return true;
   } catch (e) {
     console.error("[Stash Battle] Failed to save settings:", e);
+    for (const key of keys) unsaved.add(key);
     return false;
   }
 }
@@ -108,6 +125,7 @@ async function persistSettings(): Promise<boolean> {
 /** Update settings locally right away and persist to Stash (debounced, for sliders). */
 export function updateSettings(patch: Partial<Settings>): void {
   state.settings = normalize({ ...state.settings, ...patch }, state.settings);
+  for (const key of Object.keys(patch) as (keyof Settings)[]) unsaved.add(key);
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -118,6 +136,7 @@ export function updateSettings(patch: Partial<Settings>): void {
 /** Update settings and save to Stash right away (no debounce). Resolves false if saving failed. */
 export async function updateSettingsNow(patch: Partial<Settings>): Promise<boolean> {
   state.settings = normalize({ ...state.settings, ...patch }, state.settings);
+  for (const key of Object.keys(patch) as (keyof Settings)[]) unsaved.add(key);
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;

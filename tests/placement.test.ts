@@ -115,3 +115,39 @@ test("start from the bottom never jumps more than 10% of the pool, so a streak c
   const { run } = simulate(2100, { fromBottom: true });
   assert.ok(run.battles >= 15, `took ${run.battles}`);
 });
+
+/** Play a run where the placed scene beats exactly the opponents `beats` says it does. */
+function playOut(opponents: Scene[], beats: (opponent: Scene) => boolean, fromBottom = false) {
+  const run = newPlacementRun(scene("placed", 1500), fromBottom);
+  for (let guard = 0; guard < 100; guard++) {
+    const step = placementStep(run, opponents);
+    if (step.done) return { slot: step.slot, run };
+    const opponent = opponents[step.index];
+    recordPlacementResult(run, beats(opponent), opponent.id);
+  }
+  throw new Error("placement never finished");
+}
+
+test("a result counts for the opponent's whole tie group, so the slot ends at a group's edge", () => {
+  // Everyone at 1500 (a fresh start): one battle settles it, above or below the whole group
+  const flat = Array.from({ length: 50 }, (_, i) => scene(`f${i}`, 1500));
+  const won = playOut(flat, () => true);
+  assert.deepEqual([won.slot, won.run.battles, landingElo(flat, won.slot)], [0, 1, 1525]);
+  const lost = playOut(flat, () => false);
+  assert.deepEqual([lost.slot, lost.run.battles, landingElo(flat, lost.slot)], [50, 1, 1475]);
+
+  // A tie group of 1600s in the middle: never lands inside it, and the landing ELO keeps the slot
+  const mixed = [1800, 1700, 1600, 1600, 1600, 1600, 1500, 1400].map((e, i) => scene(`m${i}`, e));
+  for (const beats of [(o: Scene) => o.id === "m6" || o.id === "m7", (o: Scene) => !["m0", "m1"].includes(o.id)]) {
+    const { slot } = playOut(mixed, beats);
+    assert.ok(slot === 2 || slot === 6, `landed inside the tie group at ${slot}`);
+    const landed = landingElo(mixed, slot);
+    const below = mixed.findIndex((s) => (s.custom_fields?.stash_battle_elo as number) < landed);
+    assert.equal(below === -1 ? mixed.length : below, slot, "the landing ELO sorts into the slot");
+  }
+});
+
+test("placementElo never ties the lower neighbour, so the scene sorts into its slot", () => {
+  assert.equal(placementElo(1500.1, 1500), 1500.1);
+  assert.equal(placementElo(1500, 1500), 1500);
+});

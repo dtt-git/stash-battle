@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { refreshStashCache } from "../src/graphql";
-import { syncStashRatings } from "../src/rating";
+import { holdStashListRefresh, refreshStashCache } from "../src/graphql";
+import { syncStashRatings, writeElo } from "../src/rating";
+import { battles, elo } from "../src/score";
+import { updateSettingsNow } from "../src/settings";
 import { state } from "../src/state";
 import type { Scene } from "../src/types";
 
@@ -102,4 +104,74 @@ test("refreshStashCache updates cached scenes and drops cached lists only when r
 test("refreshStashCache is a no-op when Stash doesn't expose its client", () => {
   (globalThis as unknown as { window: unknown }).window = {};
   assert.doesNotThrow(() => refreshStashCache([{ id: "1", rating100: 5 }], true));
+});
+
+test("syncStashRatings runs one sync at a time, each starting from the last one's writes", async () => {
+  const record = fakeFetch();
+  const instant = globalThis.fetch;
+  // The first request takes a moment, so the second sync starts while it's still writing
+  globalThis.fetch = (async (url: unknown, init: { body: string }) => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return instant(url as string, init as RequestInit);
+  }) as unknown as typeof fetch;
+  fakeApollo({});
+  state.settings = { ...state.settings, stashRatings: "linear" };
+  state.memoryCache.allScenes = [scene("b", 1740, 70)];
+
+  const [first, second] = await Promise.all([syncStashRatings(), syncStashRatings()]);
+  assert.deepEqual([first, second], [1, 0]);
+  assert.equal(record.bodies.length, 1);
+});
+
+test("holdStashListRefresh drops Stash's scene lists once on release, not on every write", () => {
+  const apollo = fakeApollo({ "Scene:1": { rating100: 70 } });
+  holdStashListRefresh(true);
+  refreshStashCache([{ id: "1", rating100: 74 }], true);
+  refreshStashCache([{ id: "1", rating100: 75 }], true);
+  assert.equal(apollo.entries["Scene:1"].rating100, 75, "cached scenes still update");
+  assert.deepEqual(apollo.evicted, []);
+  holdStashListRefresh(false);
+  assert.deepEqual(apollo.evicted, ["findScenes"]);
+  holdStashListRefresh(true);
+  holdStashListRefresh(false);
+  assert.deepEqual(apollo.evicted, ["findScenes"], "nothing changed, nothing dropped");
+});
+
+test("writeElo puts the old ELO back when the write fails", async () => {
+  globalThis.fetch = (async () => ({ json: async () => ({ errors: [{ message: "database is locked" }] }) })) as unknown as typeof fetch;
+  fakeApollo({});
+  state.settings = { ...state.settings, stashRatings: "off" };
+  const cached = { ...scene("w", 1600, null), custom_fields: { stash_battle_elo: 1600, stash_battle_battles: 4 } };
+  state.memoryCache.allScenes = [cached];
+  state.memoryCache.filteredScenes = null;
+  const held = { ...cached }; // a separate copy, like a saved pair's scene
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await writeElo(held, 1640, 5);
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(elo(state.memoryCache.allScenes[0]), 1600);
+  assert.equal(battles(state.memoryCache.allScenes[0]), 4);
+  assert.equal(elo(held), 1600);
+});
+
+test("a settings save keeps what another tab stored, plus only this tab's changes", async () => {
+  const bodies: { query: string; variables: Record<string, unknown> }[] = [];
+  globalThis.fetch = (async (_url: unknown, init: { body: string }) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const stored = { eloSetupAt: "2026-10-22T10:00:00.000Z", eloSetupMode: "ratings", stashRatings: "percentile", previewVolume: 40 };
+    return { json: async () => ({ data: { configuration: { plugins: { "stash-battle": stored } } } }) };
+  }) as unknown as typeof fetch;
+  // This tab loaded its settings before the other tab finished the setup
+  state.settings = { ...state.settings, eloSetupAt: null, eloSetupMode: null, stashRatings: "off" };
+
+  assert.equal(await updateSettingsNow({ previewVolume: 10 }), true);
+  const saved = bodies.at(-1)?.variables.input as Record<string, unknown>;
+  assert.equal(saved.eloSetupAt, "2026-10-22T10:00:00.000Z");
+  assert.equal(saved.eloSetupMode, "ratings");
+  assert.equal(saved.stashRatings, "percentile");
+  assert.equal(saved.previewVolume, 10);
 });

@@ -28,11 +28,26 @@ export function newPlacementRun(scene: Scene, fromBottom: boolean): PlacementRun
   };
 }
 
-/** Current [lo, hi) slot bounds, resolved from the bounding opponents' ids. */
+/** Index of the end of pool[idx]'s tie group (scenes with the same ELO) in direction `dir`. */
+function tieGroupEdge(pool: Scene[], idx: number, dir: 1 | -1): number {
+  const value = elo(pool[idx]);
+  let edge = idx;
+  while (edge + dir >= 0 && edge + dir < pool.length && elo(pool[edge + dir]) === value) edge += dir;
+  return edge;
+}
+
+/**
+ * Current [lo, hi) slot bounds, resolved from the bounding opponents' ids. A result counts for
+ * the opponent's whole tie group: a scene can only get an ELO above or below a group of equal
+ * ELOs, not inside it, so the slot always ends at a group's edge and the landing ELO keeps it there.
+ */
 export function placementBounds(run: PlacementRun, pool: Scene[]): { lo: number; hi: number } {
   const aboveIdx = run.aboveId ? pool.findIndex((s) => s.id === run.aboveId) : -1;
   const belowIdx = run.belowId ? pool.findIndex((s) => s.id === run.belowId) : -1;
-  return { lo: aboveIdx + 1, hi: belowIdx >= 0 ? belowIdx : pool.length };
+  return {
+    lo: aboveIdx >= 0 ? tieGroupEdge(pool, aboveIdx, 1) + 1 : 0,
+    hi: belowIdx >= 0 ? tieGroupEdge(pool, belowIdx, -1) : pool.length,
+  };
 }
 
 /** The pool's lowest scene with an ELO (unrated ones sort last), or its last scene if none has one. */
@@ -60,12 +75,7 @@ function nextPlacementIndex(run: PlacementRun, pool: Scene[], lo: number, hi: nu
     if (lastIdx >= 0) {
       // Step from the far edge of the last opponent's tie group: another equal ELO teaches nothing
       const dir = run.lastWon ? -1 : 1;
-      const lastElo = elo(pool[lastIdx]);
-      let edge = lastIdx;
-      while (edge + dir >= 0 && edge + dir < pool.length && elo(pool[edge + dir]) === lastElo) {
-        edge += dir;
-      }
-      const target = edge + dir * Math.min(run.step, maxPlacementJump(pool.length));
+      const target = tieGroupEdge(pool, lastIdx, dir) + dir * Math.min(run.step, maxPlacementJump(pool.length));
       // A jump past the search range would land on its end (straight to #1, say): halve instead
       if (target >= lo && target < hi) return target;
     }

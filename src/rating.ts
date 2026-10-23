@@ -1,12 +1,12 @@
 // Persist ELO (and Stash ratings) to Stash and keep the local cache in sync.
 
-import { setEloInCache, setRatingsInCache } from "./cache";
+import { latestScene, setEloInCache, setRatingsInCache } from "./cache";
 import { ELO_FIELD_KEYS } from "./constants";
 import { graphqlQuery, refreshStashCache } from "./graphql";
 import { isSceneNotFoundError } from "./sceneActions";
-import { eloCustomFields, isSeeded, stashRatingChanges } from "./score";
+import { eloCustomFields, eloFields, isSeeded, stashRatingChanges } from "./score";
 import { state } from "./state";
-import type { Scene } from "./types";
+import type { EloFields, Scene } from "./types";
 
 /** Window event fired when a rating write finds the scene was deleted elsewhere (detail = scene id). */
 export const SCENE_MISSING_EVENT = "stash-battle:scene-missing";
@@ -26,38 +26,50 @@ function reportWriteError(sceneId: string, what: string, e: unknown): void {
   }
 }
 
+/** True when both are unrated, or hold the same ELO fields. */
+function sameElo(a: EloFields | null, b: EloFields | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.elo === b.elo && a.battles === b.battles && a.seeded === b.seeded;
+}
+
+/**
+ * Update the scene object, the cache and Stash's page cache straight away (so the next pair
+ * already sees the change), then write to Stash. If the write fails, put the old value back,
+ * unless a later write has replaced it since. Stash ratings sync only after a successful write.
+ */
+async function saveEloFields(scene: Scene, value: EloFields | null, customFields: Record<string, unknown>, what: string): Promise<boolean> {
+  const previous = eloFields(latestScene(scene));
+  setEloInCache(scene, value);
+  refreshStashCache([{ id: scene.id, elo: value }], false);
+  try {
+    await graphqlQuery(SCENE_UPDATE_MUTATION, { input: { id: scene.id, custom_fields: customFields } });
+  } catch (e) {
+    reportWriteError(scene.id, what, e);
+    if (sameElo(eloFields(latestScene(scene)), value)) {
+      setEloInCache(scene, previous);
+      refreshStashCache([{ id: scene.id, elo: previous }], false);
+    }
+    return false;
+  }
+  scheduleStashRatingSync();
+  return true;
+}
+
 /**
  * Save a scene's ELO and battle count (custom fields only; `partial` leaves other plugins'
- * fields alone). Whether it was seeded stays as it was. The scene object and the cache are
- * updated straight away, so the next pair already sees the new ELO; the write to Stash follows.
+ * fields alone). Whether it was seeded stays as it was.
  */
 export async function writeElo(scene: Scene, elo: number, battles: number): Promise<void> {
   const value = { elo, battles, seeded: isSeeded(scene) };
-  setEloInCache(scene, value);
-  refreshStashCache([{ id: scene.id, elo: value }], false);
-  scheduleStashRatingSync();
-  try {
-    await graphqlQuery(SCENE_UPDATE_MUTATION, {
-      input: { id: scene.id, custom_fields: { partial: eloCustomFields(value) } },
-    });
+  if (await saveEloFields(scene, value, { partial: eloCustomFields(value) }, "save ELO")) {
     console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo} (${battles} battles)`);
-  } catch (e) {
-    reportWriteError(scene.id, "save ELO", e);
   }
 }
 
 /** Remove a scene's ELO fields, making it unrated again. */
 export async function clearElo(scene: Scene): Promise<void> {
-  setEloInCache(scene, null);
-  refreshStashCache([{ id: scene.id, elo: null }], false);
-  scheduleStashRatingSync();
-  try {
-    await graphqlQuery(SCENE_UPDATE_MUTATION, {
-      input: { id: scene.id, custom_fields: { remove: ELO_FIELD_KEYS } },
-    });
+  if (await saveEloFields(scene, null, { remove: ELO_FIELD_KEYS }, "clear ELO")) {
     console.log(`[Stash Battle] 📝 Cleared scene ${scene.id} ELO`);
-  } catch (e) {
-    reportWriteError(scene.id, "clear ELO", e);
   }
 }
 
@@ -110,23 +122,38 @@ export function scheduleStashRatingSync(): void {
   }, SYNC_DEBOUNCE_MS);
 }
 
+/** The Stash rating write in progress (or the last one), so the next waits for it. */
+let ratingWrites: Promise<unknown> = Promise.resolve();
+
+/**
+ * Run a Stash ratings write after any in progress, so each one starts from the ratings the
+ * previous one wrote (overlapping writes could repeat work or finish out of order).
+ */
+export function queueRatingWrite<T>(task: () => Promise<T>): Promise<T> {
+  const run = ratingWrites.then(task);
+  ratingWrites = run.catch(() => undefined);
+  return run;
+}
+
 /**
  * Bring Stash ratings in line with ELO for the whole library (the all-scenes cache): work out
  * every scene's target under the current setting, and write only the ones that differ from the
- * cached rating, in one request. Returns how many were written.
+ * cached rating, in one request. Queued behind any write in progress. Returns how many were written.
  */
-export async function syncStashRatings(): Promise<number> {
-  const mode = state.settings.stashRatings;
-  const scenes = state.memoryCache.allScenes;
-  if (mode === "off" || !scenes) return 0;
-  const changes = stashRatingChanges(scenes, mode);
-  if (changes.size === 0) return 0;
-  try {
-    await writeStashRatings(changes);
-    applyStashRatings(changes);
-    return changes.size;
-  } catch (e) {
-    console.error("[Stash Battle] Failed to sync Stash ratings:", e);
-    return 0;
-  }
+export function syncStashRatings(): Promise<number> {
+  return queueRatingWrite(async () => {
+    const mode = state.settings.stashRatings;
+    const scenes = state.memoryCache.allScenes;
+    if (mode === "off" || !scenes) return 0;
+    const changes = stashRatingChanges(scenes, mode);
+    if (changes.size === 0) return 0;
+    try {
+      await writeStashRatings(changes);
+      applyStashRatings(changes);
+      return changes.size;
+    } catch (e) {
+      console.error("[Stash Battle] Failed to sync Stash ratings:", e);
+      return 0;
+    }
+  });
 }

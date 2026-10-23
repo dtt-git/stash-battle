@@ -89,6 +89,3 @@ export const PLACEMENT_EDGE_GAP = 25;
  */
 export const PLACEMENT_MAX_JUMP_SHARE = 0.1;
 export const PLACEMENT_MIN_MAX_JUMP = 4;
-
-/** ELO setup ("Use my ratings"): aliased sceneUpdate mutations per GraphQL request. */
-export const SETUP_BATCH_SIZE = 50;
