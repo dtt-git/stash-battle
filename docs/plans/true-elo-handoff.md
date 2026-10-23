@@ -9,11 +9,11 @@ Pick-up notes for continuing the work in [true-elo-mode.md](true-elo-mode.md) in
 | 1. ELO core | Done, reviewed, committed. |
 | 2. Write path + setup screen, remove fun mode | Done, reviewed, committed. |
 | 3. Modes/cache/UI onto ELO, Gauntlet becomes Placement's "Start from the bottom" | Done, reviewed, committed. |
-| 4. "Stash ratings" dropdown + sync, Reset ELO, Stash page-cache refresh | Done, reviewed, committed. Brian's go for Stage 5 is still needed. |
-| 5. Docs, CHANGELOG, version 3.0.0 | Not started |
+| 4. "Stash ratings" dropdown + sync, Reset ELO, Stash page-cache refresh | Done, reviewed, committed. |
+| 5. Docs, CHANGELOG, version 3.0.0 | Done and committed; pushed with a PR into `main`. |
 
 - **Branch:** `elo-mode`, created from `main` at `d3e740f`.
-- **Commits:** Stages 1-4 are separate commits on `elo-mode` (plus Stage 2's review polish and the navbar merge). None is pushed.
+- **Commits:** Stages 1-5 are separate commits on `elo-mode` (plus Stage 2's review polish and the navbar merge), pushed with a PR into `main` at Brian's request.
 - **Navbar change:** `PluginApi.patch` for the nav button was made on its own branch, `claude/amazing-rubin-4ce4c3` (commit `9e74ce2`, from `main`). It's now merged into `elo-mode` (merge `a00e75d`). It touches `main.ts`, `navButton.ts` and `deleteDialog.ts` and adds `src/pluginApi.ts`. Checked after the merge: the button shows on Scenes, hides on Performers and opens the ELO setup.
 
 ## How to work with Brian (agreed process)
@@ -296,7 +296,24 @@ Testing started from Brian's real state (Percentile, the 21:27 setup). Every sce
 
 Seeded ELOs tie a lot, so early Percentile syncs rewrite a whole tie group when one member moves (48 scenes on the second live pick). A tie-break (for example by previous Stash rating, then id) would have cut that to the scenes actually passed, but a fresh start would then show an arbitrary 100-1 spread instead of 50 everywhere. **Brian chose to keep the plan's rule** (Oct 22): the extra writes fade as battles break the ties.
 
-## Gotchas for Stage 5 onward
+## What Stage 5 built
+
+- **Docs:** `DOCUMENTATION.md` is rewritten for 3.0: the ELO system, setup and Reset ELO, the update modes, the modes, the cards, the navbar patch, and pitfalls including the corner-rendering fixes. The `README.md` has Requirements (Stash v0.31.0+, confirmed on the [v0.31.0 release notes](https://github.com/stashapp/stash/releases/tag/v0.31.0): "Custom field support has been added to scenes"), features, How It Works with the new K table, and the star-edit warning. The `CHANGELOG.md` v3.0.0 entry opens with "Before you update".
+- **Version** 3.0.0 in `package.json` and the yml.
+- **Screenshots** (`docs/screenshots/`): `battle.jpg`, `setup.png` (new), `placement.png`, `champion.png` and `settings.png`, all 764 px wide.
+  - The browser tool caps captures at about 800 px wide, so they were taken with an emulated 1040x960 viewport. That's above the 1000 px and 900 px-height compact-layout cut-offs, so Play Count, Battles and Tags show.
+  - Content guard: hide `img`/`video` and the page behind the modal, plus a `MutationObserver` that rewrites titles, studios, performers and tags to placeholders on every render. **Reinstall it after every page reload**: two slips happened when a reload dropped it, and both files were deleted.
+  - The setup shot was taken by temporarily removing `eloSetupAt` from the config (restored right after), with the re-run note hidden.
+  - Placement writes nothing mid-run. Champion's two picks were restored from a snapshot (3 scenes, 2 ratings, config identical).
+- **Forum drafts** (`docs/forum/`, not committed): `update-3.0.md` (a reply in the style of post #73) and `op-3.0.md` (the full OP, with `UPLOAD_*` placeholders for the new images; the two navbar `upload://` images are reused). Thread: https://discourse.stashapp.cc/t/stash-battle/5180.
+- **Corner fixes during Stage 5** (Brian's bug report): the card border is now a `::after` drawn on top, and the thumbnail, image and video have 12px top corners. See DOCUMENTATION Pitfalls 13.
+
+## Open follow-ups
+
+- **Custom-field filters:** `filters.ts` doesn't translate Stash's `custom_fields` criteria, so a Scenes-page filter on `stash_battle_elo` probably doesn't carry into Stash Battle. Untested; documented as such.
+- **SFW Switch:** after [stashapp/CommunityScripts#800](https://github.com/stashapp/CommunityScripts/pull/800) merges, remove the `pwr-*` classes and the "SFW Switch compatibility" note.
+
+## Gotchas for later work
 
 - **Keep the plugin working at every checkpoint.**
   - The modes keep using rating100 until Stage 3, so Stage 2 adds `writeElo` / `clearElo` alongside `updateSceneRating` rather than replacing it.

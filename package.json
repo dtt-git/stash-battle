@@ -1,6 +1,6 @@
 {
   "name": "stash-battle",
-  "version": "2.7.0",
+  "version": "3.0.0",
   "private": true,
   "description": "An ELO based ranking system for Stash scenes",
   "type": "module",
