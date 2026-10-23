@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: stage3-modes
     content: "Stage 3: move Swiss/Placement/Champion, cache sorting/repositioning and UI (cards, animations, end screens) onto ELO; remove Gauntlet mode and add Placement's \"Start from the bottom\" option"
-    status: pending
+    status: completed
   - id: stage4-settings
     content: "Stage 4: settings - stashRatings dropdown (off / percentile / linear, off by default; warning + full sync when the mode changes; per-battle sync of changed ratings batched into one request), Reset ELO button, refresh Stash's own page cache after writes"
     status: pending
@@ -280,11 +280,14 @@ Another agent read Stash's plugin architecture docs and suggested four changes. 
    - Remove fun mode: the setting, the sandbox in `cache.ts`, `ratingsEnabled()`, the fun mode badge and the "not saved" notes on the end screens.
    - Also added here because setup needs them: the `stashRatings` setting (types, defaults, `normalize()`; the dropdown is still Stage 4), and `writeStashRatings` in `rating.ts` (the one-request grouped write that Stage 4's debounced `syncStashRatings` wraps).
    - Every setup run, not only Reset ELO, removes the ELO of scenes without a Stash rating under "Use my ratings", so re-running an interrupted setup gives the same result as a clean one.
-3. **Modes, cache and UI.**
+3. **Modes, cache and UI.** (Done; see [true-elo-handoff.md](true-elo-handoff.md).)
    - Move every `rating100` read and sort in [src/pairs.ts](src/pairs.ts), [src/ui/mainUI.ts](src/ui/mainUI.ts) and [src/cache.ts](src/cache.ts) onto `score.ts`. That covers `repositionSceneInArray`, `insertionIndex`, `findLowestRated`, the placement helpers and `resolveComparison`.
    - Remove the Gauntlet mode and add Placement's "Start from the bottom" option: the `placementFromBottom` setting (types, defaults, `normalize()`, yml, Settings tab row), the `fromBottom` run flag, the streak badge and the victory screen.
    - After each fetch, sort the cache client-side by ELO.
    - Bump `CACHE_DB_VERSION`, and reset saved run state in [src/storage.ts](src/storage.ts) so scene objects saved without custom fields don't survive the upgrade.
+   - The Placement search moved into a pure [src/placement.ts](src/placement.ts), so whole runs are simulated in tests.
+   - Champion counts an unrated scene as rating 0 (ELO 1000), the bottom, as before. Only Swiss uses the "Unrated scene rating" setting.
+   - Fixed a Stage 1 bug in `eloResult`: the loser now loses K × (1 − the winner's chance), so equal-K battles are zero-sum.
    - UI changes:
      - cards show `ELO 1740 · #50` plus the Stash rating ([src/ui/sceneCard.ts](src/ui/sceneCard.ts)),
      - rating animations count ELO deltas,

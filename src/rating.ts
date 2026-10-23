@@ -1,9 +1,10 @@
-// Persist ratings and ELO to Stash and keep the local cache in sync.
+// Persist ELO (and Stash ratings) to Stash and keep the local cache in sync.
 
-import { clearSceneInCache, setEloInCache, updateSceneInCache } from "./cache";
+import { setEloInCache } from "./cache";
 import { ELO_FIELD, GAMES_FIELD } from "./constants";
 import { graphqlQuery } from "./graphql";
 import { isSceneNotFoundError } from "./sceneActions";
+import type { Scene } from "./types";
 
 /** Window event fired when a rating write finds the scene was deleted elsewhere (detail = scene id). */
 export const SCENE_MISSING_EVENT = "stash-battle:scene-missing";
@@ -12,7 +13,6 @@ const SCENE_UPDATE_MUTATION = `
       mutation SceneUpdate($input: SceneUpdateInput!) {
         sceneUpdate(input: $input) {
           id
-          rating100
         }
       }
     `;
@@ -24,57 +24,33 @@ function reportWriteError(sceneId: string, what: string, e: unknown): void {
   }
 }
 
-/** Write a rating (null clears) to Stash and the cache. */
-export async function updateSceneRating(sceneId: string, rating100: number | null): Promise<void> {
-  const stashRating =
-    rating100 === null ? null : Math.max(1, Math.min(100, rating100));
-
-  try {
-    await graphqlQuery(SCENE_UPDATE_MUTATION, {
-      input: {
-        id: sceneId,
-        rating100: stashRating,
-      },
-    });
-
-    if (stashRating === null) {
-      console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} rating in Stash`);
-      clearSceneInCache(sceneId);
-    } else {
-      console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${stashRating} in Stash`);
-      updateSceneInCache(sceneId, stashRating);
-    }
-  } catch (e) {
-    reportWriteError(sceneId, stashRating === null ? "clear rating" : "update rating", e);
-  }
-}
-
 /**
  * Save a scene's ELO and games count (custom fields only; `partial` leaves other plugins'
- * fields alone) to Stash and the cache.
+ * fields alone). The scene object and the cache are updated straight away, so the next pair
+ * already sees the new ELO; the write to Stash follows.
  */
-export async function writeElo(sceneId: string, elo: number, games: number): Promise<void> {
+export async function writeElo(scene: Scene, elo: number, games: number): Promise<void> {
+  setEloInCache(scene, { elo, games });
   try {
     await graphqlQuery(SCENE_UPDATE_MUTATION, {
-      input: { id: sceneId, custom_fields: { partial: { [ELO_FIELD]: elo, [GAMES_FIELD]: games } } },
+      input: { id: scene.id, custom_fields: { partial: { [ELO_FIELD]: elo, [GAMES_FIELD]: games } } },
     });
-    console.log(`[Stash Battle] 📝 Saved scene ${sceneId} ELO ${elo} (${games} games)`);
-    setEloInCache(sceneId, { elo, games });
+    console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo} (${games} games)`);
   } catch (e) {
-    reportWriteError(sceneId, "save ELO", e);
+    reportWriteError(scene.id, "save ELO", e);
   }
 }
 
 /** Remove a scene's ELO and games count, making it unrated again. */
-export async function clearElo(sceneId: string): Promise<void> {
+export async function clearElo(scene: Scene): Promise<void> {
+  setEloInCache(scene, null);
   try {
     await graphqlQuery(SCENE_UPDATE_MUTATION, {
-      input: { id: sceneId, custom_fields: { remove: [ELO_FIELD, GAMES_FIELD] } },
+      input: { id: scene.id, custom_fields: { remove: [ELO_FIELD, GAMES_FIELD] } },
     });
-    console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} ELO`);
-    setEloInCache(sceneId, null);
+    console.log(`[Stash Battle] 📝 Cleared scene ${scene.id} ELO`);
   } catch (e) {
-    reportWriteError(sceneId, "clear ELO", e);
+    reportWriteError(scene.id, "clear ELO", e);
   }
 }
 

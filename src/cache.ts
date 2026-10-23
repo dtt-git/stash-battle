@@ -10,6 +10,7 @@ import {
 } from "./constants";
 import { getFindFilter, type ListFilters } from "./filters";
 import { FIND_SCENES_QUERY, graphqlQuery } from "./graphql";
+import { eloInsertionIndex, sortByElo } from "./score";
 import { state } from "./state";
 import type { CacheEntry, FindScenesResult, Scene } from "./types";
 
@@ -29,9 +30,9 @@ function openCacheDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
-        db.createObjectStore(CACHE_STORE_NAME, { keyPath: "cacheKey" });
-      }
+      // Any older store holds scenes without ELO (or in rating order): start it over
+      if (db.objectStoreNames.contains(CACHE_STORE_NAME)) db.deleteObjectStore(CACHE_STORE_NAME);
+      db.createObjectStore(CACHE_STORE_NAME, { keyPath: "cacheKey" });
     };
   });
 }
@@ -161,7 +162,7 @@ async function backgroundRefreshAllScenes(): Promise<void> {
       scene_filter: null,
     });
 
-    const scenes = result.findScenes.scenes || [];
+    const scenes = sortByElo(result.findScenes.scenes || []);
     const count = result.findScenes.count || scenes.length;
     const fetchTime = Date.now() - startTime;
 
@@ -238,7 +239,7 @@ export async function getAllScenesCached(): Promise<{ scenes: Scene[]; count: nu
     scene_filter: null,
   });
 
-  const scenes = result.findScenes.scenes || [];
+  const scenes = sortByElo(result.findScenes.scenes || []);
   const count = result.findScenes.count || scenes.length;
   const fetchTime = Date.now() - startTime;
 
@@ -267,7 +268,7 @@ async function backgroundRefreshFilteredScenes(filters: ListFilters): Promise<vo
       scene_filter: filters.sceneFilter,
     });
 
-    const scenes = result.findScenes.scenes || [];
+    const scenes = sortByElo(result.findScenes.scenes || []);
     const count = result.findScenes.count || scenes.length;
     const fetchTime = Date.now() - startTime;
 
@@ -362,7 +363,7 @@ export async function getFilteredScenesCached(
     scene_filter: sceneFilter,
   });
 
-  const scenes = result.findScenes.scenes || [];
+  const scenes = sortByElo(result.findScenes.scenes || []);
   const count = result.findScenes.count || scenes.length;
   const fetchTime = Date.now() - startTime;
 
@@ -375,78 +376,31 @@ export async function getFilteredScenesCached(
   return { scenes, count };
 }
 
-// Update a scene's rating and reposition it in the sorted array to keep ranks accurate
-function repositionSceneInArray(arr: Scene[], sceneId: string, newRating: number): boolean {
-  const idx = arr.findIndex((s) => s.id === sceneId);
-  if (idx === -1) return false;
-
-  const scene = arr[idx];
-  scene.rating100 = newRating;
-
-  // Remove from current position
-  arr.splice(idx, 1);
-
-  // Find correct position (array is sorted by rating DESC)
-  const newIdx = arr.findIndex((s) => (s.rating100 || 0) < newRating);
-
-  if (newIdx === -1) {
-    arr.push(scene); // Lowest rated, goes at end
+/** Set (or with null, remove) the ELO fields on one scene object. */
+function applyElo(scene: Scene, value: { elo: number; games: number } | null): void {
+  const fields = { ...scene.custom_fields };
+  if (value) {
+    fields[ELO_FIELD] = value.elo;
+    fields[GAMES_FIELD] = value.games;
   } else {
-    arr.splice(newIdx, 0, scene);
+    delete fields[ELO_FIELD];
+    delete fields[GAMES_FIELD];
   }
-
-  return true;
+  scene.custom_fields = fields;
 }
 
-// Clear a scene's rating in the memory cache and move it to the bottom of the sorted pool
-export function clearSceneInCache(sceneId: string): void {
-  if (state.memoryCache.allScenes) {
-    const idx = state.memoryCache.allScenes.findIndex((s) => s.id === sceneId);
-    if (idx !== -1) {
-      const scene = state.memoryCache.allScenes[idx];
-      scene.rating100 = null;
-      state.memoryCache.allScenes.splice(idx, 1);
-      state.memoryCache.allScenes.push(scene);
-      console.log(`[Stash Battle] 📝 Cleared scene ${sceneId} rating in memory cache`);
-    }
-  }
-
-  if (state.memoryCache.filteredScenes) {
-    const scene = state.memoryCache.filteredScenes.find((s) => s.id === sceneId);
-    if (scene) {
-      scene.rating100 = null;
-    }
-  }
-}
-
-// Update a scene's rating in the memory cache (keeps cache in sync after rating changes)
-export function updateSceneInCache(sceneId: string, newRating: number): void {
-  // Reposition in allScenes (keeps rankings accurate, scene stays for opponent pool)
-  if (state.memoryCache.allScenes) {
-    repositionSceneInArray(state.memoryCache.allScenes, sceneId, newRating);
-    console.log(`[Stash Battle] 📝 Updated scene ${sceneId} rating to ${newRating} in memory cache`);
-  }
-
-  // Also reposition in filteredScenes (it doubles as the opponent pool when filtering both sides)
-  if (state.memoryCache.filteredScenes) {
-    repositionSceneInArray(state.memoryCache.filteredScenes, sceneId, newRating);
-  }
-}
-
-/** Set (or with null, remove) a scene's ELO fields on its cached objects. Order is unchanged. */
-export function setEloInCache(sceneId: string, value: { elo: number; games: number } | null): void {
+/**
+ * Set (or with null, remove) a scene's ELO on `scene` itself and on its cached copies, and move
+ * the cached copies to their new place in the ELO order so ranks stay right.
+ */
+export function setEloInCache(scene: Scene, value: { elo: number; games: number } | null): void {
+  applyElo(scene, value);
   for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
-    const scene = pool?.find((s) => s.id === sceneId);
-    if (!scene) continue;
-    const fields = { ...scene.custom_fields };
-    if (value) {
-      fields[ELO_FIELD] = value.elo;
-      fields[GAMES_FIELD] = value.games;
-    } else {
-      delete fields[ELO_FIELD];
-      delete fields[GAMES_FIELD];
-    }
-    scene.custom_fields = fields;
+    const idx = pool ? pool.findIndex((s) => s.id === scene.id) : -1;
+    if (!pool || idx === -1) continue;
+    const [cached] = pool.splice(idx, 1);
+    if (cached !== scene) applyElo(cached, value);
+    pool.splice(value ? eloInsertionIndex(pool, value.elo) : pool.length, 0, cached);
   }
 }
 

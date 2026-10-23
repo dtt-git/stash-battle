@@ -7,13 +7,13 @@ Pick-up notes for continuing the work in [true-elo-mode.md](true-elo-mode.md) in
 | Stage | State |
 |---|---|
 | 1. ELO core | Done, reviewed, committed. |
-| 2. Write path + setup screen, remove fun mode | Done, reviewed, committed. Brian's go for Stage 3 is still needed. |
-| 3. Modes/cache/UI onto ELO, Gauntlet becomes Placement's "Start from the bottom" | Not started |
+| 2. Write path + setup screen, remove fun mode | Done, reviewed, committed. |
+| 3. Modes/cache/UI onto ELO, Gauntlet becomes Placement's "Start from the bottom" | Done, reviewed, committed. Brian's go for Stage 4 is still needed. |
 | 4. "Stash ratings" dropdown + sync, Reset ELO, Stash page-cache refresh | Not started |
 | 5. Docs, CHANGELOG, version 3.0.0 | Not started |
 
 - **Branch:** `elo-mode`, created from `main` at `d3e740f`.
-- **Commits:** Stage 1 and Stage 2 are separate commits on `elo-mode`. Neither is pushed.
+- **Commits:** Stages 1, 2 and 3 are separate commits on `elo-mode` (plus Stage 2's review polish and the navbar merge). None is pushed.
 - **Navbar change:** `PluginApi.patch` for the nav button was made on its own branch, `claude/amazing-rubin-4ce4c3` (commit `9e74ce2`, from `main`). It's now merged into `elo-mode` (merge `a00e75d`). It touches `main.ts`, `navButton.ts` and `deleteDialog.ts` and adds `src/pluginApi.ts`. Checked after the merge: the button shows on Scenes, hides on Performers and opens the ELO setup.
 
 ## How to work with Brian (agreed process)
@@ -135,13 +135,96 @@ The modes still write `rating100` through `updateSceneRating`, so **battling dur
 - **Another session's test deploy:** the navbar session deployed its `main`-based build (no ELO setup) into the live plugins folder while testing, then copied ours back. While that build was loaded, Stash Battle opened straight to a battle, which looked like the setup flag had been set. It hadn't been: no flag and no ELO fields.
   - **Lesson:** parallel sessions share the live Stash plugins folder. Tell Brian before another session deploys there, and reload plugins afterwards.
 
-## Gotchas for Stage 3 onward
+## What Stage 3 built
+
+- **Battles write ELO only:**
+  - Swiss and Champion share `resolveComparison` in `mainUI.ts`: two-sided `eloResult`, and both scenes get `writeElo(scene, elo, games + 1)`.
+  - Placement writes once, when the scene lands: `landingElo`, with `games + battles`.
+  - Nothing writes `rating100` any more. `updateSceneRating` and the cache's rating100 helpers are gone.
+- **`writeElo(scene, ...)` / `clearElo(scene)`** now take the scene object. They update it and the cache right away (`setEloInCache` re-sorts the cached copies by ELO), then send the write. This replaces the old "update the cache after the write" order, so the next pair always sees the new ELO.
+- **Cache:**
+  - Every network fetch is sorted with `sortByElo` (Stash can't sort by a custom field).
+  - `CACHE_DB_VERSION` is 2, and the upgrade deletes and recreates the store.
+- **Saved sessions** (`storage.ts`): `STATE_VERSION` 3. Older saves keep only the mode (`gauntlet` becomes `placement`) and the filter params, so the pair and run start fresh.
+- **State:** `gauntlet*` replaced by `championScene`, `championWins` and `championDefeated`.
+- **Placement** (new pure `src/placement.ts`: `newPlacementRun`, `placementStep`, `recordPlacementResult`, `landingElo`, `bottomIndex`):
+  - The search is unchanged but compares ELO.
+  - Landing ELO is the midpoint of the nearest rated neighbours, or ±25 at an edge (`placementElo` in `score.ts`). The integer-gap workaround is gone.
+  - **"Start from the bottom"** (`placementFromBottom`: setting, Settings row, yml):
+    - The run's `fromBottom` flag is read when the run starts.
+    - The first opponent is the bottom rated scene, then it gallops upward.
+    - `streak` counts the wins before the first loss. The card shows "🔥 N wins" until then, and "Narrowing..." after.
+    - A climb that never loses lands at #1 and gets the victory screen. Otherwise the placed screen shows the streak, rank, battles and ELO.
+    - Changing the setting mid-run restarts that scene's run (`onSettingChanged` in `modal.ts`), with nothing written.
+- **Champion:** winner stays on, with plain two-sided ELO every pick. The "climber keeps its rating", 100-to-99 and "beat the last opponent + 1" rules are gone.
+  - **Decision made here:** an unrated scene counts as rating 0 (ELO 1000, `CHAMPION_UNRATED_RATING`), the bottom, as before. Swiss alone uses the "Unrated scene rating" setting.
+- **Gauntlet removed:** the mode button, `fetchGauntletPair`, falling mode, the climb helpers, the types and the state. The Placement tooltip points Gauntlet users to the setting, and the small-pool warning names only Champion.
+- **UI:**
+  - Cards show `ELO 1740 · #50` and a "Stash Rating: 74/100" line. Unrated scenes show the ELO they count as, in the same order: `ELO 1500 · Unrated` in Swiss (from the setting), `ELO 1000 · Unrated` in Champion (`CHAMPION_UNRATED_RATING`, now in `constants.ts`), and plain `Unrated` in Placement.
+  - Animations count whole ELO points.
+  - End screens show the final ELO. The victory text reads "Reached the top: N wins in a row!"
+- **`elo.ts`:** the pre-3.0 1-100 functions are deleted. `roundElo` is exported.
+- **Small safety fix:** the Swiss opponent search could loop forever on a pool with only the scene itself; it now stops once it has covered the pool.
+
+### Stage 1 bug fixed here
+
+`eloResult` took the loser's points as K × (the winner's win chance) instead of K × (1 − the winner's win chance). That's only correct when both chances are 50%. A favourite losing an upset was let off lightly, and an underdog losing was over-punished. It was spotted in the first live Swiss pick (1900 beat 1920: +12.7 / −11.3; it should be −12.7). Fixed, and tests now cover the loser's side and zero-sum at any gap.
+
+### Verified on Brian's Stash
+
+Testing used Brian's real setup from 21:27 (Use my ratings + Percentile). Every scene's ELO and games were snapshotted first and restored afterwards, so the 9 battled scenes are back exactly. Stash ratings didn't change at any point.
+
+- **Swiss:** each pick writes two `SceneUpdate`s with `custom_fields.partial` only. 1520 vs 1520 moved ±12 (K 24). The overlay counts ELO.
+- **Champion:**
+  - The challenger started against #521 (ELO 1010) and gained 0.3 while the bottom scene lost 0.3.
+  - The streak badge counted 1 and 2.
+  - A 1820 challenger beat the 1812.6 champion and took over, with a streak of 1.
+- **Placement:** the 1801 scene landed at #144 between 1810 and 1800, at ELO 1805, after 5 battles. Its games went 13 → 18, and that was the only write.
+- **Start from the bottom:**
+  - The first opponent was the bottom scene (#520).
+  - The streak went 1/2/3, with jumps #520 → #518 → #516 → #511.
+  - Toggling it off and on mid-run restarted the same scene, with no writes.
+  - 11 straight wins gave the victory screen, ELO 2025 and games 10 → 21, as one write.
+- **Other checks:**
+  - A saved `gauntlet` session opened as Placement and re-saved as version 3.
+  - The cache DB is at version 2.
+  - Battles from a scene page work in Placement and Swiss.
+  - A filtered pool (20 scenes) paired an unrated scene ("counts as 1500") against a 1490.
+  - Cards fit at 375 px.
+- **Simulated battle counts** (600-scene pool, `tests/placement.test.ts` and a one-off script):
+  - "Start from the bottom" takes 8 battles near the bottom, 18 in the middle and near the top, and 11 to beat the top. The average over all slots is 16.2, and the maximum is 18.
+  - Normal Placement takes 2 battles for a correctly rated scene and 9-10 for an unrated one.
+- **Tests:** 26 unit tests pass.
+
+### Stage 3 review feedback (applied)
+
+- **End-screen scrollbar flash (pre-3.0 bug):** the end screens slid in from 20 px lower over 0.5 s. With the Skip/Refresh bar hidden, the end screen sits flush with the window's bottom, so the slide overflowed by exactly 20 px and showed a scrollbar for half a second. They now use the cards' entry animation (`fadeIn`, 0.3 s). While an end screen shows, the battle area has `overflow: clip` (`.sb-comparison-area:has(> .sb-end-screen)`), so the slide's last 20 px is clipped instead of growing the page; measured 0 overflow on the first frame. (On the way, Brian tried no animation, then asked for the card-style one.) The pair cards still use the sliding `fadeIn` (0.3 s); they weren't reported.
+- **End screens:** no more glow (the headline's `text-shadow` and the image frame's `box-shadow`). The gold border stays.
+- **Cards:** "Stash Rating:" is capitalised.
+- **Placement tooltip:** dropped "Only its ELO changes, once at the end." The Gauntlet pointer comes after a blank line: the tooltip CSS is `white-space: pre-line`, and the touch ⓘ text turns `\n` into `<br>`.
+
+- **Phones:** the mode emojis show again. The ≤400 px rule that hid them was there so four modes fit; three modes fit at 320 px with emojis, measured. The stacked-card gap is 18 px (was 8 px), so the 21 px VS badge has 8 px clear of each card instead of overlapping them by 2-3 px.
+
+- **Placement jump cap** (Brian's request, after seeing a "Start from the bottom" run leap to #1 after 9 wins):
+  - The doubling jump is capped at 10% of the pool, but at least 4 ranks (`PLACEMENT_MAX_JUMP_SHARE`, `PLACEMENT_MIN_MAX_JUMP`, `maxPlacementJump`).
+  - A jump that would pass the search range halves the range instead of landing on its end.
+  - It applies to normal Placement too.
+  - Measured on a 600-scene pool: an average "Start from the bottom" run takes 17.0 battles (was 16.2) and the longest 21 (was 18). Beating #1 takes 21 wins (was 11). Normal Placement is unchanged (2 / 9-10).
+  - Live: opponents went 520 → 519 → 516 → 510 → 501 → 486 → 454 → 387 → 327 → 276 → 222 → 167 → 114 → 59 → 22. A rank gap can exceed the cap by the size of a tied-ELO group, because the jump starts from the far end of the tie.
+- **Settings tab:** the "Unrated scene rating" box is right-aligned with the switches and uses the modal's dark palette (`#121212`, `#444` border, primary-colour border on focus, no inset shadow) instead of Stash's blue-grey inputs. (Brian tried the Skip buttons' grey and went back to dark, because grey didn't read as an input box.)
+- **Winning card and VS text:** no glows. The winning card's green `box-shadow` and the VS text's red `text-shadow` are gone; the green border and the red VS colour stay.
+
+### Interim until Stage 4
+
+Brian's setup chose Percentile, but per-battle Stash rating sync is Stage 4. Until then, battles change ELO only, and the Stash ratings written at setup slowly drift from the ELO order.
+
+## Gotchas for Stage 4 onward
 
 - **Keep the plugin working at every checkpoint.**
   - The modes keep using rating100 until Stage 3, so Stage 2 adds `writeElo` / `clearElo` alongside `updateSceneRating` rather than replacing it.
   - Removing fun mode in Stage 2 touches `cache.ts` (sandbox), `rating.ts` (`ratingsEnabled`), `mainUI.ts` (fun badge, animations), `screens.ts` ("not saved" notes), `modal.ts` (`onSettingChanged` case and `resetSandbox` calls), `constants.ts`, `types.ts`, `settings.ts`, `settingsPanel.ts` and the yml.
-- **Stage 3 must bump `CACHE_DB_VERSION` and reset saved run state** (plan, Stage 3), because cached scenes and saved pairs from before setup have no custom fields. Setup already clears the cache and saved pair when it finishes.
-- **Cache order after `writeElo`:** `setEloInCache` updates the field but doesn't re-sort. Stage 3's ELO repositioning goes there (or replaces it).
+- **Per-battle sync:** `resolveComparison` fires both `writeElo`s without awaiting them. `syncStashRatings` should be debounced after them, and it should also update the cached scenes' `rating100` (nothing does that any more), plus `refreshStashCache` for Stash's own pages.
+- **Saved-session scenes:** `writeElo` updates the scene object it's given and the cache copies. A champion restored from localStorage is a separate object, which is why the scene is passed in and not just its id.
 - **Reset ELO (Stage 4)** can reuse `showSetupScreen` as is, and `runEloSetup` already removes stale ELO under "Use my ratings". The "Before 3.0..." note is hidden once `eloSetupAt` is set, so Reset ELO should clear the flag only after its confirmation.
 - **The Settings tab has no `<select>` control yet** (`settingControl` in `settingsPanel.ts` only does checkboxes and the number box). Stage 4 adds one. `stashRatings` stays out of the yml, because Stash's plugin settings page has no dropdown type.
 - **Opening Battle in automation:** the nav link is an `<a>` whose text is exactly "Battle". To log GraphQL traffic, wrap `window.fetch` and record each request's operation name, whether it's a mutation, and any errors.

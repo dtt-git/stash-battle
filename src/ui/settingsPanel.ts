@@ -20,7 +20,8 @@ const SECTIONS: { title: string; rows: SettingRow[] }[] = [
     title: "Battles",
     rows: [
       { key: "filterOpponents", title: "Use filtered scenes for both sides", hint: "Opponents also come from the current scene list filter instead of your whole rated library" },
-      { key: "unratedRating", title: "Unrated scene rating", hint: "What unrated scenes count as in Swiss. 0 starts them at the bottom; 50 is closer to a classic ELO start" },
+      { key: "unratedRating", title: "Unrated scene rating", hint: "What unrated scenes count as in Swiss. 0 starts them at the bottom; 50 counts them as 1500 ELO, a classic ELO start" },
+      { key: "placementFromBottom", title: "Placement: start from the bottom", hint: "Placement ignores the scene's current ELO: it starts against the bottom scene and climbs, jumping further with each win (this replaces Gauntlet)" },
     ],
   },
   {

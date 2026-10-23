@@ -158,7 +158,8 @@
   font-weight: normal;
   line-height: 1.45;
   text-align: left;
-  white-space: normal;
+  /* pre-line: a line break in a tip starts a new line */
+  white-space: pre-line;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
   opacity: 0;
   visibility: hidden;
@@ -341,7 +342,24 @@
 
 .sb-setting-number {
   width: 80px;
+  /* Right edge in line with the switches (the control column is wider than the box) */
+  margin-left: auto;
   text-align: right;
+}
+
+/* The modal's own dark palette instead of Stash's default blue-grey inputs */
+.sb-settings-tab .sb-setting-number {
+  background: #121212;
+  border: 1px solid #444;
+  color: #ddd;
+  box-shadow: none;
+}
+
+.sb-settings-tab .sb-setting-number:focus {
+  background: #121212;
+  border-color: var(--primary, #137cbd);
+  color: #fff;
+  box-shadow: none;
 }
 
 .sb-settings-note {
@@ -392,7 +410,6 @@
   font-size: 2.6rem;
   font-weight: bold;
   color: #dc3545;
-  text-shadow: 0 0 20px rgba(220, 53, 69, 0.5);
 }
 
 /* Scene Card */
@@ -418,7 +435,6 @@
 
 .sb-scene-card.sb-winner {
   border-color: #28a745 !important;
-  box-shadow: 0 0 30px rgba(40, 167, 69, 0.5);
 }
 
 .sb-scene-card.sb-loser {
@@ -1017,7 +1033,17 @@ body.sb-battle-open > .modal {
   padding: 20px;
   width: 100%;
   text-align: center;
-  animation: fadeIn 0.5s ease-out;
+  /* Same entry as the battle cards */
+  animation: fadeIn 0.3s ease-out;
+}
+
+/*
+ * The end screen sits flush with the window's bottom (the Skip bar is hidden), so the slide-in
+ * would make the content 20px taller for a moment and flash a scrollbar. Clip it instead
+ * (overflow: clip doesn't make the area scrollable itself).
+ */
+.sb-comparison-area:has(> .sb-end-screen) {
+  overflow: clip;
 }
 
 .sb-end-screen-icon {
@@ -1035,7 +1061,6 @@ body.sb-battle-open > .modal {
   font-weight: bold;
   color: #ffc107;
   margin: 10px 0;
-  text-shadow: 0 0 20px rgba(255, 193, 7, 0.5);
 }
 
 .sb-end-screen-scene {
@@ -1044,7 +1069,6 @@ body.sb-battle-open > .modal {
   border-radius: 12px;
   overflow: hidden;
   border: 4px solid #ffc107;
-  box-shadow: 0 0 40px rgba(255, 193, 7, 0.3);
   margin: 15px 0;
 }
 
@@ -1069,7 +1093,7 @@ body.sb-battle-open > .modal {
   margin-bottom: 20px;
 }
 
-#sb-new-gauntlet {
+#sb-new-run {
   padding: 12px 30px;
   font-size: 1.1rem;
 }
@@ -1247,10 +1271,11 @@ body.sb-battle-open > .modal {
 
   .sb-vs-container {
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    /* Two gaps around the zero-height divider leave the ~21px VS badge ~7px clear of each card */
+    gap: 18px;
   }
 
-  /* VS badge overlaps the gap between the stacked cards instead of taking a row */
+  /* VS badge sits in the gap between the stacked cards instead of taking a row */
   .sb-vs-divider {
     position: relative;
     height: 0;
@@ -1340,13 +1365,6 @@ body.sb-battle-open > .modal {
 
   #sb-floating-btn {
     bottom: 60px;
-  }
-}
-
-/* Narrow phones: mode names only, so four modes + ⓘ fit on one row */
-@media (max-width: 400px) {
-  .sb-mode-icon {
-    display: none;
   }
 }
 

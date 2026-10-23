@@ -48,6 +48,16 @@ function onSettingChanged(key: keyof Settings): void {
       loadNewPair();
       updateClimbPoolWarning();
       break;
+    case "placementFromBottom": {
+      // Restart the scene's run from the new start point (nothing is written until it lands)
+      const sceneId = state.currentMode === "placement" ? state.placement?.scene.id : undefined;
+      if (sceneId) {
+        resetRunState();
+        saveState();
+        void loadNewPair(sceneId);
+      }
+      break;
+    }
     case "previewVolume":
     case "autoplayPreviews":
       applyPreviewSettings();

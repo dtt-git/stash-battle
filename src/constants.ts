@@ -2,7 +2,8 @@
 
 export const STORAGE_KEY = "stash-battle-state";
 export const CACHE_DB_NAME = "stash-battle-cache";
-export const CACHE_DB_VERSION = 1;
+/** 2 (3.0): cached scenes from before need custom_fields and ELO order, so the store is cleared. */
+export const CACHE_DB_VERSION = 2;
 export const CACHE_STORE_NAME = "scenes";
 export const CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes cache expiry
 
@@ -17,6 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   eloSetupMode: null,
   openInNewTab: false,
   unratedRating: 50,
+  placementFromBottom: false,
   previewVolume: 50,
   autoplayPreviews: true,
   filterOpponents: false,
@@ -32,14 +34,17 @@ export const LEGACY_MUTE_PREVIEWS_KEY = "sb_mutePreviews";
 export const SWISS_OPPONENT_REACH_INITIAL = 10;
 export const SWISS_OPPONENT_REACH_MULTIPLIER = 2;
 
-// Gauntlet/champion: random pick among the N closest undefeated opponents above the climber.
+// Champion: random pick among the N closest undefeated opponents above the champion.
 export const CLIMB_OPPONENT_PICK_WINDOW = 5;
 
-/** Show a UI warning when the climb opponent pool is smaller than this (filter opponents on). */
-export const CLIMB_SMALL_POOL_WARN_AT = 10;
+/**
+ * Rating an unrated scene counts as in Champion: 0, the bottom (ELO 1000), so a newcomer climbs
+ * from there as before. Swiss uses the "Unrated scene rating" setting instead.
+ */
+export const CHAMPION_UNRATED_RATING = 0;
 
-/** play_count stand-in when the climber wins in gauntlet/champion (0 → K=12). */
-export const CLIMB_K_PLAY_COUNT = 0;
+/** Show a UI warning when Champion's opponent pool is smaller than this (filter opponents on). */
+export const CLIMB_SMALL_POOL_WARN_AT = 10;
 
 // --- True ELO (stored in scene custom fields) ---
 
@@ -68,6 +73,14 @@ export const SEEDED_GAMES = 10;
 
 /** ELO gap above the top / below the bottom scene when Placement lands a scene at an edge. */
 export const PLACEMENT_EDGE_GAP = 25;
+
+/**
+ * Placement's doubling jumps are capped at this share of the pool (but at least
+ * PLACEMENT_MIN_MAX_JUMP ranks), so a winning streak climbs instead of leaping to #1. In a
+ * 600-scene library: at most 60 ranks per jump, about one extra battle on average.
+ */
+export const PLACEMENT_MAX_JUMP_SHARE = 0.1;
+export const PLACEMENT_MIN_MAX_JUMP = 4;
 
 /** ELO setup ("Use my ratings"): aliased sceneUpdate mutations per GraphQL request. */
 export const SETUP_BATCH_SIZE = 50;

@@ -14,8 +14,12 @@ settings:
     type: BOOLEAN
   unratedRating:
     displayName: Unrated scene rating (0-100)
-    description: Rating unrated scenes count as in Swiss mode. 0 keeps the old behavior; 50 is closer to a classic ELO start.
+    description: Rating unrated scenes count as in Swiss mode. 0 starts them at the bottom; 50 counts them as 1500 ELO, a classic ELO start.
     type: NUMBER
+  placementFromBottom:
+    displayName: "Placement: start from the bottom"
+    description: Placement ignores the scene's current ELO, starts against the bottom scene and climbs, jumping further with each win. This replaces Gauntlet.
+    type: BOOLEAN
   previewVolume:
     displayName: Preview volume (0-100)
     description: Volume of hover previews. 0 mutes them.

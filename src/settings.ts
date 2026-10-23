@@ -52,6 +52,7 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
     filterOpponents: bool("filterOpponents"),
     cleanMode: bool("cleanMode"),
     pauseMediaOnOpen: bool("pauseMediaOnOpen"),
+    placementFromBottom: bool("placementFromBottom"),
     unratedRating: clampPercent(raw.unratedRating ?? base.unratedRating, base.unratedRating),
     previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
   };

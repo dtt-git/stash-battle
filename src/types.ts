@@ -1,7 +1,7 @@
 // Shared type definitions for the Stash Battle plugin.
 
 /** The comparison modes the plugin supports. */
-export type Mode = "swiss" | "placement" | "gauntlet" | "champion";
+export type Mode = "swiss" | "placement" | "champion";
 
 /** How ELO starts at setup: from current Stash ratings, or 1500 for every scene. */
 export type EloStart = "ratings" | "fresh";
@@ -15,7 +15,8 @@ export interface Settings {
   eloSetupAt: string | null; // When the one-time ELO setup finished (ISO time); null = not yet
   eloSetupMode: EloStart | null; // How that setup started ELO
   openInNewTab: boolean; // Thumbnail click opens the scene in a new tab
-  unratedRating: number; // Rating unrated scenes count as in Swiss ELO math / matchmaking
+  unratedRating: number; // Rating unrated scenes count as in Swiss ELO math / matchmaking (via seed)
+  placementFromBottom: boolean; // Placement runs start at the bottom scene and climb (replaces Gauntlet)
   previewVolume: number; // 0-100, 0 = muted
   autoplayPreviews: boolean; // Loop both previews (muted) without hovering
   filterOpponents: boolean; // Right side obeys the list filter too
@@ -106,52 +107,13 @@ export interface SwissPairResult {
   ranks: Rank[];
 }
 
-interface GauntletPairBase {
-  scenes: Scene[];
-  ranks: Rank[];
-}
-
-/** Normal gauntlet pair (climbing or run start). */
-export interface GauntletActivePair extends GauntletPairBase {
-  isVictory: false;
-  isFalling: false;
-  isPlacement?: false;
-}
-
-/** Climber has no remaining opponents. */
-export interface GauntletVictoryResult extends GauntletPairBase {
-  isVictory: true;
-  isFalling: false;
-}
-
-/** Falling scene still searching for their floor. */
-export interface GauntletFallingPair extends GauntletPairBase {
-  isVictory: false;
-  isFalling: true;
-  isPlacement?: false;
-}
-
-/** Falling scene hit the bottom — run ends with placement screen. */
-export interface GauntletPlacementResult extends GauntletPairBase {
-  isVictory: false;
-  isFalling: true;
-  isPlacement: true;
-  placementRank: number;
-  placementRating: number;
-}
-
-export type GauntletPairResult =
-  | GauntletActivePair
-  | GauntletVictoryResult
-  | GauntletFallingPair
-  | GauntletPlacementResult;
-
 /**
- * An in-progress Placement run. The scene's slot in the rating-sorted pool is narrowed between
+ * An in-progress Placement run. The scene's slot in the ELO-sorted pool is narrowed between
  * two opponents (stored by id so ranks survive background cache refreshes).
  */
 export interface PlacementRun {
   scene: Scene;
+  fromBottom: boolean; // "Start from the bottom": first opponent is the bottom scene, then climb
   aboveId: string | null; // Lowest-ranked scene that beat it (slot is below this one)
   belowId: string | null; // Highest-ranked scene it beat (slot is above this one)
   lastOpponentId: string | null;
@@ -159,37 +121,17 @@ export interface PlacementRun {
   galloping: boolean; // Step doubles each battle until the first direction reversal
   step: number;
   battles: number;
+  streak: number; // Wins before the first loss (the climb's win streak)
   rangeLo: number; // Current slot range for display (0-based, inclusive)
   rangeHi: number;
 }
 
 export type PlacementPairResult =
   | { done: false; scenes: Scene[]; ranks: Rank[] }
-  | { done: true; scene: Scene; rank: number; rating: number };
+  | { done: true; scene: Scene; rank: number; elo: number; battles: number; streak: number; fromBottom: boolean };
 
 export interface ChampionPairResult {
   scenes: Scene[];
   ranks: Rank[];
   isVictory: boolean;
-}
-
-
-/** Role of a scene in climb/champion battles (Swiss treats everyone as combatant). */
-export type BattleRole = "climber" | "benchmark" | "combatant";
-
-export interface BattleSide {
-  rating: number;
-  playCount: number;
-  role: BattleRole;
-}
-
-export interface ComparisonDeltas {
-  winner: number;
-  loser: number;
-}
-
-/** Inputs for pure two-sided ELO (no mode or role — caller applies policy). */
-export interface ComparisonInput {
-  winner: Pick<BattleSide, "rating" | "playCount">;
-  loser: Pick<BattleSide, "rating" | "playCount">;
 }

@@ -1,7 +1,8 @@
 // A scene's ELO (read from its custom fields), ELO ordering, and conversions between ELO and
 // Stash's 1-100 rating. Pure functions: no state, no I/O.
 
-import { ELO_FIELD, ELO_PER_RATING_POINT, ELO_START, GAMES_FIELD, SEEDED_GAMES } from "./constants";
+import { ELO_FIELD, ELO_PER_RATING_POINT, ELO_START, GAMES_FIELD, PLACEMENT_EDGE_GAP, SEEDED_GAMES } from "./constants";
+import { roundElo } from "./elo";
 import type { EloStart, Scene, StashRatingsMode } from "./types";
 
 /** Custom field values should come back as numbers; numeric strings are accepted too. */
@@ -141,4 +142,15 @@ export function eloInsertionIndex(pool: Scene[], eloValue: number): number {
     return other === null || other < eloValue;
   });
   return idx === -1 ? pool.length : idx;
+}
+
+/**
+ * ELO for a scene Placement lands between two neighbours (null where there's none, or the
+ * neighbour is unrated): their midpoint, or PLACEMENT_EDGE_GAP beyond the only one at an edge.
+ */
+export function placementElo(aboveElo: number | null, belowElo: number | null): number {
+  if (aboveElo === null && belowElo === null) return ELO_START;
+  if (aboveElo === null) return roundElo((belowElo as number) + PLACEMENT_EDGE_GAP);
+  if (belowElo === null) return roundElo(aboveElo - PLACEMENT_EDGE_GAP);
+  return roundElo((aboveElo + belowElo) / 2);
 }
