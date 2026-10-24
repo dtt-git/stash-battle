@@ -1,4 +1,4 @@
-<img width="764" alt="Stash Battle: two scenes side by side with their tier, ELO, rank and record, each side's chance of winning at the VS, the tab bar, mode buttons and preview volume" src="docs/screenshots/battle.jpg" />
+<img width="764" alt="Stash Battle: two scenes side by side with their tier, ELO, rank and record, each side's chance of winning at the VS, the tab bar, mode buttons and preview volume" src="docs/screenshots/battle.png" />
 
 # ⚔️ Stash Battle
 
