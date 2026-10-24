@@ -831,7 +831,7 @@ interface PickSnapshot {
   right: Scene;
   ranks: [Rank, Rank];
   /** The scenes the pick writes (Placement's scene is written when it lands), with their fields before. */
-  fields: { scene: Scene; value: EloFields | null }[];
+  fields: { scene: Scene; value: EloFields | null; rating100: number | null }[];
   championScene: Scene | null;
   championWins: number;
   championDefeated: string[];
@@ -851,7 +851,7 @@ function takePickSnapshot(choice: SceneChoice): PickSnapshot {
     left: choice.left,
     right: choice.right,
     ranks: [state.currentRanks.left, state.currentRanks.right],
-    fields: written.map((scene) => ({ scene, value: eloFields(latestScene(scene)) })),
+    fields: written.map((scene) => ({ scene, value: eloFields(latestScene(scene)), rating100: latestScene(scene).rating100 ?? null })),
     championScene: state.championScene,
     championWins: state.championWins,
     championDefeated: [...state.championDefeated],
@@ -897,7 +897,7 @@ export async function undoLastPick(): Promise<void> {
   state.disableChoice = true;
   try {
     await eloWritesSettled();
-    await Promise.all(pick.fields.map(({ scene, value }) => restoreElo(scene, value)));
+    await Promise.all(pick.fields.map(({ scene, value, rating100 }) => restoreElo(scene, value, rating100)));
     await keepOnlyHallOfFame(pick.hallIds);
   } catch (e) {
     console.error("[Stash Battle] Undo couldn't put everything back:", e);

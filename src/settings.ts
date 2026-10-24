@@ -233,10 +233,10 @@ export async function keepOnlyHallOfFame(keepIds: readonly string[]): Promise<vo
   });
 }
 
-/** Empty the list (setup and Reset ELO start every record over). */
-export async function clearHallOfFame(): Promise<void> {
+/** Empty the list (setup, Reset ELO, Settings → Clear hall of fame). Resolves false if saving failed. */
+export async function clearHallOfFame(): Promise<boolean> {
   hallOfFame = [];
-  await saveConfig({ [HALL_OF_FAME_KEY]: null });
+  return saveConfig({ [HALL_OF_FAME_KEY]: null });
 }
 
 /** Update settings locally right away and persist to Stash (debounced, for sliders). */

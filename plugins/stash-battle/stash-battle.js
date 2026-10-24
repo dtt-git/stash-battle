@@ -1430,7 +1430,7 @@
   }
   async function clearHallOfFame() {
     hallOfFame = [];
-    await saveConfig({ [HALL_OF_FAME_KEY]: null });
+    return saveConfig({ [HALL_OF_FAME_KEY]: null });
   }
   function updateSettings(patch) {
     state.settings = normalize({ ...state.settings, ...patch }, state.settings);
@@ -1470,12 +1470,13 @@
     if (a === null || b === null) return a === b;
     return JSON.stringify(eloCustomFields(a)) === JSON.stringify(eloCustomFields(b));
   }
-  async function saveEloFields(scene, value, customFields, what) {
+  async function saveEloFields(scene, value, customFields, what, rating100) {
     const previous = eloFields(latestScene(scene));
     setEloInCache(scene, value);
     refreshStashCache([{ id: scene.id, elo: value }], false);
     try {
-      await graphqlQuery(SCENE_UPDATE_MUTATION, { input: { id: scene.id, custom_fields: customFields } });
+      const input = { id: scene.id, custom_fields: customFields, ...rating100 !== void 0 ? { rating100 } : {} };
+      await graphqlQuery(SCENE_UPDATE_MUTATION, { input });
     } catch (e) {
       reportWriteError(scene.id, what, e);
       if (sameElo(eloFields(latestScene(scene)), value)) {
@@ -1483,6 +1484,10 @@
         refreshStashCache([{ id: scene.id, elo: previous }], false);
       }
       return false;
+    }
+    if (rating100 !== void 0) {
+      setRatingsInCache(/* @__PURE__ */ new Map([[scene.id, rating100]]));
+      refreshStashCache([{ id: scene.id, rating100 }], true);
     }
     scheduleStashRatingSync();
     return true;
@@ -1510,10 +1515,12 @@
     const top = state.memoryCache.allScenes?.[0];
     if (top && isRated(top) && !getHallOfFame().some((e) => e.id === top.id)) void addToHallOfFame(top.id);
   }
-  async function restoreElo(scene, value) {
-    if (sameElo(eloFields(latestScene(scene)), value)) return;
+  async function restoreElo(scene, value, rating100 = null) {
+    const current = latestScene(scene);
+    if (sameElo(eloFields(current), value)) return;
     const customFields = value ? { partial: eloCustomFields(value), ...value.record ? {} : { remove: RECORD_FIELD_KEYS } } : { remove: ELO_FIELD_KEYS };
-    if (await saveEloFields(scene, value, customFields, "undo ELO")) {
+    const ratingBack = value === null && (current.rating100 ?? null) !== rating100 ? rating100 : void 0;
+    if (await saveEloFields(scene, value, customFields, "undo ELO", ratingBack)) {
       console.log(`[Stash Battle] ↶ Restored scene ${scene.id} ELO ${value ? value.elo : "(unrated)"}`);
     }
   }
@@ -2360,6 +2367,12 @@
           title: "Reset ELO",
           hint: "Start every scene's ELO over, from its Stash rating or at 1500",
           button: "Reset ELO…"
+        },
+        {
+          action: "clear-hall-of-fame",
+          title: "Clear hall of fame",
+          hint: "Empty the Records tab's list of scenes that have been #1. It's kept in Stash's plugin settings, so restoring Stash's database doesn't change it",
+          button: "Clear…"
         }
       ]
     },
@@ -4016,7 +4029,7 @@
       left: choice.left,
       right: choice.right,
       ranks: [state.currentRanks.left, state.currentRanks.right],
-      fields: written.map((scene) => ({ scene, value: eloFields(latestScene(scene)) })),
+      fields: written.map((scene) => ({ scene, value: eloFields(latestScene(scene)), rating100: latestScene(scene).rating100 ?? null })),
       championScene: state.championScene,
       championWins: state.championWins,
       championDefeated: [...state.championDefeated],
@@ -4049,7 +4062,7 @@
     state.disableChoice = true;
     try {
       await eloWritesSettled();
-      await Promise.all(pick.fields.map(({ scene, value }) => restoreElo(scene, value)));
+      await Promise.all(pick.fields.map(({ scene, value, rating100 }) => restoreElo(scene, value, rating100)));
       await keepOnlyHallOfFame(pick.hallIds);
     } catch (e) {
       console.error("[Stash Battle] Undo couldn't put everything back:", e);
@@ -4646,6 +4659,21 @@
       })
     });
   }
+  async function confirmClearHallOfFame() {
+    const count = getHallOfFame().length;
+    await confirmDialog({
+      title: "Clear the hall of fame?",
+      body: `
+        <p>${count === 0 ? "The hall of fame is already empty." : `The ${plural(count, "scene")} that ${count === 1 ? "has" : "have"} been #1 will be taken off the list.`}
+        Your current #1 joins it again, from today, the next time you battle or open Records.</p>
+        <p>ELO and records aren't touched.</p>`,
+      confirmLabel: "Clear hall of fame",
+      workingLabel: "Clearing…",
+      action: async () => {
+        if (!await clearHallOfFame()) throw new Error("Couldn't save to Stash. Try again.");
+      }
+    });
+  }
   async function startResetElo(modal) {
     const ratingsOn = state.settings.stashRatings !== "off";
     const ok = await confirmDialog({
@@ -4929,6 +4957,7 @@
       stopExplorePool();
     });
     modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));
+    modal.querySelector('[data-action="clear-hall-of-fame"]')?.addEventListener("click", () => void confirmClearHallOfFame());
     modal.querySelector('[data-action="open-settings"]')?.addEventListener("click", (e) => {
       e.preventDefault();
       showTab(modal, "settings");

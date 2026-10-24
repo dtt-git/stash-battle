@@ -12,7 +12,7 @@ export type TabId = "battle" | "explore" | "stats" | "records" | "settings";
 
 type SettingRow =
   | { key: keyof Settings; title: string; hint: string; className?: string }
-  | { action: "reset-elo"; title: string; hint: string; button: string };
+  | { action: "reset-elo" | "clear-hall-of-fame"; title: string; hint: string; button: string };
 
 const SECTIONS: { title: string; rows: SettingRow[] }[] = [
   {
@@ -25,6 +25,12 @@ const SECTIONS: { title: string; rows: SettingRow[] }[] = [
         title: "Reset ELO",
         hint: "Start every scene's ELO over, from its Stash rating or at 1500",
         button: "Reset ELO…",
+      },
+      {
+        action: "clear-hall-of-fame",
+        title: "Clear hall of fame",
+        hint: "Empty the Records tab's list of scenes that have been #1. It's kept in Stash's plugin settings, so restoring Stash's database doesn't change it",
+        button: "Clear…",
       },
     ],
   },

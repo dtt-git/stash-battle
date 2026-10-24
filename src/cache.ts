@@ -410,7 +410,7 @@ export function setEloInCache(scene: Scene, value: EloFields | null): void {
 }
 
 /** Set the Stash rating on cached scenes (after Stash Battle wrote them). Order is ELO, so unchanged. */
-export function setRatingsInCache(ratings: Map<string, number>): void {
+export function setRatingsInCache(ratings: Map<string, number | null>): void {
   for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
     for (const scene of pool ?? []) {
       const rating = ratings.get(scene.id);

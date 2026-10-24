@@ -50,12 +50,12 @@ ELO is saved in each scene's custom fields, so **Stash Battle doesn't touch your
   - **ELO distribution**, with your Stash rating scale under it. Click a bar to see those scenes in Explore.
   - **Hidden gems / overplayed**: ELO against play count. Top left are scenes you rank highly but rarely watch. Hover a dot to see the scene.
 
-- **🏆 Records tab**: the **hall of fame** (every scene that has ever been #1, and when it got there), the **longest win streaks** and the **highest peak ELOs**.
+- **🏆 Records tab**: the **hall of fame** (every scene that has ever been #1, and when it got there), the **longest win streaks** and the **highest peak ELOs**. The hall of fame is saved in Stash's plugin settings, so restoring a database backup doesn't change it; **Settings → Clear hall of fame** empties it.
 
 - **On Stash's scene pages**, the same `ELO 1740 · #50` sits next to the play count and O count, with the scene's tier emoji as its icon (⚔ while it has no tier). Click it to battle that scene.
 
 - **Settings tab** (most also under Stash's Settings → Plugins). Saves to Stash:
-  - **Stash ratings update mode** and **Reset ELO** (see above)
+  - **Stash ratings update mode**, **Reset ELO** (see above) and **Clear hall of fame**
   - **Use filtered scenes for both sides**
   - **Placement: start from the bottom**
   - **Autoplay previews** – both loop silently; hover a card to hear it (on by default)

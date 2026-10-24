@@ -38,12 +38,19 @@ function sameElo(a: EloFields | null, b: EloFields | null): boolean {
  * already sees the change), then write to Stash. If the write fails, put the old value back,
  * unless a later write has replaced it since. Stash ratings sync only after a successful write.
  */
-async function saveEloFields(scene: Scene, value: EloFields | null, customFields: Record<string, unknown>, what: string): Promise<boolean> {
+async function saveEloFields(
+  scene: Scene,
+  value: EloFields | null,
+  customFields: Record<string, unknown>,
+  what: string,
+  rating100?: number | null,
+): Promise<boolean> {
   const previous = eloFields(latestScene(scene));
   setEloInCache(scene, value);
   refreshStashCache([{ id: scene.id, elo: value }], false);
   try {
-    await graphqlQuery(SCENE_UPDATE_MUTATION, { input: { id: scene.id, custom_fields: customFields } });
+    const input = { id: scene.id, custom_fields: customFields, ...(rating100 !== undefined ? { rating100 } : {}) };
+    await graphqlQuery(SCENE_UPDATE_MUTATION, { input });
   } catch (e) {
     reportWriteError(scene.id, what, e);
     if (sameElo(eloFields(latestScene(scene)), value)) {
@@ -51,6 +58,10 @@ async function saveEloFields(scene: Scene, value: EloFields | null, customFields
       refreshStashCache([{ id: scene.id, elo: previous }], false);
     }
     return false;
+  }
+  if (rating100 !== undefined) {
+    setRatingsInCache(new Map([[scene.id, rating100]]));
+    refreshStashCache([{ id: scene.id, rating100 }], true);
   }
   scheduleStashRatingSync();
   return true;
@@ -96,13 +107,20 @@ export function noteTopScene(): void {
  * Put a scene's ELO fields back exactly as `value` (undo): a scene that had no record loses the
  * record fields its pick created, and one that was unrated loses its ELO again. Nothing is
  * written when they already match.
+ *
+ * A scene going back to unrated also gets its Stash rating from before (`rating100`) in the same
+ * write: the sync gave it one from its new ELO, and the sync only writes scenes that have an ELO,
+ * so it would never undo that itself. Rated scenes' ratings follow their restored ELO on the
+ * next sync.
  */
-export async function restoreElo(scene: Scene, value: EloFields | null): Promise<void> {
-  if (sameElo(eloFields(latestScene(scene)), value)) return;
+export async function restoreElo(scene: Scene, value: EloFields | null, rating100: number | null = null): Promise<void> {
+  const current = latestScene(scene);
+  if (sameElo(eloFields(current), value)) return;
   const customFields = value
     ? { partial: eloCustomFields(value), ...(value.record ? {} : { remove: RECORD_FIELD_KEYS }) }
     : { remove: ELO_FIELD_KEYS };
-  if (await saveEloFields(scene, value, customFields, "undo ELO")) {
+  const ratingBack = value === null && (current.rating100 ?? null) !== rating100 ? rating100 : undefined;
+  if (await saveEloFields(scene, value, customFields, "undo ELO", ratingBack)) {
     console.log(`[Stash Battle] ↶ Restored scene ${scene.id} ELO ${value ? value.elo : "(unrated)"}`);
   }
 }

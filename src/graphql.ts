@@ -81,7 +81,7 @@ export function sceneCustomFieldsSupported(): Promise<boolean> {
 /** A change Stash Battle wrote to a scene, to mirror into Stash's own page cache. */
 export interface StashCacheUpdate {
   id: string;
-  rating100?: number;
+  rating100?: number | null;
   /** New ELO fields, or null when they were removed. */
   elo?: EloFields | null;
 }

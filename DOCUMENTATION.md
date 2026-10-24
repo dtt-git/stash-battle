@@ -535,7 +535,8 @@ The click handler is bound once per panel (`dataset.bound`), not on every render
 - `noteTopScene()` runs after each ELO write: if the library's #1 (the all-scenes cache's first scene) is rated and not in the list, `addToHallOfFame` adds it.
 - Saves go through `saveConfig`'s queue and **merge** with the stored list (`mergeHallOfFame`: one entry per scene, the earliest date kept, sorted by full time), so two tabs can't drop each other's entries.
 - `parseHallOfFame` drops anything unreadable: entries need a string id and a date `Date.parse` can read.
-- Setup and Reset ELO empty it (`clearHallOfFame`); undo removes an entry the undone pick added (`keepOnlyHallOfFame`).
+- Setup and Reset ELO empty it (`clearHallOfFame`), and so does **Settings → ELO → Clear hall of fame** (a confirmation dialog, `confirmClearHallOfFame` in `modal.ts`; the current #1 joins again on the next ELO write or Records opening). Undo removes an entry the undone pick added (`keepOnlyHallOfFame`).
+- **A database restore doesn't touch it.** Stash keeps plugin settings in its config file (`config.yml`), not the database, so restoring a database backup brings back old scenes, ELO and records but leaves the hall of fame (and every other Stash Battle setting, `eloSetupAt` included) as they were. That's what Clear hall of fame is for.
 
 ---
 
@@ -545,7 +546,7 @@ The click handler is bound once per panel (`dataset.bound`), not on every render
 
 - `handleSceneChoice` takes a `PickSnapshot` before the pick: the mode, the pair and its ranks, the ELO fields of every scene the pick writes (both in Swiss and Champion; Placement's scene, which is written when it lands), Champion's run (scene, wins, defeated), a copy of the Placement run, and the hall of fame's ids.
 - `undoLastPick` cancels the next-pair timer (`scheduleNextPair`) and bumps `pairLoads`, so a pair load already under way stops before showing anything (each `loadNewPair` checks it's still the newest after every await). It waits for writes still on their way (`eloWritesSettled`), then `restoreElo` writes each scene's fields back exactly: a scene that had no record loses the record fields its pick created, and one that was unrated loses its ELO again. Nothing is written when the fields already match.
-- Then the run state, the mode (if it changed since), and the same pair come back, to pick again. Stash ratings follow on their own (the next sync after the restore).
+- Then the run state, the mode (if it changed since), and the same pair come back, to pick again. Rated scenes' Stash ratings follow their restored ELO on the next sync. A scene the pick took from unrated to rated is different: the sync gave it a Stash rating, and the sync only writes scenes with an ELO, so it would never take that back. The snapshot keeps each scene's `rating100`, and `restoreElo` puts it back (or clears it) in the same `sceneUpdate` that removes the ELO fields.
 - Setup and Reset ELO clear the snapshot (`clearUndo`): its values no longer apply. Checked live in all three modes, including Placement mid-run and after landing.
 
 ---
@@ -554,7 +555,7 @@ The click handler is bound once per panel (`dataset.bound`), not on every render
 
 **UI**: the modal header has a Stash-style tab bar (`nav nav-tabs`): **⚔️ Battle** · **🔎 Explore** · **📊 Stats** · **🏆 Records** · **⚙️ Settings** on the left, the preview volume on the right (visible on every tab). On phones ≤480px the volume slider hides (the speaker still mutes; a "Preview volume" row appears in Settings instead, `sb-setting-phone-only`), and the tabs you're not on show only their emoji (≤360px: every tab), each at least 44 × 44px, names kept as `aria-label` / tooltip. The tabs shrink and scroll sideways rather than widen the modal. Tabs swap `.sb-tab-panel` elements in place. The Settings tab reuses Stash's `.setting-section` / `.setting` rows and `custom-switch` toggles; `.sb-settings-tab` only re-tints them. The dropdown is drawn in the modal's dark palette with a chevron (Stash sets `appearance: none` on selects). The modal always reopens on the Battle tab. While Settings is showing, battle shortcuts are off and previews are paused.
 
-Sections: **ELO** (Stash ratings update mode, Reset ELO), **Battles**, **Scenes**.
+Sections: **ELO** (Stash ratings update mode, Reset ELO, Clear hall of fame), **Battles**, **Scenes**.
 
 Stored in Stash's plugin config (`configuration.plugins["stash-battle"]`, written with `configurePlugin`) so they follow the user across devices; most are also declared under `settings:` in `stash-battle.yml` so they appear in Stash → Settings → Plugins. `openModal()` awaits `loadSettings()` each time, and a reused modal re-syncs its controls.
 
@@ -653,7 +654,7 @@ All data comes from Stash's GraphQL API:
 
 ## Common Pitfalls & Edge Cases
 
-1. **Never write `rating100` outside the Stash ratings sync.** Battles write ELO only (`writeElo`); Stash ratings change only through `writeStashRatings` (setup, the dropdown switch, `syncStashRatings`).
+1. **Never write `rating100` outside the Stash ratings sync.** Battles write ELO only (`writeElo`); Stash ratings change only through `writeStashRatings` (setup, the dropdown switch, `syncStashRatings`). The one exception: undoing a pick that rated an unrated scene puts back the Stash rating the sync wrote for it (`restoreElo`, see Undo Last Pick).
 
 2. **Custom field writes must use `partial` / `remove` with our keys**, never `full`: other plugins store their own fields on the same scenes.
 

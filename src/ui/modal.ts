@@ -6,7 +6,7 @@ import { scenesListQuery } from "../filters";
 import { getSceneIdFromUrl, holdStashListRefresh, sceneCustomFieldsSupported } from "../graphql";
 import { applyStashRatings, queueRatingWrite, SCENE_MISSING_EVENT, scheduleStashRatingSync, writeStashRatings } from "../rating";
 import { stashRatingChanges } from "../score";
-import { loadSettings } from "../settings";
+import { clearHallOfFame, getHallOfFame, loadSettings } from "../settings";
 import { isEloSetupPending, resetRunState, resetShuffle, state } from "../state";
 import { loadState, saveState } from "../storage";
 import type { Mode, Settings, StashRatingsMode } from "../types";
@@ -29,7 +29,7 @@ import {
   verifyCurrentPair,
 } from "./mainUI";
 import { renderExploreTab, setExploreFilters } from "./exploreTab";
-import { stopMiniPreview } from "./miniCard";
+import { plural, stopMiniPreview } from "./miniCard";
 import { renderRecordsTab } from "./recordsTab";
 import { renderStatsTab, type StatsActions } from "./statsTab";
 import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
@@ -98,6 +98,23 @@ async function confirmSettingChange(key: keyof Settings, value: string): Promise
 }
 
 /** Settings → Reset ELO: confirm, then show the setup choices again (Cancel goes back). */
+/** Settings → Clear hall of fame: after a confirmation, empty the list (today's #1 starts it again). */
+async function confirmClearHallOfFame(): Promise<void> {
+  const count = getHallOfFame().length;
+  await confirmDialog({
+    title: "Clear the hall of fame?",
+    body: `
+        <p>${count === 0 ? "The hall of fame is already empty." : `The ${plural(count, "scene")} that ${count === 1 ? "has" : "have"} been #1 will be taken off the list.`}
+        Your current #1 joins it again, from today, the next time you battle or open Records.</p>
+        <p>ELO and records aren't touched.</p>`,
+    confirmLabel: "Clear hall of fame",
+    workingLabel: "Clearing…",
+    action: async () => {
+      if (!(await clearHallOfFame())) throw new Error("Couldn't save to Stash. Try again.");
+    },
+  });
+}
+
 async function startResetElo(modal: HTMLElement): Promise<void> {
   const ratingsOn = state.settings.stashRatings !== "off";
   const ok = await confirmDialog({
@@ -460,6 +477,7 @@ export async function openModal(): Promise<void> {
   });
 
   modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));
+  modal.querySelector('[data-action="clear-hall-of-fame"]')?.addEventListener("click", () => void confirmClearHallOfFame());
   // Battle tab note's "change in Settings" link
   modal.querySelector('[data-action="open-settings"]')?.addEventListener("click", (e) => {
     e.preventDefault();
