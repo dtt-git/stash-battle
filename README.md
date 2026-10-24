@@ -1,4 +1,4 @@
-<img width="764" alt="Stash Battle: two scenes side by side with their ELO and rank, the Battle and Settings tabs, mode buttons and preview volume" src="docs/screenshots/battle.jpg" />
+<img width="764" alt="Stash Battle: two scenes side by side with their tier, ELO, rank and record, each side's chance of winning at the VS, the tab bar, mode buttons and preview volume" src="docs/screenshots/battle.jpg" />
 
 # ⚔️ Stash Battle
 
@@ -7,6 +7,8 @@ A head-to-head scene comparison plugin for [Stash](https://stashapp.cc/) that us
 ## Overview
 
 Stash Battle presents you with two scenes side-by-side and asks you to pick the better one. Every scene gets its own ELO score, the same kind of rating chess uses: winning raises it, losing lowers it, and beating a stronger scene earns more than beating a weaker one. Over time this builds an accurate ranking of your entire library based on your personal preferences.
+
+Then explore it: browse your library by ELO and tier, see how your rankings are spread and how settled they are, find hidden gems you rarely play, and keep records like win streaks, peak ELO and a hall of fame of every scene that has been #1.
 
 ELO is saved in each scene's custom fields, so **Stash Battle doesn't touch your Stash star ratings unless you ask it to**. If you'd like your ratings to follow your rankings, switch on a Stash ratings update mode.
 
@@ -33,26 +35,50 @@ ELO is saved in each scene's custom fields, so **Stash Battle doesn't touch your
 
 - **Filtering**: Apply any filters on the scenes page before opening Stash Battle. What you see on the scenes page is what you get in Stash Battle, in every mode; a line above the cards shows whether you're rating your filter or your whole library, and how many scenes that is. By default, filtered scenes appear on the left (scenes to rate) and opponents come from your full library on the right.
 
-- **Scene cards** show each scene's ELO and rank (`ELO 1740 · #50`), how many battles it has had, and its Stash rating.
+- **Scene cards** show each scene's tier, ELO and rank (`ELO 1740 · #50`), its record (`Record: 12–5`) and its Stash rating.
+  - **Win chances** at the VS, like a chess broadcast: `68%` VS `32%`. Win with 40% or less and the result says **Upset!**
+  - **Tiers** 👑 Legendary · 💎 Diamond · 🔷 Platinum · 🥇 Gold · 🥈 Silver · 🥉 Bronze, by where a scene ranks among your settled scenes (top 1%, 5%, 15%, 35%, 65%, the rest), so every tier always has scenes in it. The card's border takes the tier's colour (a setting).
+  - A **`?`** after the ELO (`ELO 1540?`) means it's still settling: the scene has had fewer than 10 battles, and its ELO still moves a lot.
 
-- **On Stash's scene pages**, the same `ELO 1740 · #50` sits next to the play count and O count, with a ⚔ icon. Click it to battle that scene.
+- **↶ Undo** (or Backspace) takes back your last pick: both scenes' ELO and records, a Champion streak or Placement run, and the same pair comes back to pick again.
 
-- **Settings tab** (next to the Battle tab; most also under Stash's Settings → Plugins). Saves to Stash:
+- **🔎 Explore tab**: your whole library as small cards ranked by ELO. Search by title, studio or performer, filter by tier, provisional or unrated, pick an ELO range, and sort by ELO, plays, battles, best record, highest peak or longest win streak. Hover a card for its preview, click it to open the scene, or ⚔️ to battle it. **Battle these N scenes** battles everything the filter shows (unrated scenes go straight to Placement) until you press Stop.
+
+- **📊 Stats tab**:
+  - **Overview**: scenes with an ELO, unrated, provisional, total battles.
+  - **How settled** your rankings are, by battle count, with **Battle the least-tested**: Swiss puts your least-battled scenes on the left first, until you stop it.
+  - **ELO distribution**, with your Stash rating scale under it. Click a bar to see those scenes in Explore.
+  - **Hidden gems / overplayed**: ELO against play count. Top left are scenes you rank highly but rarely watch. Hover a dot to see the scene.
+
+- **🏆 Records tab**: the **hall of fame** (every scene that has ever been #1, and when it got there), the **longest win streaks** and the **highest peak ELOs**.
+
+- **On Stash's scene pages**, the same `ELO 1740 · #50` sits next to the play count and O count, with the scene's tier emoji as its icon (⚔ while it has no tier). Click it to battle that scene.
+
+- **Settings tab** (most also under Stash's Settings → Plugins). Saves to Stash:
   - **Stash ratings update mode** and **Reset ELO** (see above)
   - **Use filtered scenes for both sides**
   - **Placement: start from the bottom**
   - **Autoplay previews** – both loop silently; hover a card to hear it (on by default)
+  - **Tier colours on card borders** – on by default
   - **Pause playing video when Stash Battle opens** – on by default; turn it off to keep a scene playing behind the battle
   - **Open scenes in a new tab** when clicking a thumbnail
   - **Clean mode** – a 🗑 button on each card opens Stash's own delete dialog (same options and defaults as deleting in Stash), so you can clean up without leaving the battle
 
 - **Preview volume** slider on the tab bar (it follows perceived loudness); click the speaker to mute or unmute.
 
-- **Works on phones and tablets**: the cards stay side by side on tablets, stack compactly on phones, and Skip stays pinned at the bottom. On touch screens, tap a thumbnail to play its preview, use ↗ to open the scene, and tap ⓘ next to the modes for an explanation of the current mode.
+- **Works on phones and tablets**: the cards stay side by side on tablets, stack compactly on phones, and Skip and Undo stay pinned at the bottom. On touch screens, tap a thumbnail to play or stop its preview, use 🔊 / 🔇 to hear or mute it, ↗ to open the scene, and ⓘ next to the modes for an explanation of the current mode. Tabs shrink to their emoji on small phones, and when Stash folds its menu away, a ⚔ button sits in the top bar next to other plugins' buttons.
 
 - **SFW Switch support**: thumbnails and previews blur when the [SFW Switch](https://github.com/stashapp/CommunityScripts) plugin's SFW mode is on.
 
 ## Screenshots
+
+| Explore | Stats |
+|---------|-------|
+| <img width="480" alt="Explore tab: small scene cards with tier pills and ELO, search, tier filters, ELO range, sort and page controls" src="docs/screenshots/explore.png" /> | <img width="480" alt="Stats tab: overview numbers, how settled the rankings are with Battle the least-tested, and the ELO distribution" src="docs/screenshots/stats.png" /> |
+
+| Records | Hidden gems |
+|---------|-------------|
+| <img width="480" alt="Records tab: the hall of fame of scenes that have been #1, the longest win streaks and the highest peak ELOs" src="docs/screenshots/records.png" /> | <img width="480" alt="Stats tab: hidden gems and overplayed, ELO against play count, with a scene's card on hover" src="docs/screenshots/gems.png" /> |
 
 | ELO setup | Settings |
 |-----------|----------|
@@ -83,16 +109,16 @@ Recommend saving a backup of your database beforehand (Settings → Tasks → Ba
 3. Click the **Battle** button in the navbar
 4. The first time, set up ELO: choose how it starts and whether your Stash ratings should be updated
 5. Choose a mode (hover a mode, or tap ⓘ on a phone, for a short explanation)
-6. Click a scene (or press ← / →) to pick the winner; Space skips the pair
-7. Watch your rankings evolve over time!
+6. Click a scene (or press ← / →) to pick the winner; Space skips the pair, and ↶ Undo (Backspace) takes back a pick
+7. Watch your rankings evolve over time in **Explore**, **Stats** and **Records**!
 
 You can also open Stash Battle on a scene page (the **Battle** button, or the ELO next to the play count), which puts that scene into a battle right away.
 
-Settings live in the **Settings** tab next to **Battle**.
+Settings live in the **Settings** tab, after **Battle**, **Explore**, **Stats** and **Records**.
 
 ## How It Works
 
-Every scene gets an ELO score, stored in its custom fields (`stash_battle_elo`, alongside `stash_battle_battles` and `stash_battle_seeded`). Scenes start at 1500, or from their star rating if you choose "Use my ratings" at setup (50 stars = 1500, and each rating point is 10 ELO, so 100 = 2000 and 1 = 1010).
+Every scene gets an ELO score, stored in its custom fields (`stash_battle_elo`, alongside `stash_battle_battles` and `stash_battle_seeded`, and its record: `stash_battle_wins`, `_losses`, `_peak`, `_streak` and `_best_streak`). The hall of fame is kept in Stash Battle's plugin settings, so everything follows you across browsers and devices. Scenes start at 1500, or from their star rating if you choose "Use my ratings" at setup (50 stars = 1500, and each rating point is 10 ELO, so 100 = 2000 and 1 = 1010).
 
 - Beating a higher-rated scene earns more points than beating a lower-rated one
 - Losing to a lower-rated scene costs more points than losing to a higher-rated one
@@ -109,7 +135,7 @@ Every scene gets an ELO score, stored in its custom fields (`stash_battle_elo`, 
 
 Scenes that started from their star rating get a 10-battle head start (they begin at 24), because their rating already said something about them.
 
-In **Swiss** and **Champion**, both scenes' ELO changes after every pick. In **Placement**, nothing changes until the scene's spot is found; then it gets an ELO between the scenes directly above and below it, and only that scene changes.
+**Swiss** pairs each scene with a random opponent within 100 ELO of it (or the closest few, if there aren't enough), so every pick is a real contest. In **Swiss** and **Champion**, both scenes' ELO changes after every pick. In **Placement**, nothing changes until the scene's spot is found; then it gets an ELO between the scenes directly above and below it, and only that scene changes.
 
 **While a Stash ratings update mode is on**, Stash Battle keeps your star ratings in step with ELO, so a star rating you change by hand in Stash is overwritten the next time Stash Battle writes that scene. With "Don't update", your star ratings are never touched.
 
@@ -130,7 +156,7 @@ npm install
 | `npm run build` | Production build -> `plugins/stash-battle/stash-battle.js` |
 | `npm run dev` | Watch `src/`, rebuild on save, and deploy the bundle + css + yml into your live Stash plugins folder (when `STASH_PLUGINS_DIR` is set in `.env`) |
 | `npm run typecheck` | Strict TypeScript type-check (`tsc --noEmit`) — esbuild does not type-check on its own. |
-| `npm test` | Unit tests (ELO math, Stash rating conversions, Placement search, rating sync) |
+| `npm test` | Unit tests (ELO math, Stash rating conversions, Placement search, tiers, stats, Explore, records, settings, rating sync) |
 
 ### Live development against Stash
 
@@ -157,17 +183,18 @@ With the watcher running, edit any file in `src/` and save — the build deploys
 | `types.ts` / `constants.ts` | Shared types and constants |
 | `state.ts` | Central mutable runtime state + `resetRunState()` |
 | `settings.ts` | User settings stored in Stash's plugin config |
-| `elo.ts` / `score.ts` | ELO math; a scene's ELO fields, ELO ↔ Stash rating, ordering |
+| `elo.ts` / `score.ts` | ELO math and win chances; a scene's ELO fields and record, ELO ↔ Stash rating, ordering, Swiss opponents |
+| `stats.ts` / `explore.ts` | Tiers and the Stats / Records maths; Explore's search, filters and sorts |
 | `placement.ts` | Placement's search |
 | `eloSetup.ts` | One-time ELO setup and Reset ELO |
 | `graphql.ts` | Stash GraphQL access + `SCENE_FRAGMENT`, Stash page-cache refresh |
 | `cache.ts` | IndexedDB + in-memory scene cache (stale-while-revalidate), sorted by ELO |
 | `storage.ts` | localStorage session persistence |
 | `filters.ts` | URL filter parsing + filtered-scene selection |
-| `pairs.ts` | Matchmaking for Swiss / Placement / Champion modes |
+| `pairs.ts` | Matchmaking for Swiss / Placement / Champion modes, battled Explore filters, least-tested |
 | `rating.ts` | Save ELO and Stash ratings, keep pools in sync |
 | `sceneActions.ts` | Checks for scenes deleted while in a battle |
-| `ui/*` | Scene cards, screens, setup screen and preview, main UI, settings panel, dialogs, nav button, modal |
+| `ui/*` | Scene cards, screens, setup screen and preview, main UI, the Explore / Stats / Records tabs and their small cards, settings panel, dialogs, nav button, scene page ELO, modal |
 | `main.ts` | Entry point / bootstrap |
 
 ## License

@@ -571,7 +571,7 @@ export async function openModal(): Promise<void> {
     // Arrow keys to choose
     if (e.key === "ArrowLeft" && state.currentPair.left) {
       e.preventDefault();
-      // The Choose button (on touch screens the rest of the card opens the scene)
+      // The Choose button, as a click on it would
       const leftChoose = activeModal.querySelector<HTMLElement>('.sb-scene-card[data-side="left"] .sb-choose-btn');
       if (leftChoose) leftChoose.click();
     }

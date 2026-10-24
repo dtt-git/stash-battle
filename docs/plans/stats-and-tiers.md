@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: stage4-docs
     content: "Stage 4: DOCUMENTATION.md, README, the 3.0.0 CHANGELOG entry, Stats screenshot, forum drafts (no version bump)."
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -24,6 +24,8 @@ isProject: false
 Impact: **Medium-large**. Four stages, with a review point after each one, the same way 3.0 was built.
 
 ## Status and where to start
+
+- **Stage 4 is done** (Oct 24). DOCUMENTATION.md covers the new tabs, records and hall of fame, undo, touch controls, the top-bar icon, tiers / win chances / provisional, the ±100 Swiss window and the new settings; Pitfall 13 records the box-shadow ring that was tried and reverted, and Pitfalls 20-24 are new (sticky hover, superseded pair loads, sideways scroll, background tabs, changing pools). README and the CHANGELOG v3.0.0 entry list the features. New screenshots: `battle.jpg`, `explore.png`, `stats.png`, `gems.png`, `records.png`, `settings.png`, `placement.png`, `champion.png` (Champion's streak taken with every write blocked; 622 scenes and the config verified unchanged). Forum drafts and a PR #7 description draft (`docs/forum/pr-7.md`) are uncommitted on purpose. Nothing pushed.
 
 - **Stage 1 is done, reviewed and committed** (Oct 23). Win chances (`winChances` in `elo.ts`), `isProvisional` (`score.ts`), `tierMap` / `tierDescription` (new `stats.ts`), the `showTiers` setting (Settings tab "Scenes" section and yml; on by default). 47 tests pass (67 by the end of Stage 2). "Upset!" shows when the winner's chance was **40% or less** (`UPSET_MAX_CHANCE`, Brian's choice: under 50% would flag about half of all Swiss picks, and 35% never fires with the ±100 Swiss window).
 - **Swiss window (Brian, Oct 23, outside this plan):** Swiss now picks a random opponent within **±100 ELO** (`SWISS_OPPONENT_ELO_WINDOW`, `swissOpponentIndexes` in `score.ts`), or the 10 nearest when fewer are in range. The old ±10 ranks meant a median farthest opponent of 20 ELO, about a third of them exact ties. Live: 25 skipped pairs had gaps up to 100, average 40. **Stage 3 note:** with ±100, the "biggest upsets" list would mostly hold 36-40% wins; revisit it then. Checked live: the VS block, "Upset!" on an 8% win, the "?" on the card and the scene page button (scenes 1443/1446 are provisional), the Gold and Diamond pills, and the phone layout (`58% VS 42%` in the pill, emoji-only tier). Both test-pick scenes and the config were restored exactly.

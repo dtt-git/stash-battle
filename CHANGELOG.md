@@ -2,7 +2,7 @@
 
 ## v3.0.0
 
-A new rating system: Stash Battle now keeps a true ELO score for every scene, separate from your star ratings.
+A new rating system: Stash Battle now keeps a true ELO score for every scene, separate from your star ratings. And new tabs to explore it: browse your library by ELO and tier, see stats on your rankings, and keep records.
 
 ### ⚠️ Before you update
 
@@ -22,8 +22,16 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
 - The **Placement and Champion end screens** show where the scene's Stash rating ended up, while a Stash ratings update mode is on.
 - **Reset ELO** (Settings): start every scene's ELO over, with the same choices as the setup. Cancel any time before pressing Start.
 - **Placement → Start from the bottom** (a setting): a scene ignores its current ELO and climbs from your lowest scene, jumping further with each win, with a win streak badge and a Champion screen if it never loses. **This replaces Gauntlet**, with much shorter runs (about 8-21 battles in a 600-scene library).
-- **Cards** show each scene's ELO and rank (`ELO 1740 · #50`), how many battles it has had, and its Stash rating.
-- **Scene pages** show the scene's ELO and rank too, next to the play count and O count. Click it to battle that scene. Stash's Custom Fields list is widened so Stash Battle's field names aren't cut off.
+- **Cards** show each scene's ELO and rank (`ELO 1740 · #50`), its record (`Record: 12–5`), and its Stash rating.
+- **Win chances** 📊 at the VS between the cards (`68%` VS `32%`), from the two scenes' ELO. A pick that wins with 40% or less says **Upset!** Hidden in Placement, where the placed scene's ELO doesn't change per pick.
+- **Tiers** 👑 Legendary · 💎 Diamond · 🔷 Platinum · 🥇 Gold · 🥈 Silver · 🥉 Bronze, by where a scene ranks among your settled scenes (top 1%, 5%, 15%, 35%, 65%, the rest), on every card. Battle cards' borders take the tier's colour (**Tier colours on card borders**, on by default).
+- **Provisional `?`**: `ELO 1540?` while a scene has had fewer than 10 battles and its ELO is still settling. Scenes set up from your star ratings start settled.
+- **Undo last pick** ↶ (the Undo button, or Backspace): takes back both scenes' ELO and records, a Champion streak or Placement run, and brings the same pair back. Also on the Champion and Placement end screens.
+- **🔎 Explore tab**: your library as small cards, ranked by ELO, a page at a time (30 to 240, or all). Search by title, studio or performer; filter by tier, provisional or unrated, or an ELO range; sort by ELO, plays, battles, best record, highest peak or longest win streak. Hover for the preview, click to open the scene, ⚔️ to battle it. **Battle these N scenes** battles what the filter shows until you press Stop: against your whole library, or against each other with "Use filtered scenes for both sides". Unrated scenes go to Placement.
+- **📊 Stats tab**: an overview; **how settled** your rankings are, with **Battle the least-tested** (Swiss puts your least-battled scenes on the left first); the **ELO distribution** with your Stash rating scale under it (click a bar to see those scenes in Explore); and **hidden gems / overplayed** (ELO against play count, hover a dot to see the scene).
+- **🏆 Records tab**: the **hall of fame** (every scene that has ever been #1, and when), the **longest win streaks** and the **highest peak ELOs**. Each scene's wins, losses, peak and streaks are saved in its custom fields with its ELO (no extra requests); the hall of fame is saved in Stash Battle's plugin settings. Setup and Reset ELO start them over.
+- **Scene pages** show the scene's ELO and rank too, next to the play count and O count, with its tier emoji as the icon. Click it to battle that scene. Stash's Custom Fields list is widened so Stash Battle's field names aren't cut off.
+- **Phones and tablets**: tap a thumbnail to play or stop its preview, 🔊 / 🔇 on each card to hear or mute it, ↗ to open the scene. Tabs shrink to their emoji on small phones. When Stash folds its menu away (below 1200px wide), a ⚔ button sits in the top bar next to other plugins' buttons.
 
 ### Changed
 
@@ -32,6 +40,7 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
 - **Champion** is plain winner-stays-on ELO: both scenes' ELO changes every pick, including the defender's. The old special rules (the climber keeping its rating when it loses, 100 dropping to 99) are gone.
 - **Placement** caps its jumps at a tenth of your library, so a winning streak climbs steadily instead of leaping to #1, and lands a scene halfway between its neighbours' ELO.
 - **"Unrated scene rating" setting removed**: unrated scenes count as 1500 in Swiss, the standard ELO start, and start at the bottom in Champion. Placement is the best way to slot a new scene in.
+- **Swiss** picks a random opponent within 100 ELO of the scene (or the closest 10 if there aren't enough), instead of one within 10 ranks, so fewer picks are between two scenes with the same ELO.
 - How far a scene's ELO moves per battle now depends on how many battles it has had (40, then 24 after 10 battles, then 16 after 30), not on its play count. Scenes set up from your star ratings get a 10-battle head start.
 - The navbar button is added through Stash's plugin API, so it plays nicely with other plugins that add navbar items.
 - Cleaner look: no glow effects, and the mode icons show on phones again.
