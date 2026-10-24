@@ -8,6 +8,7 @@ import { getAllScenesCached } from "../cache";
 import { ELO_K_TIERS } from "../constants";
 import { exploreEntries, type ExploreEntry, type ExploreFilters } from "../explore";
 import { navigateToUrl } from "../navigation";
+import { leastTestedSource } from "../pairs";
 import { elo } from "../score";
 import { isEloSetupPending, state } from "../state";
 import {
@@ -22,7 +23,7 @@ import {
   type GemsSplit,
 } from "../stats";
 import type { Scene } from "../types";
-import { handleSceneLinkClick } from "./mainUI";
+import { handleSceneLinkClick, isTouchDevice } from "./mainUI";
 import { miniCardHtml, plural, sceneUrl } from "./miniCard";
 import { resolveSceneTitle } from "../sceneTitle";
 import { stashRatingsOption } from "./stashRatingsText";
@@ -256,16 +257,21 @@ function scatterSvg(width: number, split: GemsSplit): string {
 
 // ---------- How settled ----------
 
+/** The least-tested pool's scenes (the Scenes page filter's, or the whole library), set on render. */
+let leastTestedScenes: Scene[] = [];
+let leastTestedFiltered = false;
+
 /** What "least tested" means and who's in it now (the button carries the total). */
 function leastTestedText(): string {
-  const pool = leastTestedPool(scenes);
+  const pool = leastTestedPool(leastTestedScenes);
   if (!pool) return "";
   const rated = pool.count - pool.unrated;
   const who =
     pool.battles === 0
       ? `${plural(pool.count, "scene")} have no battles yet: ${rated} with an ELO (the “No battles yet” bar) and ${pool.unrated} unrated.`
       : `The fewest battles any scene has is ${pool.battles}, and ${plural(pool.count, "scene")} have that many.`;
-  return `${who} They go on the left first, in Swiss, until you stop it.`;
+  const where = leastTestedFiltered ? " (from your Scenes page filter)" : "";
+  return `${who}${where} They go on the left first, in Swiss, until you stop it.`;
 }
 
 function settledHtml(): string {
@@ -295,7 +301,7 @@ function settledHtml(): string {
           <div class="sb-settled">${rows}</div>
           <p class="sb-stats-note">${provisionalText}</p>
           <div class="sb-stats-actions">
-            <button type="button" class="btn btn-secondary btn-sm" data-stats-action="least-tested">Battle the least-tested (${plural(leastTestedPool(scenes)?.count ?? 0, "scene")})</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-stats-action="least-tested">Battle the least-tested (${plural(leastTestedPool(leastTestedScenes)?.count ?? 0, "scene")})</button>
             <span class="sb-stats-muted">${leastTestedText()}</span>
           </div>`;
 }
@@ -333,10 +339,6 @@ function placeTip(chart: HTMLElement, tip: HTMLElement, at: { clientX: number; c
   tip.style.top = `${above >= 0 ? above : y + 18}px`;
 }
 
-/** Touch screens have no hover: a tap on a dot pins its card instead (see pinCard). */
-function isTouch(): boolean {
-  return window.matchMedia("(hover: none)").matches;
-}
 
 /**
  * Hover tooltips inside a chart: the text of an element's data-tip, or, over a hidden gems dot,
@@ -345,7 +347,7 @@ function isTouch(): boolean {
 function bindTooltips(chart: HTMLElement): void {
   const show = (e: PointerEvent): void => {
     const tip = chart.querySelector<HTMLElement>(".sb-chart-tip");
-    if (!tip || isTouch()) return;
+    if (!tip || isTouchDevice()) return;
     const target = e.target as Element;
     const dot = target.closest<SVGElement>(".sb-dot");
     const entry = dot?.dataset.id ? entriesById.get(dot.dataset.id) : undefined;
@@ -436,7 +438,7 @@ function onContentClick(e: MouseEvent): void {
     // data-to ends a tenth below the next bar (ELO is stored to one decimal), so it covers the bar
     const from = Number(bar.dataset.from);
     const to = Number(bar.dataset.to);
-    if (isTouch()) {
+    if (isTouchDevice()) {
       // Bars are thin on a phone: say what was tapped, and explore from a proper button
       const text = (bar.dataset.tip ?? "").replace(/ · click to see them$/, "");
       pinTip(bar, `<div class="sb-chart-tip-text">${text}</div><button type="button" class="btn btn-primary btn-sm" data-explore-from="${from}" data-explore-to="${to}">🔎 See them in Explore</button>`, false);
@@ -448,7 +450,7 @@ function onContentClick(e: MouseEvent): void {
   }
   const dot = target.closest<SVGElement>(".sb-dot");
   const entry = dot?.dataset.id ? entriesById.get(dot.dataset.id) : undefined;
-  if (dot && entry && isTouch()) {
+  if (dot && entry && isTouchDevice()) {
     pinCard(dot, entry);
     return;
   }
@@ -501,6 +503,12 @@ export async function renderStatsTab(modal: HTMLElement, statsActions: StatsActi
     console.error("[Stash Battle] Couldn't load scenes for stats:", e);
     content.innerHTML = `<p class="sb-stats-empty">Couldn't load your scenes. Switch tabs to try again.</p>`;
     return;
+  }
+  try {
+    ({ scenes: leastTestedScenes, filtered: leastTestedFiltered } = await leastTestedSource());
+  } catch {
+    leastTestedScenes = scenes;
+    leastTestedFiltered = false;
   }
   if (!scenes.some((s) => elo(s) !== null)) {
     content.innerHTML = `<p class="sb-stats-empty">No scene has an ELO yet.</p>`;

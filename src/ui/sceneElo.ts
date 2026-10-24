@@ -109,6 +109,8 @@ function isPlaced(item: HTMLElement | null, sceneId: string): boolean {
 }
 
 let rendering: string | null = null;
+/** The last scene loaded, kept while its slot on the page (toolbar / subheader) isn't there yet. */
+let loaded: { sceneId: string; result: NonNullable<Awaited<ReturnType<typeof sceneAndRank>>> } | null = null;
 
 /** Add (or update) the item on the current scene page. Safe to call often. */
 async function renderSceneElo(force = false): Promise<void> {
@@ -120,7 +122,8 @@ async function renderSceneElo(force = false): Promise<void> {
   rendering = sceneId;
   try {
     if (!(await sceneCustomFieldsSupported())) return;
-    const result = await sceneAndRank(sceneId);
+    const result = !force && loaded?.sceneId === sceneId ? loaded.result : await sceneAndRank(sceneId);
+    if (result) loaded = { sceneId, result };
     // The page may have moved on (another scene, or the toolbar re-rendered) while this loaded
     if (!result || getSceneIdFromUrl() !== sceneId) return;
 

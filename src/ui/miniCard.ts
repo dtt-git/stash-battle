@@ -6,7 +6,7 @@
 import type { ExploreEntry } from "../explore";
 import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
-import { sliderToVolume } from "./mainUI";
+import { isTouchDevice, sliderToVolume } from "./mainUI";
 import { tierPill, PROVISIONAL_TIP } from "./sceneCard";
 import { resolveSceneTitle } from "../sceneTitle";
 
@@ -139,7 +139,7 @@ export function handleMiniMuteTap(e: Event): boolean {
  * Returns true when it handled the tap.
  */
 export function handleMiniThumbTap(e: Event): boolean {
-  if (!window.matchMedia("(hover: none)").matches) return false;
+  if (!isTouchDevice()) return false;
   const thumb = (e.target as Element).closest(".sb-mini-thumb");
   const card = thumb?.closest<HTMLElement>(".sb-mini-card[data-preview]");
   if (!card) return false;

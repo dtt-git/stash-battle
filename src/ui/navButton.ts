@@ -64,7 +64,7 @@ function placeNavIcon(): void {
   const after = buttons.querySelector("#tcode-nav-btn") ?? buttons.querySelector("#plugin_sfw")?.closest(".navbar-buttons > *");
   if (after) after.after(item);
   else buttons.prepend(item);
-  fitNavIcon(item);
+  fitNavIcon(item, true);
 }
 
 /**
@@ -72,14 +72,24 @@ function placeNavIcon(): void {
  * from other plugins); Battle is still in the ☰ menu then. Checked again whenever the bar changes
  * or the window resizes.
  */
-function fitNavIcon(item: HTMLElement): void {
+function fitNavIcon(item: HTMLElement, force = false): void {
+  // Measuring forces a layout, so only when the width or the bar's buttons changed
+  const key = `${window.innerWidth}:${item.parentElement?.childElementCount ?? 0}`;
+  if (!force && key === fittedFor) return;
   item.style.removeProperty("display");
-  if (getComputedStyle(item).display === "none") return; // a wide screen: the menu link shows
-  const brand = document.querySelector(".navbar-brand");
-  if (!brand) return;
-  const wrapped = item.getBoundingClientRect().top >= brand.getBoundingClientRect().bottom - 1;
-  if (wrapped) item.style.display = "none";
+  if (getComputedStyle(item).display === "none") {
+    fittedFor = key; // a wide screen: the menu link shows
+    return;
+  }
+  const brand = document.querySelector(".navbar-brand")?.getBoundingClientRect();
+  // Not laid out (a background tab): measure once it's shown
+  if (!brand || brand.height === 0) return;
+  fittedFor = key;
+  if (item.getBoundingClientRect().top >= brand.bottom - 1) item.style.display = "none";
 }
+
+/** What fitNavIcon last measured for (width : number of buttons in the bar). */
+let fittedFor = "";
 
 /** Keep the top-bar icon in place as Stash navigates and redraws the navbar. */
 function registerNavIcon(): void {
@@ -97,6 +107,10 @@ function registerNavIcon(): void {
   window.addEventListener("resize", () => {
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(placeNavIcon, 100);
+  });
+  document.addEventListener("visibilitychange", () => {
+    const icon = document.getElementById(ICON_ID);
+    if (icon && !document.hidden) fitNavIcon(icon, true);
   });
   placeNavIcon();
 }

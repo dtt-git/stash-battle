@@ -202,7 +202,7 @@ export function setActionsVisible(visible: boolean): void {
 }
 
 /** Touch devices have no hover: thumbnails toggle the preview instead of opening the scene. */
-function isTouchDevice(): boolean {
+export function isTouchDevice(): boolean {
   return window.matchMedia("(hover: none)").matches;
 }
 
@@ -427,12 +427,17 @@ export function skipPair(): void {
   loadNewPair();
 }
 
+/** Counts pair loads: a load only shows its result if nothing newer (a load, an undo) started since. */
+let pairLoads = 0;
+
 export async function loadNewPair(forcedLeftSceneId: string | null = null): Promise<void> {
   // No pool loads before the one-time ELO setup has run (it shows in place of the battle)
   if (isEloSetupPending()) return;
   state.disableChoice = false;
   const comparisonArea = document.getElementById("sb-comparison-area");
   if (!comparisonArea) return;
+  const load = ++pairLoads;
+  const superseded = (): boolean => load !== pairLoads;
 
   console.log(
     `[Stash Battle] 🎮 Loading new pair (mode: ${state.currentMode})${forcedLeftSceneId ? ` with forced scene ${forcedLeftSceneId}` : ""}...`,
@@ -450,6 +455,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
     let forcedLeftScene: Scene | null = null;
     if (forcedLeftSceneId) {
       forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+      if (superseded()) return;
       // Fresh from Stash: the cache may be older (another tab), and ranks and battle math read it
       if (forcedLeftScene) refreshSceneInCache(forcedLeftScene);
       if (!forcedLeftScene) {
@@ -462,6 +468,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
 
     if (state.currentMode === "placement") {
       const placementResult = await fetchPlacementPair(forcedLeftScene);
+      if (superseded()) return;
 
       if (placementResult.done) {
         // A climb from the bottom that never lost has beaten the top scene
@@ -477,6 +484,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
       ranks = placementResult.ranks;
     } else if (state.currentMode === "champion") {
       const championResult = await fetchChampionPair(forcedLeftScene);
+      if (superseded()) return;
 
       // Check for victory (champion beat everyone)
       if (championResult.isVictory) {
@@ -488,6 +496,7 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
       ranks = championResult.ranks;
     } else {
       const swissResult = await fetchSwissPair(forcedLeftScene);
+      if (superseded()) return;
 
       scenes = swissResult.scenes;
       ranks = swissResult.ranks;
@@ -882,6 +891,8 @@ export async function undoLastPick(): Promise<void> {
     clearTimeout(nextPairTimer);
     nextPairTimer = null;
   }
+  // A next pair already loading (or Placement's landing) must not show up over the undone pick
+  pairLoads++;
   state.disableChoice = true;
   try {
     await eloWritesSettled();

@@ -11,7 +11,7 @@ import { getHallOfFame } from "../settings";
 import { isEloSetupPending } from "../state";
 import { cachedTierMap, topByRecord } from "../stats";
 import type { Scene } from "../types";
-import { handleSceneLinkClick } from "./mainUI";
+import { handleSceneLinkClick, isTouchDevice } from "./mainUI";
 import { handleMiniMuteTap, handleMiniThumbTap, miniCardHtml, miniPreviewCard, plural, startMiniPreview, stopMiniPreview } from "./miniCard";
 
 /** Scenes listed in the streak and peak rows. */
@@ -119,7 +119,7 @@ function bindEvents(content: HTMLElement): void {
   content.addEventListener("click", onClick);
   // Previews play on hover, as on Explore (touch screens have no hover)
   content.addEventListener("mouseover", (e) => {
-    if (window.matchMedia("(hover: none)").matches) return;
+    if (isTouchDevice()) return;
     const card = (e.target as Element).closest<HTMLElement>(".sb-mini-card[data-preview]");
     if (card) startMiniPreview(card);
   });

@@ -19,7 +19,7 @@ import {
 import { updateSettings } from "../settings";
 import { isEloSetupPending, state } from "../state";
 import { tierMap } from "../stats";
-import { handleSceneLinkClick } from "./mainUI";
+import { handleSceneLinkClick, isTouchDevice } from "./mainUI";
 import { escapeHtml, handleMiniMuteTap, handleMiniThumbTap, miniCardHtml, miniPreviewCard, startMiniPreview, stopMiniPreview } from "./miniCard";
 import { resolveSceneTitle } from "../sceneTitle";
 import type { StatsActions } from "./statsTab";
@@ -242,7 +242,7 @@ function bindControls(content: HTMLElement, scrollRoot: HTMLElement | null): voi
   });
   // Previews follow the mouse only (touch screens have no hover)
   content.addEventListener("mouseover", (e) => {
-    if (window.matchMedia("(hover: none)").matches) return;
+    if (isTouchDevice()) return;
     const card = (e.target as Element).closest<HTMLElement>(".sb-mini-card[data-preview]");
     if (card) startMiniPreview(card);
   });

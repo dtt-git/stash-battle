@@ -27,7 +27,8 @@ test("mergeConfig drops removed keys and unset values, and applies extra keys", 
 
 test("parseHallOfFame reads the stored list and ignores anything broken", () => {
   assert.deepEqual(parseHallOfFame('[{"id":"7","date":"2026-10-24T10:00:00.000Z"}]'), [{ id: "7", date: "2026-10-24T10:00:00.000Z" }]);
-  assert.deepEqual(parseHallOfFame('[{"id":7},{"id":"8","date":"x"}]'), [{ id: "8", date: "x" }]);
+  // Entries need a string id and a readable date
+  assert.deepEqual(parseHallOfFame('[{"id":7},{"id":"8","date":"x"},{"id":"9","date":"2026-10-24T10:00:00.000Z"}]'), [{ id: "9", date: "2026-10-24T10:00:00.000Z" }]);
   assert.deepEqual(parseHallOfFame("not json"), []);
   assert.deepEqual(parseHallOfFame(undefined), []);
   assert.deepEqual(parseHallOfFame('{"id":"1"}'), []);

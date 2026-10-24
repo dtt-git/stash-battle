@@ -162,6 +162,16 @@ export async function pairRanks(left: Scene, right: Scene): Promise<[Rank, Rank]
   return [rank(left), rank(right)];
 }
 
+/**
+ * The scenes "Battle the least-tested" picks from: the Scenes page filter's, or the whole library
+ * (it turns off a battled Explore filter).
+ */
+export async function leastTestedSource(): Promise<{ scenes: Scene[]; filtered: boolean }> {
+  const filters = readFilters();
+  if (!filters.filterActive) return { scenes: (await getAllScenesCached()).scenes || [], filtered: false };
+  return { scenes: (await getFilteredScenesCached(filters)).scenes || [], filtered: true };
+}
+
 /** The active filter: an Explore filter being battled, or else the Scenes page's (URL) filter. */
 export function currentFilters(): ListFilters {
   const pool = state.explorePool;

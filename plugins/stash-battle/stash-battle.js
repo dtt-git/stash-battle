@@ -1389,7 +1389,7 @@
       const list = JSON.parse(value);
       if (!Array.isArray(list)) return [];
       return list.filter(
-        (e) => typeof e?.id === "string" && typeof e?.date === "string"
+        (e) => typeof e?.id === "string" && typeof e?.date === "string" && !Number.isNaN(Date.parse(e.date))
       );
     } catch {
       return [];
@@ -1999,6 +1999,11 @@
       return [null, rank(right)];
     }
     return [rank(left), rank(right)];
+  }
+  async function leastTestedSource() {
+    const filters2 = readFilters();
+    if (!filters2.filterActive) return { scenes: (await getAllScenesCached()).scenes || [], filtered: false };
+    return { scenes: (await getFilteredScenesCached(filters2)).scenes || [], filtered: true };
   }
   function currentFilters() {
     const pool = state.explorePool;
@@ -2628,7 +2633,7 @@
     return true;
   }
   function handleMiniThumbTap(e) {
-    if (!window.matchMedia("(hover: none)").matches) return false;
+    if (!isTouchDevice()) return false;
     const thumb = e.target.closest(".sb-mini-thumb");
     const card = thumb?.closest(".sb-mini-card[data-preview]");
     if (!card) return false;
@@ -2813,7 +2818,7 @@
       }
     });
     content.addEventListener("mouseover", (e) => {
-      if (window.matchMedia("(hover: none)").matches) return;
+      if (isTouchDevice()) return;
       const card = e.target.closest(".sb-mini-card[data-preview]");
       if (card) startMiniPreview(card);
     });
@@ -2971,7 +2976,7 @@
     content.dataset.bound = "1";
     content.addEventListener("click", onClick);
     content.addEventListener("mouseover", (e) => {
-      if (window.matchMedia("(hover: none)").matches) return;
+      if (isTouchDevice()) return;
       const card = e.target.closest(".sb-mini-card[data-preview]");
       if (card) startMiniPreview(card);
     });
@@ -3176,12 +3181,15 @@
     parts.push(`<text class="sb-chart-quadrant" x="${width - m.right - 8}" y="${base - 10}" text-anchor="end">Overplayed</text>`);
     return `<svg class="sb-chart-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="ELO against play count">${parts.join("")}</svg>`;
   }
+  var leastTestedScenes = [];
+  var leastTestedFiltered = false;
   function leastTestedText() {
-    const pool = leastTestedPool(scenes);
+    const pool = leastTestedPool(leastTestedScenes);
     if (!pool) return "";
     const rated = pool.count - pool.unrated;
     const who = pool.battles === 0 ? `${plural(pool.count, "scene")} have no battles yet: ${rated} with an ELO (the “No battles yet” bar) and ${pool.unrated} unrated.` : `The fewest battles any scene has is ${pool.battles}, and ${plural(pool.count, "scene")} have that many.`;
-    return `${who} They go on the left first, in Swiss, until you stop it.`;
+    const where = leastTestedFiltered ? " (from your Scenes page filter)" : "";
+    return `${who}${where} They go on the left first, in Swiss, until you stop it.`;
   }
   function settledHtml() {
     const buckets = settledBuckets(scenes);
@@ -3205,7 +3213,7 @@
           <div class="sb-settled">${rows}</div>
           <p class="sb-stats-note">${provisionalText}</p>
           <div class="sb-stats-actions">
-            <button type="button" class="btn btn-secondary btn-sm" data-stats-action="least-tested">Battle the least-tested (${plural(leastTestedPool(scenes)?.count ?? 0, "scene")})</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-stats-action="least-tested">Battle the least-tested (${plural(leastTestedPool(leastTestedScenes)?.count ?? 0, "scene")})</button>
             <span class="sb-stats-muted">${leastTestedText()}</span>
           </div>`;
   }
@@ -3233,13 +3241,10 @@
     tip.style.left = `${clamp(x + 14, box.width - w - 4)}px`;
     tip.style.top = `${above >= 0 ? above : y + 18}px`;
   }
-  function isTouch() {
-    return window.matchMedia("(hover: none)").matches;
-  }
   function bindTooltips(chart) {
     const show = (e) => {
       const tip = chart.querySelector(".sb-chart-tip");
-      if (!tip || isTouch()) return;
+      if (!tip || isTouchDevice()) return;
       const target = e.target;
       const dot = target.closest(".sb-dot");
       const entry = dot?.dataset.id ? entriesById2.get(dot.dataset.id) : void 0;
@@ -3313,7 +3318,7 @@
     if (bar?.dataset.from && bar.querySelector(".sb-chart-bar")) {
       const from = Number(bar.dataset.from);
       const to = Number(bar.dataset.to);
-      if (isTouch()) {
+      if (isTouchDevice()) {
         const text = (bar.dataset.tip ?? "").replace(/ · click to see them$/, "");
         pinTip(bar, `<div class="sb-chart-tip-text">${text}</div><button type="button" class="btn btn-primary btn-sm" data-explore-from="${from}" data-explore-to="${to}">🔎 See them in Explore</button>`, false);
         return;
@@ -3324,7 +3329,7 @@
     }
     const dot = target.closest(".sb-dot");
     const entry = dot?.dataset.id ? entriesById2.get(dot.dataset.id) : void 0;
-    if (dot && entry && isTouch()) {
+    if (dot && entry && isTouchDevice()) {
       pinCard(dot, entry);
       return;
     }
@@ -3369,6 +3374,12 @@
       console.error("[Stash Battle] Couldn't load scenes for stats:", e);
       content.innerHTML = `<p class="sb-stats-empty">Couldn't load your scenes. Switch tabs to try again.</p>`;
       return;
+    }
+    try {
+      ({ scenes: leastTestedScenes, filtered: leastTestedFiltered } = await leastTestedSource());
+    } catch {
+      leastTestedScenes = scenes;
+      leastTestedFiltered = false;
     }
     if (!scenes.some((s) => elo(s) !== null)) {
       content.innerHTML = `<p class="sb-stats-empty">No scene has an ELO yet.</p>`;
@@ -3714,11 +3725,14 @@
     }
     loadNewPair();
   }
+  var pairLoads = 0;
   async function loadNewPair(forcedLeftSceneId = null) {
     if (isEloSetupPending()) return;
     state.disableChoice = false;
     const comparisonArea = document.getElementById("sb-comparison-area");
     if (!comparisonArea) return;
+    const load = ++pairLoads;
+    const superseded = () => load !== pairLoads;
     console.log(
       `[Stash Battle] 🎮 Loading new pair (mode: ${state.currentMode})${forcedLeftSceneId ? ` with forced scene ${forcedLeftSceneId}` : ""}...`
     );
@@ -3731,6 +3745,7 @@
       let forcedLeftScene = null;
       if (forcedLeftSceneId) {
         forcedLeftScene = await fetchSceneById(forcedLeftSceneId);
+        if (superseded()) return;
         if (forcedLeftScene) refreshSceneInCache(forcedLeftScene);
         if (!forcedLeftScene) {
           console.warn("[Stash Battle] Could not fetch scene from URL, falling back to normal pairing");
@@ -3740,6 +3755,7 @@
       let ranks = [null, null];
       if (state.currentMode === "placement") {
         const placementResult = await fetchPlacementPair(forcedLeftScene);
+        if (superseded()) return;
         if (placementResult.done) {
           if (placementResult.fromBottom && placementResult.rank === 1) {
             showVictoryScreen(placementResult.scene, placementResult.streak);
@@ -3752,6 +3768,7 @@
         ranks = placementResult.ranks;
       } else if (state.currentMode === "champion") {
         const championResult = await fetchChampionPair(forcedLeftScene);
+        if (superseded()) return;
         if (championResult.isVictory) {
           showVictoryScreen(championResult.scenes[0], state.championWins);
           return;
@@ -3760,6 +3777,7 @@
         ranks = championResult.ranks;
       } else {
         const swissResult = await fetchSwissPair(forcedLeftScene);
+        if (superseded()) return;
         scenes2 = swissResult.scenes;
         ranks = swissResult.ranks;
       }
@@ -4023,6 +4041,7 @@
       clearTimeout(nextPairTimer);
       nextPairTimer = null;
     }
+    pairLoads++;
     state.disableChoice = true;
     try {
       await eloWritesSettled();
@@ -4182,6 +4201,7 @@
     return window.matchMedia(NARROW_QUERY).matches ? Boolean(item.closest(".scene-subheader")) : Boolean(item.closest(".scene-toolbar"));
   }
   var rendering = null;
+  var loaded = null;
   async function renderSceneElo(force = false) {
     const sceneId = getSceneIdFromUrl();
     if (!sceneId || !document.querySelector(".scene-toolbar, .scene-subheader")) return;
@@ -4190,7 +4210,8 @@
     rendering = sceneId;
     try {
       if (!await sceneCustomFieldsSupported()) return;
-      const result = await sceneAndRank(sceneId);
+      const result = !force && loaded?.sceneId === sceneId ? loaded.result : await sceneAndRank(sceneId);
+      if (result) loaded = { sceneId, result };
       if (!result || getSceneIdFromUrl() !== sceneId) return;
       const item = document.querySelector(`.${ITEM_CLASS}`) ?? createItem();
       if (!placeItem(item)) return;
@@ -5097,16 +5118,22 @@
     const after = buttons.querySelector("#tcode-nav-btn") ?? buttons.querySelector("#plugin_sfw")?.closest(".navbar-buttons > *");
     if (after) after.after(item);
     else buttons.prepend(item);
-    fitNavIcon(item);
+    fitNavIcon(item, true);
   }
-  function fitNavIcon(item) {
+  function fitNavIcon(item, force = false) {
+    const key = `${window.innerWidth}:${item.parentElement?.childElementCount ?? 0}`;
+    if (!force && key === fittedFor) return;
     item.style.removeProperty("display");
-    if (getComputedStyle(item).display === "none") return;
-    const brand = document.querySelector(".navbar-brand");
-    if (!brand) return;
-    const wrapped = item.getBoundingClientRect().top >= brand.getBoundingClientRect().bottom - 1;
-    if (wrapped) item.style.display = "none";
+    if (getComputedStyle(item).display === "none") {
+      fittedFor = key;
+      return;
+    }
+    const brand = document.querySelector(".navbar-brand")?.getBoundingClientRect();
+    if (!brand || brand.height === 0) return;
+    fittedFor = key;
+    if (item.getBoundingClientRect().top >= brand.bottom - 1) item.style.display = "none";
   }
+  var fittedFor = "";
   function registerNavIcon() {
     let queued = false;
     new MutationObserver(() => {
@@ -5121,6 +5148,10 @@
     window.addEventListener("resize", () => {
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(placeNavIcon, 100);
+    });
+    document.addEventListener("visibilitychange", () => {
+      const icon = document.getElementById(ICON_ID);
+      if (icon && !document.hidden) fitNavIcon(icon, true);
     });
     placeNavIcon();
   }

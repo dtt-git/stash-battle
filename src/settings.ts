@@ -179,7 +179,8 @@ export function parseHallOfFame(value: unknown): HallOfFameEntry[] {
     const list: unknown = JSON.parse(value);
     if (!Array.isArray(list)) return [];
     return list.filter(
-      (e): e is HallOfFameEntry => typeof e?.id === "string" && typeof e?.date === "string",
+      (e): e is HallOfFameEntry =>
+        typeof e?.id === "string" && typeof e?.date === "string" && !Number.isNaN(Date.parse(e.date)),
     );
   } catch {
     return [];
