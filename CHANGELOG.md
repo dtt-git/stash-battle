@@ -42,7 +42,8 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
 - **"Unrated scene rating" setting removed**: unrated scenes count as 1500 in Swiss, the standard ELO start, and start at the bottom in Champion. Placement is the best way to slot a new scene in.
 - **Swiss** picks a random opponent within 100 ELO of the scene (or the closest 10 if there aren't enough), instead of one within 10 ranks, so fewer picks are between two scenes with the same ELO.
 - How far a scene's ELO moves per battle now depends on how many battles it has had (40, then 24 after 10 battles, then 16 after 30), not on its play count. Scenes set up from your star ratings get a 10-battle head start.
-- The navbar button is added through Stash's plugin API, so it plays nicely with other plugins that add navbar items.
+- The navbar button is added through Stash's plugin API, so it plays nicely with other plugins that add navbar items, and it's **on every page** now, not only the home and Scenes pages. Opened from anywhere but the Scenes page, it rates your whole library.
+- With "Use filtered scenes for both sides" on, the line above the cards says the filter's scenes battle "against each other" (or "against your whole library" when it's off).
 - Cleaner look: no glow effects, and the mode icons show on phones again.
 
 ### Fixed

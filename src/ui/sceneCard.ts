@@ -1,6 +1,7 @@
 // Renders an individual scene card (returns an HTML string).
 
 import { CHAMPION_UNRATED_ELO, ELO_K_TIERS, ELO_START } from "../constants";
+import { scenesListQuery } from "../filters";
 import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
 import { tierDescription } from "../stats";
@@ -78,8 +79,8 @@ export function createSceneCard(
     statusBadgeHtml = `<div class="sb-streak-badge">🔥 ${statusBadge} win${statusBadge > 1 ? "s" : ""}</div>`;
   }
 
-  // Preserve URL search params when opening scene
-  const currentParams = window.location.search;
+  // Keep the Scenes page's filter in the URL when opening the scene
+  const currentParams = scenesListQuery();
   const sceneUrl = `/scenes/${scene.id}${currentParams}`;
   const linkTarget = openInNewTab ? ` target="_blank" rel="noopener"` : "";
 

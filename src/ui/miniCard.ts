@@ -4,6 +4,7 @@
 // as it does the battle cards.
 
 import type { ExploreEntry } from "../explore";
+import { scenesListQuery } from "../filters";
 import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
 import { isTouchDevice, sliderToVolume } from "./mainUI";
@@ -20,7 +21,7 @@ export function plural(n: number, word: string): string {
 
 /** The scene's page, keeping the current Scenes filter in the URL (like the battle cards). */
 export function sceneUrl(sceneId: string): string {
-  return `/scenes/${sceneId}${window.location.search}`;
+  return `/scenes/${sceneId}${scenesListQuery()}`;
 }
 
 /**

@@ -26,8 +26,8 @@ The plugin is authored in **strict TypeScript** under [`src/`](src/) and bundled
 ### Entry Flow
 
 1. `init()` fires on `DOMContentLoaded`: `registerDeleteDialogBridge()`, `registerNavButton()` and `registerSceneElo(openModal)`
-2. **Nav button** (`ui/navButton.ts`): where Stash has the plugin patch API, a `BattleNavItem` React component is patched into `MainNavBar.MenuItems` with `PluginApi.patch.before` (after Stash's own page links). It reads the route on every render and re-renders on `PluginApi.Event`'s `stash:location`, showing only on `/`, `/scenes` and `/scenes/*`. Without the patch API it falls back to injecting the button into the DOM and re-adding it from a `MutationObserver`.
-   - **Top-bar icon** (`#plugin_sb_icon`): below 1200px Stash folds its page links into the ☰ menu, so the link is only one tap away there. A swords button is also placed in the navbar's `.navbar-buttons`, right after other plugins' buttons (TCode, SFW Switch), on the same pages; it's hidden at 1200px and up (CSS). It's DOM injection (`MainNavBar.UtilityItems` is hidden at those widths), re-placed by a `MutationObserver`. `fitNavIcon` hides it when it would wrap the bar onto a second row (shown at 393px and 768px, hidden at 375px with two other plugin buttons). Measuring forces a layout, so it only re-measures when the window width or the number of buttons changed, or when the tab becomes visible (a background tab has no layout, so it measures nothing until then).
+2. **Nav button** (`ui/navButton.ts`): where Stash has the plugin patch API, a `BattleNavItem` React component is patched into `MainNavBar.MenuItems` with `PluginApi.patch.before` (after Stash's own page links). It shows on **every page** (before 3.0 only on `/`, `/scenes` and `/scenes/*`); the Scenes filter is only read on Scenes pages (`scenesListQuery`, see URL Filter Integration). Without the patch API it falls back to injecting the button into the DOM and re-adding it from a `MutationObserver`.
+   - **Top-bar icon** (`#plugin_sb_icon`): below 1200px Stash folds its page links into the ☰ menu, so the link is only one tap away there. A swords button is also placed in the navbar's `.navbar-buttons`, right after other plugins' buttons (TCode, SFW Switch), on every page; it's hidden at 1200px and up (CSS). It's DOM injection (`MainNavBar.UtilityItems` is hidden at those widths), re-placed by a `MutationObserver`. `fitNavIcon` hides it when it would wrap the bar onto a second row (shown at 393px and 768px, hidden at 375px with two other plugin buttons). Measuring forces a layout, so it only re-measures when the window width or the number of buttons changed, or when the tab becomes visible (a background tab has no layout, so it measures nothing until then).
 3. Clicking the button calls `openModal()`: settings and the custom-fields check load in parallel, then either the one-time **ELO setup** shows (see ELO Setup) or the battle UI loads
 4. **Scene page ELO** (`ui/sceneElo.ts`): on `/scenes/:id`, an item (`.sb-scene-elo`) goes into `.scene-toolbar`, in front of Play Count: a single Stash `minimal btn btn-secondary` button holding an icon and `ELO 1740 · #50` (`ELO 1540?` while provisional), so the icon and text highlight together. The icon is the scene's tier emoji (👑 💎 🔷 🥇 🥈 🥉, centred in a fixed box so every emoji lines up), or the swords (from `ui/icons.ts`, shared with the navbar) for provisional and unrated scenes; the tooltip names the tier. On phones (≤576px, a `matchMedia` listener) the button leads the `.scene-subheader` line instead ("🔷 ELO 1960 · #41 · date · 60 fps | 4K"): in the toolbar it widened the page and made it scroll sideways. The loaded result is kept, so re-placing the button after a re-render doesn't fetch again; its padding and gap match the count buttons next to it. ScenePage isn't a patchable component, so it's DOM injection, re-added from a `MutationObserver` (batched with a 50 ms timer; animation frames don't run in background tabs) whenever React re-renders the toolbar. ELO and rank come from `getAllScenesCached()` (index in the ELO-sorted cache, the same as the cards; a scene newer than the cache is fetched, without a rank). Stash's own custom-field filter can't do the count: in v0.31.1 numeric comparisons don't match (Common Pitfalls #19). Clicking it calls `openModal()`; `closeModal()` calls `refreshSceneElo()` so it shows the new ELO.
 5. If opened from an individual scene page (`/scenes/123`), the scene is forced onto the left side of a new battle — unless it's already one of the two scenes in the current pair, in which case the existing pair is restored
@@ -82,7 +82,7 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | `pluginApi.ts` | Minimal typing of `window.PluginApi` (React, patch, components, Event, StashService's Apollo client) |
 | `cache.ts` | IndexedDB + memory cache, stale-while-revalidate, sorted by ELO; `setEloInCache`, `setRatingsInCache`, `removeSceneEverywhere` |
 | `storage.ts` | `saveState` / `loadState` / `clearState` (localStorage, versioned) |
-| `filters.ts` | URL filter parsing (`getSceneFilter`, `translateJSON`), `getFindFilter`, `readFilters`, `buildFilterKey`, `checkForFilters` |
+| `filters.ts` | URL filter parsing (`getSceneFilter`, `translateJSON`), `getFindFilter`, `readFilters`, `buildFilterKey`, `checkForFilters`, `scenesListQuery` (the query, on Scenes pages only) |
 | `navigation.ts` | `navigateToUrl` (History API + popstate for React Router) |
 | `pairs.ts` | Matchmaking: `fetchSwissPair`, `fetchPlacementPair`, `fetchChampionPair`, `loadPoolSize`, `pairRanks`, `currentFilters` (a battled Explore filter, else the URL filter), `leastTestedSource`, filtered-pool shuffle (`getNextFilteredScene`, internal) |
 | `rating.ts` | Writes: `writeElo` (ELO, battles and record in one request), `restoreElo` and `eloWritesSettled` (undo), `noteTopScene` (hall of fame), `clearElo`, `writeStashRatings`, `applyStashRatings`, `queueRatingWrite`, `scheduleStashRatingSync` / `syncStashRatings`, `SCENE_MISSING_EVENT` |
@@ -101,7 +101,7 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | `ui/confirmDialog.ts` | In-modal confirmation dialog with an async action (`confirmDialog`, `isConfirmDialogOpen`, `cancelConfirmDialog`) |
 | `ui/settingsPanel.ts` | The tab bar, Battle · Explore · Stats · Records · Settings (`createTabBar`, `showTab`, `getActiveTab`), preview volume + mute button, Settings tab rows, `bindSettingsControls` / `syncSettingsControls` |
 | `ui/deleteDialog.ts` | Clean mode: bridge that opens Stash's own `DeleteScenesDialog` (`registerDeleteDialogBridge`, `confirmDeleteScene`) |
-| `ui/navButton.ts` | `registerNavButton`, `shouldShowNavButton`: the menu link and the top-bar icon |
+| `ui/navButton.ts` | `registerNavButton`: the menu link and the top-bar icon |
 | `ui/sceneElo.ts` | `registerSceneElo`, `refreshSceneElo`: the ELO and rank on Stash's scene pages (toolbar) |
 | `ui/icons.ts` | `SWORDS_PATHS`: the crossed swords (navbar button and top-bar icon, scene page ELO) |
 | `ui/modal.ts` | `openModal`, `closeModal`, tab wiring (the actions Explore and Stats call: battle a scene, the least-tested, an Explore filter), keyboard handler, Stash ratings switch confirmation, Reset ELO |
@@ -433,7 +433,7 @@ Card media structure: `.sb-scene-media` wraps the thumbnail **link** (`a.sb-scen
 
 ### Scene Pool Status Line and Notes
 
-- `#sb-pool-status` (above the cards, every mode) says where the left-side scenes come from: "Rating scenes from your Scenes page filter · N scenes" (+ "· opponents from the filter too"), or "Rating scenes from your whole library · N scenes · filter the Scenes page to narrow it down". `restoreCurrentPair` loads the pools in the background via `loadPoolSize()` to fill in the count.
+- `#sb-pool-status` (above the cards, every mode) says where the left-side scenes come from: "Rating scenes from your Scenes page filter · N scenes" + "· against each other" with "Use filtered scenes for both sides", else "· against your whole library" (the same words as a battled Explore filter), or "Rating scenes from your whole library · N scenes · filter the Scenes page to narrow it down". `restoreCurrentPair` loads the pools in the background via `loadPoolSize()` to fill in the count.
 - `#sb-ratings-note`: see Stash Ratings Update Mode.
 - `#sb-climb-pool-warning`: see Filter opponents + Champion.
 
@@ -624,7 +624,8 @@ When the Battle button is clicked on an individual scene page (`/scenes/123`):
 
 ## URL Filter Integration
 
-The plugin reads Stash's URL filter parameters to determine which scenes to show:
+The plugin reads Stash's URL filter parameters to determine which scenes to show, **only on Scenes pages** (`/scenes`, and `/scenes/:id`, which keeps the list's query): `scenesListQuery()` returns "" anywhere else, because Stash Battle opens from every page and other pages' queries filter their own lists (`/performers?q=anna` isn't a scene search). Everything that uses the query goes through it: the filter itself, the saved state's filter check, and the scene links on cards.
+
 
 - **`q`** parameter: text search query
 - **`c`** parameters: structured criteria (JSON-encoded with `()` instead of `{}`)

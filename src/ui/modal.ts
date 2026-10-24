@@ -2,6 +2,7 @@
 
 import { clearSceneCache } from "../cache";
 import { fetchSetupScenes } from "../eloSetup";
+import { scenesListQuery } from "../filters";
 import { getSceneIdFromUrl, holdStashListRefresh, sceneCustomFieldsSupported } from "../graphql";
 import { applyStashRatings, queueRatingWrite, SCENE_MISSING_EVENT, scheduleStashRatingSync, writeStashRatings } from "../rating";
 import { stashRatingChanges } from "../score";
@@ -283,7 +284,7 @@ export async function openModal(): Promise<void> {
   console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? "found" : "none"}`);
 
   // Check if URL filter params have changed - if so, reset state
-  const currentFilterParams = window.location.search;
+  const currentFilterParams = scenesListQuery();
   const filtersChanged = hasState && state.savedFilterParams !== currentFilterParams;
 
   if (filtersChanged) {

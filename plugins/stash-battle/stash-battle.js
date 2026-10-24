@@ -486,8 +486,12 @@
   }
 
   // src/filters.ts
+  function scenesListQuery() {
+    const path = window.location.pathname;
+    return path === "/scenes" || path.startsWith("/scenes/") ? window.location.search : "";
+  }
   function getSearchParams() {
-    return new URLSearchParams(window.location.search);
+    return new URLSearchParams(scenesListQuery());
   }
   function getFindFilter(overrides = {}, searchParams = getSearchParams()) {
     const filter = {
@@ -1695,7 +1699,7 @@
       championDefeated: state.championDefeated,
       placement: state.placement,
       totalScenesCount: state.totalScenesCount,
-      savedFilterParams: window.location.search
+      savedFilterParams: scenesListQuery()
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -2210,7 +2214,7 @@
     } else if (statusBadge !== null && statusBadge > 0) {
       statusBadgeHtml = `<div class="sb-streak-badge">🔥 ${statusBadge} win${statusBadge > 1 ? "s" : ""}</div>`;
     }
-    const currentParams = window.location.search;
+    const currentParams = scenesListQuery();
     const sceneUrl2 = `/scenes/${scene.id}${currentParams}`;
     const linkTarget = openInNewTab ? ` target="_blank" rel="noopener"` : "";
     return `
@@ -2549,7 +2553,7 @@
     return `${n} ${word}${n === 1 ? "" : "s"}`;
   }
   function sceneUrl(sceneId) {
-    return `/scenes/${sceneId}${window.location.search}`;
+    return `/scenes/${sceneId}${scenesListQuery()}`;
   }
   function miniCardHtml(entry, link = true) {
     const { scene, rank, tier } = entry;
@@ -3517,7 +3521,7 @@
       const against = explorePoolWithin() ? "against each other" : "against your whole library";
       status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
     } else if (readFilters().filterActive) {
-      const opponents = state.settings.filterOpponents ? " · opponents from the filter too" : "";
+      const opponents = state.settings.filterOpponents ? " · against each other" : " · against your whole library";
       status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${opponents}`;
     } else {
       status.innerHTML = `Rating scenes from your whole library${countHtml}<span class="sb-pool-hint"> · filter the Scenes page to narrow it down</span>`;
@@ -4801,7 +4805,7 @@
     }
     const hasState = loadState();
     console.log(`[Stash Battle] 📋 LocalStorage state: ${hasState ? "found" : "none"}`);
-    const currentFilterParams = window.location.search;
+    const currentFilterParams = scenesListQuery();
     const filtersChanged = hasState && state.savedFilterParams !== currentFilterParams;
     if (filtersChanged) {
       console.log("[Stash Battle] Filter params changed, resetting run state and filtered cache");
@@ -5088,10 +5092,6 @@
             <svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">${SWORDS_PATHS}</svg>
             <span>Battle</span>
         `;
-  function shouldShowNavButton() {
-    const path = window.location.pathname;
-    return path === "/" || path === "/scenes" || path === "/scenes/" || path.startsWith("/scenes/");
-  }
   function onButtonClick(e) {
     e.preventDefault();
     void openModal();
@@ -5099,10 +5099,7 @@
   function placeNavIcon() {
     const existing = document.getElementById(ICON_ID);
     const buttons = document.querySelector(".navbar-buttons");
-    if (!shouldShowNavButton() || !buttons) {
-      existing?.remove();
-      return;
-    }
+    if (!buttons) return;
     if (existing && buttons.contains(existing)) {
       fitNavIcon(existing);
       return;
@@ -5173,17 +5170,7 @@
   }
   function patchNavButton(api) {
     const { React } = api;
-    const events = api.Event;
     function BattleNavItem() {
-      const [, setPath] = React.useState(window.location.pathname);
-      React.useEffect(() => {
-        if (!events) return;
-        const update = () => setPath(window.location.pathname);
-        update();
-        events.addEventListener("stash:location", update);
-        return () => events.removeEventListener("stash:location", update);
-      }, []);
-      if (!shouldShowNavButton()) return null;
       return React.createElement(
         "div",
         { id: BUTTON_ID, className: NAV_ITEM_CLASS },
@@ -5204,13 +5191,6 @@
     ]);
   }
   function injectNavButton() {
-    if (!shouldShowNavButton()) {
-      const existing = document.getElementById(BUTTON_ID);
-      if (existing) {
-        existing.closest(".nav-link")?.remove();
-      }
-      return;
-    }
     if (document.getElementById(BUTTON_ID)) return;
     const navItem = document.createElement("div");
     navItem.className = NAV_ITEM_CLASS;

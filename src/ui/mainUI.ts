@@ -154,7 +154,8 @@ export function updatePoolStatus(): void {
     const against = explorePoolWithin() ? "against each other" : "against your whole library";
     status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
   } else if (readFilters().filterActive) {
-    const opponents = state.settings.filterOpponents ? " · opponents from the filter too" : "";
+    // Who they battle, worded as for a battled Explore filter
+    const opponents = state.settings.filterOpponents ? " · against each other" : " · against your whole library";
     status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${opponents}`;
   } else {
     status.innerHTML = `Rating scenes from your whole library${countHtml}<span class="sb-pool-hint"> · filter the Scenes page to narrow it down</span>`;

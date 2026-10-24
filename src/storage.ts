@@ -1,6 +1,7 @@
 // Persist/restore the battle session to localStorage.
 
 import { STORAGE_KEY } from "./constants";
+import { scenesListQuery } from "./filters";
 import { state } from "./state";
 import type { Mode, Pair, PlacementRun, Ranks, Scene } from "./types";
 
@@ -43,7 +44,7 @@ export function saveState(): void {
     championDefeated: state.championDefeated,
     placement: state.placement,
     totalScenesCount: state.totalScenesCount,
-    savedFilterParams: window.location.search,
+    savedFilterParams: scenesListQuery(),
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
