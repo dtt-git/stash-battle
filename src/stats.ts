@@ -195,6 +195,19 @@ export function tierMap(scenes: Scene[]): Map<string, Tier> {
   return tiers;
 }
 
+let tierCache: { scenes: Scene[]; key: string; tiers: Map<string, Tier> } | null = null;
+
+/**
+ * tierMap for the all-scenes cache, worked out again only when it changes: a different array, or
+ * any scene's ELO or battles (battles change them in place). The key is one cheap pass; the sort
+ * is skipped.
+ */
+export function cachedTierMap(scenes: Scene[]): Map<string, Tier> {
+  const key = scenes.map((s) => `${elo(s) ?? ""}/${battles(s)}`).join(",");
+  if (tierCache?.scenes !== scenes || tierCache.key !== key) tierCache = { scenes, key, tiers: tierMap(scenes) };
+  return tierCache.tiers;
+}
+
 /** Tooltip for a tier: "Gold: in the top 35% of your scenes with a settled ELO". */
 export function tierDescription(tier: Tier): string {
   const index = TIERS.findIndex((t) => t.id === tier.id);

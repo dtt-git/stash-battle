@@ -9,6 +9,7 @@ import { navigateToUrl } from "../navigation";
 import {
   fetchChampionPair,
   fetchPlacementPair,
+  currentFilters,
   fetchSwissPair,
   pairRanks,
 } from "../pairs";
@@ -17,7 +18,7 @@ import { writeElo } from "../rating";
 import { fetchSceneFields } from "../sceneActions";
 import { battles, effectiveElo, kGames } from "../score";
 import { explorePoolWithin, isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
-import { tierMap } from "../stats";
+import { cachedTierMap } from "../stats";
 import { saveState } from "../storage";
 import type { Mode, Rank, Scene, Tier } from "../types";
 import { confirmDeleteScene } from "./deleteDialog";
@@ -293,7 +294,7 @@ function vsDivider(left: Scene, right: Scene): string {
 function pairTiers(scenes: Scene[]): (Tier | null)[] {
   const library = state.memoryCache.allScenes;
   if (!library) return scenes.map(() => null);
-  const tiers = tierMap(library);
+  const tiers = cachedTierMap(library);
   return scenes.map((scene) => tiers.get(scene.id) ?? null);
 }
 
@@ -657,7 +658,7 @@ export function updateClimbPoolWarning(): void {
   if (!warning) return;
 
   const isClimb = state.currentMode === "champion";
-  const filters = readFilters();
+  const filters = currentFilters();
   const smallPool =
     state.totalScenesCount > 0 && state.totalScenesCount < CLIMB_SMALL_POOL_WARN_AT;
 

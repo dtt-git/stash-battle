@@ -13,7 +13,7 @@ import { landingElo, newPlacementRun, placementStep } from "./placement";
 import { writeElo } from "./rating";
 import { battles, effectiveElo, elo, isRated, swissOpponentIndexes } from "./score";
 import { explorePoolWithin, state } from "./state";
-import { resolveSceneTitle } from "./ui/sceneTitle";
+import { resolveSceneTitle } from "./sceneTitle";
 import { leastTested } from "./stats";
 import type { ChampionPairResult, PlacementPairResult, Rank, Scene, SwissPairResult } from "./types";
 
@@ -163,7 +163,7 @@ export async function pairRanks(left: Scene, right: Scene): Promise<[Rank, Rank]
 }
 
 /** The active filter: an Explore filter being battled, or else the Scenes page's (URL) filter. */
-function currentFilters(): ListFilters {
+export function currentFilters(): ListFilters {
   const pool = state.explorePool;
   if (pool) return { filterKey: `explore:${JSON.stringify(pool.filters)}`, sceneFilter: null, filterActive: true };
   return readFilters();

@@ -8,13 +8,13 @@ import { battles, elo, isProvisional } from "../score";
 import { state } from "../state";
 import { sliderToVolume } from "./mainUI";
 import { tierPill, PROVISIONAL_TIP } from "./sceneCard";
-import { resolveSceneTitle } from "./sceneTitle";
+import { resolveSceneTitle } from "../sceneTitle";
 
 export function escapeHtml(text: string): string {
   return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 

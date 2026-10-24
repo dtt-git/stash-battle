@@ -23,8 +23,8 @@ import {
 } from "../stats";
 import type { Scene } from "../types";
 import { handleSceneLinkClick } from "./mainUI";
-import { miniCardHtml, sceneUrl } from "./miniCard";
-import { resolveSceneTitle } from "./sceneTitle";
+import { miniCardHtml, plural, sceneUrl } from "./miniCard";
+import { resolveSceneTitle } from "../sceneTitle";
 import { stashRatingsOption } from "./stashRatingsText";
 
 /** What the tab's buttons do (the modal owns modes, tabs and pairs). */
@@ -57,10 +57,6 @@ export function createStatsTab(): string {
         <div id="sb-stats-content"></div>
       </div>
     `;
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
 /** 1, 2 or 5 times a power of ten, at least `rough`. */
@@ -347,7 +343,6 @@ function isTouch(): boolean {
  * the scene's small card.
  */
 function bindTooltips(chart: HTMLElement): void {
-  let cardFor: string | null = null;
   const show = (e: PointerEvent): void => {
     const tip = chart.querySelector<HTMLElement>(".sb-chart-tip");
     if (!tip || isTouch()) return;
@@ -355,19 +350,20 @@ function bindTooltips(chart: HTMLElement): void {
     const dot = target.closest<SVGElement>(".sb-dot");
     const entry = dot?.dataset.id ? entriesById.get(dot.dataset.id) : undefined;
     if (entry) {
-      if (cardFor !== entry.scene.id) {
-        cardFor = entry.scene.id;
+      // Kept on the tip itself: a redraw (resize) replaces the tip with an empty one
+      if (tip.dataset.cardFor !== entry.scene.id) {
+        tip.dataset.cardFor = entry.scene.id;
         tip.innerHTML = miniCardHtml(entry, false);
       }
       tip.classList.add("sb-chart-tip-card");
     } else {
       const text = target.closest("[data-tip]")?.getAttribute("data-tip");
       if (!text) {
-        cardFor = null;
+        delete tip.dataset.cardFor;
         tip.hidden = true;
         return;
       }
-      cardFor = null;
+      delete tip.dataset.cardFor;
       tip.classList.remove("sb-chart-tip-card");
       tip.textContent = text;
     }
@@ -380,7 +376,7 @@ function bindTooltips(chart: HTMLElement): void {
     const tip = chart.querySelector<HTMLElement>(".sb-chart-tip");
     if (!tip || tip.classList.contains("sb-chart-tip-pinned")) return;
     tip.hidden = true;
-    cardFor = null;
+    delete tip.dataset.cardFor;
   });
 }
 

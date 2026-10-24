@@ -709,6 +709,12 @@
     }
     return tiers;
   }
+  var tierCache = null;
+  function cachedTierMap(scenes2) {
+    const key = scenes2.map((s) => `${elo(s) ?? ""}/${battles(s)}`).join(",");
+    if (tierCache?.scenes !== scenes2 || tierCache.key !== key) tierCache = { scenes: scenes2, key, tiers: tierMap(scenes2) };
+    return tierCache.tiers;
+  }
   function tierDescription(tier) {
     const index = TIERS.findIndex((t) => t.id === tier.id);
     const percent = (share) => `${Math.round(share * 100)}%`;
@@ -777,7 +783,8 @@
     return bothSides && filters2.group !== "unrated";
   }
   function explorePoolScenes(scenes2, filters2, title) {
-    return filterExplore(exploreEntries(scenes2, tierMap(scenes2), title), { ...filters2, sort: "elo-desc" }).map((e) => e.scene);
+    const text = filters2.query.trim() ? title : () => "";
+    return filterExplore(exploreEntries(scenes2, cachedTierMap(scenes2), text), { ...filters2, sort: "elo-desc" }).map((e) => e.scene);
   }
 
   // src/state.ts
@@ -1709,7 +1716,7 @@
     return placementElo(above, below);
   }
 
-  // src/ui/sceneTitle.ts
+  // src/sceneTitle.ts
   function resolveSceneTitle(scene) {
     if (scene.title) return scene.title;
     const path = scene.files?.[0]?.path;
@@ -2457,7 +2464,7 @@
     return `
         <div class="sb-explore-controls">
           <div class="sb-explore-row">
-            <input type="search" class="sb-explore-input sb-explore-search" placeholder="🔍  Search titles, studios, performers" value="${filters.query.replace(/"/g, "&quot;")}" aria-label="Search scenes">
+            <input type="search" class="sb-explore-input sb-explore-search" placeholder="🔍  Search titles, studios, performers" value="${escapeHtml(filters.query)}" aria-label="Search scenes">
             <select class="sb-explore-input sb-explore-select sb-explore-sort" aria-label="Sort">
               ${SORTS.map((s) => `<option value="${s.value}"${s.value === filters.sort ? " selected" : ""}>${s.label}</option>`).join("")}
             </select>
@@ -2527,9 +2534,9 @@
     const disabled = within && n < 2 ? " disabled" : "";
     return `<button type="button" class="btn btn-primary btn-sm sb-explore-battle" data-explore-battle title="${tip}"${disabled}>${label}</button>`;
   }
-  function applyFilters(content) {
+  function applyFilters(content, keepPage = false) {
     results = filterExplore(entries, filters);
-    page = 0;
+    if (!keepPage) page = 0;
     const status = content.querySelector(".sb-explore-status");
     if (status) {
       status.innerHTML = `<span>${results.length === entries.length ? `${entries.length} scenes` : `${results.length} of ${entries.length} scenes`}${isFiltered() ? ` · <a href="#" data-explore-clear>Clear filters</a>` : ""}</span>${battleButtonHtml()}`;
@@ -2631,10 +2638,7 @@
   function render(content, scrollRoot) {
     content.innerHTML = controlsHtml();
     bindControls(content, scrollRoot);
-    applyFilters(content);
-  }
-  function stopExplorePreview() {
-    stopMiniPreview();
+    applyFilters(content, true);
   }
   async function renderExploreTab(modal, tabActions) {
     actions = tabActions;
@@ -2673,9 +2677,6 @@
         <div id="sb-stats-content"></div>
       </div>
     `;
-  }
-  function plural2(n, word) {
-    return `${n} ${word}${n === 1 ? "" : "s"}`;
   }
   function niceStep(rough) {
     const power = Math.pow(10, Math.floor(Math.log10(Math.max(rough, 1))));
@@ -2749,7 +2750,7 @@
     for (const b of buckets) {
       const x0 = x(b.from);
       const w = x(b.from + size) - x0;
-      const tip = `ELO ${b.from}–${b.from + size - 1}: ${plural2(b.count, "scene")}`;
+      const tip = `ELO ${b.from}–${b.from + size - 1}: ${plural(b.count, "scene")}`;
       const bar = b.count > 0 ? `<path class="sb-chart-bar" d="${barPath(x0 + 1, y(b.count), Math.max(1, w - 2), base - y(b.count))}"/>` : "";
       parts.push(`<g class="sb-chart-hit" data-tip="${tip}${b.count ? " · click to see them" : ""}" data-from="${b.from}" data-to="${b.from + size - 0.1}"><rect x="${x0}" y="${m.top}" width="${w}" height="${plotH}" fill="transparent"/>${bar}</g>`);
     }
@@ -2837,7 +2838,7 @@
     const pool = leastTestedPool(scenes);
     if (!pool) return "";
     const rated = pool.count - pool.unrated;
-    const who = pool.battles === 0 ? `${plural2(pool.count, "scene")} have no battles yet: ${rated} with an ELO (the “No battles yet” bar) and ${pool.unrated} unrated.` : `The fewest battles any scene has is ${pool.battles}, and ${plural2(pool.count, "scene")} have that many.`;
+    const who = pool.battles === 0 ? `${plural(pool.count, "scene")} have no battles yet: ${rated} with an ELO (the “No battles yet” bar) and ${pool.unrated} unrated.` : `The fewest battles any scene has is ${pool.battles}, and ${plural(pool.count, "scene")} have that many.`;
     return `${who} They go on the left first, in Swiss, until you stop it.`;
   }
   function settledHtml() {
@@ -2850,19 +2851,19 @@
     };
     const rows = buckets.map(
       (b) => `
-          <div class="sb-settled-row" title="${plural2(b.count, "scene")} with ${label(b.min, b.max).toLowerCase()}">
+          <div class="sb-settled-row" title="${plural(b.count, "scene")} with ${label(b.min, b.max).toLowerCase()}">
             <span class="sb-settled-label">${label(b.min, b.max)}</span>
             <span class="sb-settled-track"><span class="sb-settled-bar" style="width: ${b.count / max * 100}%"></span></span>
             <span class="sb-settled-count">${b.count}</span>
           </div>`
     ).join("");
     const { provisional } = overview(scenes);
-    const provisionalText = provisional > 0 ? `<strong>${plural2(provisional, "scene")}</strong> ${provisional === 1 ? "is" : "are"} still provisional: fewer than ${ELO_K_TIERS[0][0]} battles, so ${provisional === 1 ? "its" : "their"} ELO still moves a lot with each battle.` : `No scene is provisional. Scenes seeded from your star ratings start with a ${ELO_K_TIERS[0][0]}-battle head start, so only scenes that started without one can be.`;
+    const provisionalText = provisional > 0 ? `<strong>${plural(provisional, "scene")}</strong> ${provisional === 1 ? "is" : "are"} still provisional: fewer than ${ELO_K_TIERS[0][0]} battles, so ${provisional === 1 ? "its" : "their"} ELO still moves a lot with each battle.` : `No scene is provisional. Scenes seeded from your star ratings start with a ${ELO_K_TIERS[0][0]}-battle head start, so only scenes that started without one can be.`;
     return `
           <div class="sb-settled">${rows}</div>
           <p class="sb-stats-note">${provisionalText}</p>
           <div class="sb-stats-actions">
-            <button type="button" class="btn btn-secondary btn-sm" data-stats-action="least-tested">Battle the least-tested (${plural2(leastTestedPool(scenes)?.count ?? 0, "scene")})</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-stats-action="least-tested">Battle the least-tested (${plural(leastTestedPool(scenes)?.count ?? 0, "scene")})</button>
             <span class="sb-stats-muted">${leastTestedText()}</span>
           </div>`;
   }
@@ -2894,7 +2895,6 @@
     return window.matchMedia("(hover: none)").matches;
   }
   function bindTooltips(chart) {
-    let cardFor = null;
     const show = (e) => {
       const tip = chart.querySelector(".sb-chart-tip");
       if (!tip || isTouch()) return;
@@ -2902,19 +2902,19 @@
       const dot = target.closest(".sb-dot");
       const entry = dot?.dataset.id ? entriesById.get(dot.dataset.id) : void 0;
       if (entry) {
-        if (cardFor !== entry.scene.id) {
-          cardFor = entry.scene.id;
+        if (tip.dataset.cardFor !== entry.scene.id) {
+          tip.dataset.cardFor = entry.scene.id;
           tip.innerHTML = miniCardHtml(entry, false);
         }
         tip.classList.add("sb-chart-tip-card");
       } else {
         const text = target.closest("[data-tip]")?.getAttribute("data-tip");
         if (!text) {
-          cardFor = null;
+          delete tip.dataset.cardFor;
           tip.hidden = true;
           return;
         }
-        cardFor = null;
+        delete tip.dataset.cardFor;
         tip.classList.remove("sb-chart-tip-card");
         tip.textContent = text;
       }
@@ -2926,7 +2926,7 @@
       const tip = chart.querySelector(".sb-chart-tip");
       if (!tip || tip.classList.contains("sb-chart-tip-pinned")) return;
       tip.hidden = true;
-      cardFor = null;
+      delete tip.dataset.cardFor;
     });
   }
   function openScene(sceneId, e) {
@@ -3266,7 +3266,7 @@
   function pairTiers(scenes2) {
     const library = state.memoryCache.allScenes;
     if (!library) return scenes2.map(() => null);
-    const tiers = tierMap(library);
+    const tiers = cachedTierMap(library);
     return scenes2.map((scene) => tiers.get(scene.id) ?? null);
   }
   function renderPair(scenes2, ranks) {
@@ -3538,7 +3538,7 @@
     const warning = document.getElementById("sb-climb-pool-warning");
     if (!warning) return;
     const isClimb = state.currentMode === "champion";
-    const filters2 = readFilters();
+    const filters2 = currentFilters();
     const smallPool = state.totalScenesCount > 0 && state.totalScenesCount < CLIMB_SMALL_POOL_WARN_AT;
     warning.hidden = !(isClimb && state.settings.filterOpponents && filters2.filterActive && smallPool);
   }
@@ -3684,7 +3684,7 @@
     const index = scenes2.findIndex((s) => s.id === sceneId);
     if (index >= 0) {
       const scene2 = scenes2[index];
-      return { scene: scene2, rank: isRated(scene2) ? index + 1 : null, tier: tierMap(scenes2).get(sceneId) ?? null };
+      return { scene: scene2, rank: isRated(scene2) ? index + 1 : null, tier: cachedTierMap(scenes2).get(sceneId) ?? null };
     }
     const scene = await fetchSceneById(sceneId);
     return scene ? { scene, rank: null, tier: null } : null;
@@ -3885,7 +3885,7 @@
   var SETUP_ACTIVE_CLASS = "sb-setup-active";
   var running = false;
   var options = {};
-  var plural3 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  var plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
   function setupArea(root) {
     return root.querySelector("#sb-setup-area");
   }
@@ -3942,9 +3942,9 @@
       text = "No Stash ratings change now: every scene converts back to its current rating.";
       warn = false;
     } else if (start === "fresh") {
-      text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 50</strong>: ${plural3(changes, "rating")} change, unrated scenes included. ${backup}`;
+      text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 50</strong>: ${plural2(changes, "rating")} change, unrated scenes included. ${backup}`;
     } else {
-      text = `⚠️ <strong>${plural3(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 100 by hand may end up lower. ${backup}`;
+      text = `⚠️ <strong>${plural2(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 100 by hand may end up lower. ${backup}`;
     }
     return `<p class="sb-setup-message${warn ? " sb-setup-warning" : ""}">${text}</p>`;
   }
@@ -3962,7 +3962,7 @@
         <p class="sb-setup-intro">
           ${reset ? "Choose how ELO starts again. This overwrites every scene's ELO and battle count." : "Stash Battle now gives each scene an ELO score, saved in its custom fields. Wins raise it, losses lower it. Choose how it starts. This runs once."}
         </p>
-        ${withElo > 0 && !reset ? `<p class="sb-setup-warning">${plural3(withElo, "scene")} already ${withElo === 1 ? "has" : "have"} an ELO from an earlier setup that didn't finish. Setting up again overwrites ${withElo === 1 ? "it" : "them"}.</p>` : ""}
+        ${withElo > 0 && !reset ? `<p class="sb-setup-warning">${plural2(withElo, "scene")} already ${withElo === 1 ? "has" : "have"} an ELO from an earlier setup that didn't finish. Setting up again overwrites ${withElo === 1 ? "it" : "them"}.</p>` : ""}
         <div class="sb-setup-questions">
           <fieldset class="sb-setup-question">
             <legend>How should ELO start?</legend>
@@ -3970,14 +3970,14 @@
       "start",
       "ratings",
       "Use my ratings",
-      `Your ${plural3(rated, "rated scene")} start from their rating (50 = 1500 ELO, 10 ELO per point).${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
+      `Your ${plural2(rated, "rated scene")} start from their rating (50 = 1500 ELO, 10 ELO per point).${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
       true
     )}
             ${radio(
       "start",
       "fresh",
       "Start everyone at 1500",
-      `All ${plural3(total, "scene")} start equal.`,
+      `All ${plural2(total, "scene")} start equal.`,
       false
     )}
           </fieldset>
@@ -4024,7 +4024,7 @@
       const shown = messageFor.get(key);
       for (const message of slot.children) message.classList.toggle("sb-shown", message === shown);
       const changes = changeCounts.get(key) ?? 0;
-      startBtn.textContent = changes > 0 ? `Start ELO and change ${plural3(changes, "rating")}` : "Start ELO";
+      startBtn.textContent = changes > 0 ? `Start ELO and change ${plural2(changes, "rating")}` : "Start ELO";
     };
     area.querySelectorAll('input[type="radio"]').forEach((input) => {
       input.addEventListener("change", () => {
@@ -4038,7 +4038,7 @@
   }
   function progressHtml(phase, done, total) {
     const percent = total > 0 ? Math.round(done / total * 100) : 100;
-    const label = phase === "elo" ? `Saving starting ELO: ${done} of ${plural3(total, "scene")}` : `Updating Stash ratings: ${plural3(total, "scene")}`;
+    const label = phase === "elo" ? `Saving starting ELO: ${done} of ${plural2(total, "scene")}` : `Updating Stash ratings: ${plural2(total, "scene")}`;
     return `
       <div class="sb-setup sb-setup-progress">
         <h2 class="sb-setup-title">Setting up ELO...</h2>
@@ -4092,10 +4092,10 @@
       return;
     }
     running = false;
-    const eloLine2 = choice.start === "ratings" ? `${plural3(summary.eloWritten, "scene")} got a starting ELO from ${summary.eloWritten === 1 ? "its" : "their"} rating. Unrated scenes stay unrated until they battle.` : `${plural3(summary.eloWritten, "scene")} start at 1500 ELO.`;
-    const clearedLine = summary.eloCleared > 0 ? `<li>${plural3(summary.eloCleared, "scene")} without a Stash rating had an old ELO removed.</li>` : "";
+    const eloLine2 = choice.start === "ratings" ? `${plural2(summary.eloWritten, "scene")} got a starting ELO from ${summary.eloWritten === 1 ? "its" : "their"} rating. Unrated scenes stay unrated until they battle.` : `${plural2(summary.eloWritten, "scene")} start at 1500 ELO.`;
+    const clearedLine = summary.eloCleared > 0 ? `<li>${plural2(summary.eloCleared, "scene")} without a Stash rating had an old ELO removed.</li>` : "";
     const optionLabel = choice.stashRatings === "percentile" ? "Percentile" : "Straight-line";
-    const ratingsLine = choice.stashRatings === "off" ? "Stash ratings weren't changed, and battles won't change them." : summary.ratingsWritten === 0 ? `Stash ratings already matched (${optionLabel}), so none changed. Battles keep them in step from now on.` : `${plural3(summary.ratingsWritten, "Stash rating")} updated (${optionLabel}). Battles keep them in step from now on.`;
+    const ratingsLine = choice.stashRatings === "off" ? "Stash ratings weren't changed, and battles won't change them." : summary.ratingsWritten === 0 ? `Stash ratings already matched (${optionLabel}), so none changed. Battles keep them in step from now on.` : `${plural2(summary.ratingsWritten, "Stash rating")} updated (${optionLabel}). Battles keep them in step from now on.`;
     area.innerHTML = `
       <div class="sb-setup sb-setup-done">
         <h2 class="sb-setup-title">✅ ELO is ready</h2>
@@ -4434,7 +4434,7 @@
       onSettingChanged,
       (tab) => {
         applyPreviewSettings();
-        stopExplorePreview();
+        stopMiniPreview();
         if (tab === "stats") void renderStatsTab(modal, statsActions(modal));
         if (tab === "explore") void renderExploreTab(modal, statsActions(modal));
       },
@@ -4582,7 +4582,7 @@
     if (!modal || modal.classList.contains("sb-modal-hidden")) return;
     cancelDeleteDialog();
     cancelConfirmDialog();
-    stopExplorePreview();
+    stopMiniPreview();
     holdStashListRefresh(false);
     refreshSceneElo();
     if (state.resettingElo && !isSetupRunning()) {

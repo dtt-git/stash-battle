@@ -21,7 +21,7 @@ import { isEloSetupPending, state } from "../state";
 import { tierMap } from "../stats";
 import { handleSceneLinkClick } from "./mainUI";
 import { escapeHtml, miniCardHtml, miniPreviewCard, startMiniPreview, stopMiniPreview } from "./miniCard";
-import { resolveSceneTitle } from "./sceneTitle";
+import { resolveSceneTitle } from "../sceneTitle";
 import type { StatsActions } from "./statsTab";
 
 const SEARCH_DEBOUNCE_MS = 150;
@@ -86,7 +86,7 @@ function controlsHtml(): string {
   return `
         <div class="sb-explore-controls">
           <div class="sb-explore-row">
-            <input type="search" class="sb-explore-input sb-explore-search" placeholder="🔍  Search titles, studios, performers" value="${filters.query.replace(/"/g, "&quot;")}" aria-label="Search scenes">
+            <input type="search" class="sb-explore-input sb-explore-search" placeholder="🔍  Search titles, studios, performers" value="${escapeHtml(filters.query)}" aria-label="Search scenes">
             <select class="sb-explore-input sb-explore-select sb-explore-sort" aria-label="Sort">
               ${SORTS.map((s) => `<option value="${s.value}"${s.value === filters.sort ? " selected" : ""}>${s.label}</option>`).join("")}
             </select>
@@ -178,9 +178,9 @@ function battleButtonHtml(): string {
 }
 
 /** Re-run the filters and go back to the first page. */
-function applyFilters(content: HTMLElement): void {
+function applyFilters(content: HTMLElement, keepPage = false): void {
   results = filterExplore(entries, filters);
-  page = 0;
+  if (!keepPage) page = 0;
   const status = content.querySelector<HTMLElement>(".sb-explore-status");
   if (status) {
     status.innerHTML = `<span>${results.length === entries.length ? `${entries.length} scenes` : `${results.length} of ${entries.length} scenes`}${
@@ -296,13 +296,10 @@ function onContentClick(e: Event, content: HTMLElement, scrollRoot: HTMLElement 
 function render(content: HTMLElement, scrollRoot: HTMLElement | null): void {
   content.innerHTML = controlsHtml();
   bindControls(content, scrollRoot);
-  applyFilters(content);
+  // Reopening Explore (back from a scene page, say) stays on the same page; showPage clamps it
+  applyFilters(content, true);
 }
 
-/** Stop any small card's preview (when the tab changes or Stash Battle closes). */
-export function stopExplorePreview(): void {
-  stopMiniPreview();
-}
 
 /** Fill the Explore tab from the all-scenes cache (call each time the tab opens). */
 export async function renderExploreTab(modal: HTMLElement, tabActions: StatsActions): Promise<void> {

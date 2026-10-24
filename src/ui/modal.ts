@@ -25,7 +25,8 @@ import {
   updateRatingsNote,
   verifyCurrentPair,
 } from "./mainUI";
-import { renderExploreTab, setExploreFilters, stopExplorePreview } from "./exploreTab";
+import { renderExploreTab, setExploreFilters } from "./exploreTab";
+import { stopMiniPreview } from "./miniCard";
 import { renderStatsTab, type StatsActions } from "./statsTab";
 import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
 import { refreshSceneElo } from "./sceneElo";
@@ -431,7 +432,7 @@ export async function openModal(): Promise<void> {
     (tab) => {
       applyPreviewSettings();
       // A small card's preview (Explore, or a hidden gems card) never keeps playing on another tab
-      stopExplorePreview();
+      stopMiniPreview();
       if (tab === "stats") void renderStatsTab(modal, statsActions(modal));
       if (tab === "explore") void renderExploreTab(modal, statsActions(modal));
     },
@@ -632,7 +633,7 @@ export function closeModal(): void {
   cancelConfirmDialog();
   // "Battle the least-tested" and a battled Explore filter stay on (until Stop): closing Stash
   // Battle to watch a scene and coming back carries on where it was
-  stopExplorePreview();
+  stopMiniPreview();
   // Stash's scene lists show the ratings written while Stash Battle was open, and a scene page its ELO
   holdStashListRefresh(false);
   refreshSceneElo();

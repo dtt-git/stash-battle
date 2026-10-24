@@ -1,4 +1,4 @@
-import type { Scene } from "../types";
+import type { Scene } from "./types";
 
 /** Scene title from metadata, or the filename (without extension) from the file path. */
 export function resolveSceneTitle(scene: Scene): string {

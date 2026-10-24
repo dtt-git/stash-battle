@@ -11,7 +11,7 @@
 import { getAllScenesCached } from "../cache";
 import { fetchSceneById, getSceneIdFromUrl, sceneCustomFieldsSupported } from "../graphql";
 import { elo, isProvisional, isRated } from "../score";
-import { tierDescription, tierMap } from "../stats";
+import { cachedTierMap, tierDescription } from "../stats";
 import type { Scene, Tier } from "../types";
 import { SWORDS_PATHS } from "./icons";
 import { PROVISIONAL_TIP } from "./sceneCard";
@@ -46,7 +46,7 @@ async function sceneAndRank(sceneId: string): Promise<{ scene: Scene; rank: numb
   const index = scenes.findIndex((s) => s.id === sceneId);
   if (index >= 0) {
     const scene = scenes[index];
-    return { scene, rank: isRated(scene) ? index + 1 : null, tier: tierMap(scenes).get(sceneId) ?? null };
+    return { scene, rank: isRated(scene) ? index + 1 : null, tier: cachedTierMap(scenes).get(sceneId) ?? null };
   }
   const scene = await fetchSceneById(sceneId);
   return scene ? { scene, rank: null, tier: null } : null;

@@ -6,7 +6,7 @@ import { state } from "../state";
 import { tierDescription } from "../stats";
 import { isStashDeleteDialogAvailable } from "./deleteDialog";
 import type { Rank, Scene, Tier } from "../types";
-import { resolveSceneTitle } from "./sceneTitle";
+import { resolveSceneTitle } from "../sceneTitle";
 
 /** Tooltip for a provisional ELO (the "?" after it). */
 export const PROVISIONAL_TIP = `Provisional: fewer than ${ELO_K_TIERS[0][0]} battles, so this ELO is still settling`;

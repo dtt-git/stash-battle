@@ -1,7 +1,7 @@
 // The Explore tab's search, filters and sorting over the library. Pure functions: no state, no I/O.
 
 import { battles, elo, isProvisional } from "./score";
-import { tierMap } from "./stats";
+import { cachedTierMap } from "./stats";
 import type { Scene, Tier } from "./types";
 
 /** A library scene with what Explore shows and filters on. */
@@ -105,5 +105,7 @@ export function filterBattlesWithin(filters: ExploreFilters, bothSides: boolean)
 
 /** The scenes an Explore filter picks from an ELO-sorted library, in ELO order. */
 export function explorePoolScenes(scenes: Scene[], filters: ExploreFilters, title: (scene: Scene) => string): Scene[] {
-  return filterExplore(exploreEntries(scenes, tierMap(scenes), title), { ...filters, sort: "elo-desc" }).map((e) => e.scene);
+  // Run on every pick: search text is only built when there's a query to match
+  const text = filters.query.trim() ? title : (): string => "";
+  return filterExplore(exploreEntries(scenes, cachedTierMap(scenes), text), { ...filters, sort: "elo-desc" }).map((e) => e.scene);
 }

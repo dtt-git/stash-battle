@@ -6,7 +6,7 @@ import { resetRunState, state } from "../state";
 import { saveState } from "../storage";
 import type { PlacementPairResult, Scene } from "../types";
 import { loadNewPair, setActionsVisible } from "./mainUI";
-import { resolveSceneTitle } from "./sceneTitle";
+import { resolveSceneTitle } from "../sceneTitle";
 
 function buildEndScreenHtml(
   scene: Scene,
