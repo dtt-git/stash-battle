@@ -2,7 +2,7 @@
 
 # ⚔️ Stash Battle
 
-A head-to-head scene comparison plugin for [Stash](https://stashapp.cc/) that uses a true ELO rating system to help you rank your scenes.
+A head-to-head scene comparison plugin for [Stash](https://stashapp.cc/) that uses a ELO rating system to help you rank your scenes.
 
 ## Overview
 
