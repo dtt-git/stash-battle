@@ -9,6 +9,9 @@ export const CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes cache expiry
 
 import type { Settings, Tier } from "./types";
 
+/** Explore's "per page" choices; 0 shows every scene on one page. */
+export const EXPLORE_PAGE_SIZES: readonly number[] = [30, 60, 120, 240, 0];
+
 /** Plugin id (folder name) — key for this plugin's settings in Stash's configuration. */
 export const PLUGIN_ID = "stash-battle";
 
@@ -18,8 +21,9 @@ export const DEFAULT_SETTINGS: Settings = {
   eloSetupMode: null,
   openInNewTab: false,
   placementFromBottom: false,
-  showTiers: true,
+  tierBorders: true,
   previewVolume: 50,
+  explorePageSize: 60,
   autoplayPreviews: true,
   filterOpponents: false,
   cleanMode: false,

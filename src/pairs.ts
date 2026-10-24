@@ -7,11 +7,14 @@ import {
   SWISS_OPPONENT_ELO_WINDOW,
   SWISS_OPPONENT_MIN_CANDIDATES,
 } from "./constants";
+import { explorePoolScenes } from "./explore";
 import { readFilters, type ListFilters } from "./filters";
 import { landingElo, newPlacementRun, placementStep } from "./placement";
 import { writeElo } from "./rating";
 import { battles, effectiveElo, elo, isRated, swissOpponentIndexes } from "./score";
-import { state } from "./state";
+import { explorePoolWithin, state } from "./state";
+import { resolveSceneTitle } from "./ui/sceneTitle";
+import { leastTested } from "./stats";
 import type { ChampionPairResult, PlacementPairResult, Rank, Scene, SwissPairResult } from "./types";
 
 function shuffleArray<T>(array: T[]): T[] {
@@ -70,14 +73,18 @@ function getNextFilteredScene(leftPool: Scene[], filterKey: string): Scene | nul
     lastShownSceneId = null;
   }
 
-  if (state.shuffleIndex >= state.shuffledFilteredScenes.length) {
-    startNewPass(leftPool);
+  // The shuffle keeps its pass's scene objects; a background refresh may have replaced them since,
+  // and scenes that have left the pool (placed out of an "Unrated" pool, say) are skipped
+  const inPool = new Map(leftPool.map((s) => [s.id, s]));
+  let scene: Scene | undefined;
+  for (let tries = 0; !scene && tries < 2; tries++) {
+    if (state.shuffleIndex >= state.shuffledFilteredScenes.length) startNewPass(leftPool);
+    while (!scene && state.shuffleIndex < state.shuffledFilteredScenes.length) {
+      scene = inPool.get(state.shuffledFilteredScenes[state.shuffleIndex].id);
+      state.shuffleIndex++;
+    }
   }
-
-  const shuffled = state.shuffledFilteredScenes[state.shuffleIndex];
-  // The shuffle keeps its pass's scene objects; a background refresh may have replaced them since
-  const scene = leftPool.find((s) => s.id === shuffled.id) ?? shuffled;
-  state.shuffleIndex++;
+  if (!scene) return null;
   lastShownSceneId = scene.id;
   console.log(
     `[Stash Battle] 📍 Picked scene ${scene.id} (${state.shuffledFilteredScenes.length - state.shuffleIndex} left in this pass)`,
@@ -90,7 +97,7 @@ function getNextFilteredScene(leftPool: Scene[], filterKey: string): Scene | nul
  * filtered scenes for both sides" is on (unrated ones then sort last).
  */
 function buildOpponentPool(allScenes: Scene[], leftPool: Scene[], filters: ListFilters): Scene[] {
-  if (state.settings.filterOpponents && filters.filterActive) {
+  if (state.explorePool ? explorePoolWithin() : state.settings.filterOpponents && filters.filterActive) {
     return leftPool;
   }
   const rated = allScenes.filter(isRated);
@@ -104,7 +111,11 @@ async function loadScenePools(
   let leftPool: Scene[];
   let allScenes: Scene[];
 
-  if (filters.filterActive) {
+  if (state.explorePool) {
+    // An Explore filter, worked out again each time (scenes join and leave it as ELO changes)
+    allScenes = (await getAllScenesCached()).scenes || [];
+    leftPool = explorePoolScenes(allScenes, state.explorePool.filters, resolveSceneTitle);
+  } else if (filters.filterActive) {
     // Re-query the filter after each full pass so filters like "unrated" shrink as scenes get rated
     const passComplete = isShuffleCycleComplete(filters.filterKey);
     if (passComplete) {
@@ -137,7 +148,7 @@ async function loadScenePools(
  * scene being placed and the opponent's place in the pool without it.
  */
 export async function pairRanks(left: Scene, right: Scene): Promise<[Rank, Rank]> {
-  const filters = readFilters();
+  const filters = currentFilters();
   const { leftPool, allScenes } = await loadScenePools(filters);
   let pool = buildOpponentPool(allScenes, leftPool, filters);
   const rank = (scene: Scene): Rank => {
@@ -151,13 +162,20 @@ export async function pairRanks(left: Scene, right: Scene): Promise<[Rank, Rank]
   return [rank(left), rank(right)];
 }
 
+/** The active filter: an Explore filter being battled, or else the Scenes page's (URL) filter. */
+function currentFilters(): ListFilters {
+  const pool = state.explorePool;
+  if (pool) return { filterKey: `explore:${JSON.stringify(pool.filters)}`, sceneFilter: null, filterActive: true };
+  return readFilters();
+}
+
 /** Load left (scene to rate) and right (opponent) pools for Swiss. */
 async function buildSwissPools(): Promise<{
   leftPool: Scene[];
   rightPool: Scene[];
   filterKey: string;
 }> {
-  const filters = readFilters();
+  const filters = currentFilters();
   const { leftPool, allScenes } = await loadScenePools(filters);
 
   if (allScenes.length < 2) {
@@ -165,7 +183,10 @@ async function buildSwissPools(): Promise<{
   }
 
   const rightPool = buildOpponentPool(allScenes, leftPool, filters);
-  if (state.settings.filterOpponents && filters.filterActive && rightPool.length < 2) {
+  if (explorePoolWithin() && rightPool.length < 2) {
+    throw new Error("Not enough scenes in this Explore filter for a match. You need at least 2 scenes.");
+  }
+  if (!state.explorePool && state.settings.filterOpponents && filters.filterActive && rightPool.length < 2) {
     throw new Error("Not enough scenes in your filter for a match. You need at least 2 scenes.");
   }
 
@@ -176,7 +197,10 @@ async function buildSwissPools(): Promise<{
 export async function fetchSwissPair(forcedLeftScene: Scene | null = null): Promise<SwissPairResult> {
   const { leftPool, rightPool, filterKey } = await buildSwissPools();
 
-  const scene1 = forcedLeftScene || getNextFilteredScene(leftPool, filterKey);
+  // "Battle the least-tested" (Stats tab) takes the fewest-battled scene instead of the shuffle
+  const scene1 =
+    forcedLeftScene ||
+    (state.leastTested ? leastTested(leftPool, state.currentPair.left?.id ?? null) : getNextFilteredScene(leftPool, filterKey));
   if (!scene1) {
     throw new Error("No scenes match your filter criteria.");
   }
@@ -245,7 +269,7 @@ function findLowestRated(scenes: Scene[], excludeId: string): { scene: Scene | u
 export async function fetchChampionPair(
   forcedLeftScene: Scene | null = null,
 ): Promise<ChampionPairResult> {
-  const filters = readFilters();
+  const filters = currentFilters();
 
   console.log("[Stash Battle] 📋 Fetching scenes for champion...");
   const { leftPool, allScenes } = await loadScenePools(filters);
@@ -314,7 +338,7 @@ function pickAmongTies(pool: Scene[], idx: number, lo: number, hi: number): numb
 export async function fetchPlacementPair(
   forcedLeftScene: Scene | null = null,
 ): Promise<PlacementPairResult> {
-  const filters = readFilters();
+  const filters = currentFilters();
   const { leftPool, allScenes } = await loadScenePools(filters);
 
   if (allScenes.length < 2) {

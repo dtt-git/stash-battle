@@ -8,10 +8,10 @@ import type { Settings, StashRatingsMode } from "../types";
 import { STASH_RATINGS_OPTIONS, stashRatingsOption } from "./stashRatingsText";
 
 type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
-export type TabId = "battle" | "settings";
+export type TabId = "battle" | "explore" | "stats" | "settings";
 
 type SettingRow =
-  | { key: keyof Settings; title: string; hint: string }
+  | { key: keyof Settings; title: string; hint: string; className?: string }
   | { action: "reset-elo"; title: string; hint: string; button: string };
 
 const SECTIONS: { title: string; rows: SettingRow[] }[] = [
@@ -38,9 +38,11 @@ const SECTIONS: { title: string; rows: SettingRow[] }[] = [
   {
     title: "Scenes",
     rows: [
+      // Narrow phones hide the tab bar's slider (only its mute button fits), so it's here instead
+      { key: "previewVolume", title: "Preview volume", hint: "How loud the hovered or tapped card's preview plays. 0 mutes it", className: "sb-setting-phone-only" },
       { key: "autoplayPreviews", title: "Autoplay previews", hint: "Loop both previews silently; hover a card to hear it" },
       { key: "pauseMediaOnOpen", title: "Pause playing video when Stash Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
-      { key: "showTiers", title: "Show tiers on cards", hint: "A tier next to each scene's ELO, from 👑 Legendary (top 1%) down to 🥉 Bronze, by its rank among your scenes with a settled ELO" },
+      { key: "tierBorders", title: "Tier colours on card borders", hint: "Each battle card's border takes the colour of its tier (👑 Legendary down to 🥉 Bronze), as on the Explore cards" },
       { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
       { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" },
     ],
@@ -63,6 +65,10 @@ function volumeIcon(volume: number): string {
 }
 
 function settingControl(key: keyof Settings): string {
+  if (key === "previewVolume") {
+    const volume = state.settings.previewVolume;
+    return `<div class="sb-setting-volume"><input type="range" min="0" max="100" step="1" data-setting="previewVolume" value="${volume}" aria-label="Preview volume"><span class="sb-volume-value">${volume}</span></div>`;
+  }
   if (key === "stashRatings") {
     const options = STASH_RATINGS_OPTIONS.map(
       ({ value, label }) =>
@@ -78,13 +84,15 @@ function settingControl(key: keyof Settings): string {
           </div>`;
 }
 
-/** Tab bar: Battle / Settings on the left, preview volume on the right. */
+/** Tab bar: Battle / Explore / Stats / Settings on the left, preview volume on the right. */
 export function createTabBar(): string {
   const { previewVolume } = state.settings;
   return `
       <div class="sb-tab-bar">
         <nav class="nav nav-tabs sb-tabs" role="tablist">
           <a class="nav-item nav-link active" role="tab" data-tab="battle" aria-selected="true">⚔️ Battle</a>
+          <a class="nav-item nav-link" role="tab" data-tab="explore" aria-selected="false">🔎 Explore</a>
+          <a class="nav-item nav-link" role="tab" data-tab="stats" aria-selected="false">📊 Stats</a>
           <a class="nav-item nav-link" role="tab" data-tab="settings" aria-selected="false">⚙ Settings</a>
         </nav>
         <div class="sb-volume" title="Preview volume">
@@ -103,8 +111,9 @@ function settingRowHtml(row: SettingRow): string {
     "key" in row
       ? settingControl(row.key)
       : `<button type="button" class="btn btn-secondary btn-sm" data-action="${row.action}">${row.button}</button>`;
+  const rowClass = "key" in row && row.className ? ` ${row.className}` : "";
   return `
-            <div class="setting">
+            <div class="setting${rowClass}">
               <div>
                 <h3>${row.title}</h3>
                 <div class="sub-heading"${hintFor}>${hint}</div>

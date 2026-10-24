@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { tierMap } from "../src/stats";
+import {
+  eloHistogram,
+  gemsQuadrant,
+  gemsSplit,
+  largestTie,
+  leastTested,
+  leastTestedPool,
+  median,
+  overview,
+  ratingScaleTicks,
+  settledBuckets,
+  tierMap,
+} from "../src/stats";
 import type { Scene } from "../src/types";
 
 /** A settled scene (seeded, so never provisional) at this ELO. */
@@ -71,4 +83,99 @@ test("tiny libraries", () => {
     "bronze",
     "bronze",
   ]);
+});
+
+/** A scene with these fields (only the ones given). */
+function sc(id: string, eloValue?: number, battlesValue?: number, plays?: number, seeded = false): Scene {
+  const custom_fields: Record<string, unknown> = {};
+  if (eloValue !== undefined) custom_fields.stash_battle_elo = eloValue;
+  if (battlesValue !== undefined) custom_fields.stash_battle_battles = battlesValue;
+  if (seeded) custom_fields.stash_battle_seeded = 1;
+  return { id, custom_fields, play_count: plays ?? 0 };
+}
+
+test("overview counts rated, unrated, provisional and battles", () => {
+  const scenes = [sc("a", 1600, 3), sc("b", 1500, 12), sc("c", 1500, 0, 0, true), sc("u")];
+  assert.deepEqual(overview(scenes), { rated: 3, unrated: 1, provisional: 1, battles: 15 });
+});
+
+test("eloHistogram: 25-ELO buckets from lowest to highest, gaps included", () => {
+  const scenes = [sc("a", 1500), sc("b", 1524.9), sc("c", 1525), sc("d", 1580), sc("u")];
+  assert.deepEqual(eloHistogram(scenes), [
+    { from: 1500, count: 2 },
+    { from: 1525, count: 1 },
+    { from: 1550, count: 0 },
+    { from: 1575, count: 1 },
+  ]);
+  assert.deepEqual(eloHistogram([]), []);
+});
+
+test("largestTie finds the biggest group sharing one ELO", () => {
+  const scenes = [sc("a", 1600), sc("b", 1600), sc("c", 1500), sc("d", 1500), sc("e", 1500), sc("f", 1400)];
+  assert.deepEqual(largestTie(scenes), { elo: 1500, count: 3 });
+  assert.equal(largestTie([sc("a", 1600), sc("b", 1500)]), null);
+});
+
+test("ratingScaleTicks: Straight-line is fixed, Percentile follows the library, off has none", () => {
+  assert.deepEqual(ratingScaleTicks([], "linear"), [
+    { elo: 1010, rating: 1 },
+    { elo: 1250, rating: 25 },
+    { elo: 1500, rating: 50 },
+    { elo: 1750, rating: 75 },
+    { elo: 2000, rating: 100 },
+  ]);
+  assert.deepEqual(ratingScaleTicks([sc("a", 1500)], "off"), []);
+  // 5 scenes: percentile ratings 100, 75, 50, 26, 1 (top to bottom)
+  const five = [sc("a", 1900), sc("b", 1700), sc("c", 1600), sc("d", 1550), sc("e", 1200)];
+  assert.deepEqual(
+    ratingScaleTicks(five, "percentile").map((t) => [t.rating, t.elo]),
+    [[1, 1200], [25, 1550], [50, 1600], [75, 1700], [100, 1900]],
+  );
+});
+
+test("median", () => {
+  assert.equal(median([3, 1, 2]), 2);
+  assert.equal(median([4, 1, 2, 3]), 2.5);
+  assert.equal(median([]), 0);
+});
+
+test("gems quadrants split at the median ELO and play count", () => {
+  const scenes = [sc("gem", 1900, 0, 1), sc("fav", 1800, 0, 9), sc("mid", 1600, 0, 4), sc("over", 1300, 0, 12), sc("meh", 1200, 0, 2)];
+  const split = gemsSplit(scenes);
+  assert.deepEqual(split, { elo: 1600, plays: 4 });
+  if (!split) return;
+  assert.equal(gemsQuadrant(scenes[0], split), "gem");
+  assert.equal(gemsQuadrant(scenes[1], split), null);
+  assert.equal(gemsQuadrant(scenes[2], split), null);
+  assert.equal(gemsQuadrant(scenes[3], split), "overplayed");
+  assert.equal(gemsQuadrant(scenes[4], split), null);
+  assert.equal(gemsQuadrant(sc("u", undefined, 0, 0), split), null);
+  assert.equal(gemsSplit([sc("u")]), null);
+});
+
+test("settledBuckets follow the K tiers: 0, 1-9, 10-29, 30+", () => {
+  const scenes = [sc("a", 1500, 0), sc("b", 1500, 1), sc("c", 1500, 9), sc("d", 1500, 10), sc("e", 1500, 29), sc("f", 1500, 30), sc("u")];
+  assert.deepEqual(settledBuckets(scenes), [
+    { min: 0, max: 0, count: 1 },
+    { min: 1, max: 9, count: 2 },
+    { min: 10, max: 29, count: 2 },
+    { min: 30, max: null, count: 1 },
+  ]);
+});
+
+test("leastTested picks the fewest battles, at random among equals, not the scene just shown", () => {
+  const pool = [sc("a", 1500, 4), sc("b", 1500, 0), sc("c", 1500, 0), sc("d", 1500, 2)];
+  assert.equal(leastTested(pool, null, () => 0)?.id, "b");
+  assert.equal(leastTested(pool, null, () => 0.99)?.id, "c");
+  assert.equal(leastTested(pool, "b", () => 0)?.id, "c");
+  // Unrated scenes have no battles, so they're among the least tested
+  assert.equal(leastTested([sc("a", 1500, 1), sc("u")], null)?.id, "u");
+  assert.equal(leastTested([sc("a", 1500, 1)], "a")?.id, "a");
+  assert.equal(leastTested([], null), null);
+});
+
+test("leastTestedPool counts the scenes sharing the fewest battles, unrated ones included", () => {
+  assert.deepEqual(leastTestedPool([sc("a", 1500, 0), sc("b", 1500, 0), sc("c", 1500, 3), sc("u")]), { battles: 0, count: 3, unrated: 1 });
+  assert.deepEqual(leastTestedPool([sc("a", 1500, 4), sc("b", 1500, 2)]), { battles: 2, count: 1, unrated: 0 });
+  assert.equal(leastTestedPool([]), null);
 });

@@ -16,8 +16,9 @@ export interface Settings {
   eloSetupMode: EloStart | null; // How that setup started ELO
   openInNewTab: boolean; // Thumbnail click opens the scene in a new tab
   placementFromBottom: boolean; // Placement runs start at the bottom scene and climb (replaces Gauntlet)
-  showTiers: boolean; // Tier pill (Legendary ... Bronze) on the battle cards
+  tierBorders: boolean; // Battle cards' borders take their tier's colour (the tier pill always shows)
   previewVolume: number; // 0-100, 0 = muted
+  explorePageSize: number; // Explore cards per page (EXPLORE_PAGE_SIZES); 0 = all on one page
   autoplayPreviews: boolean; // Loop both previews (muted) without hovering
   filterOpponents: boolean; // Right side obeys the list filter too
   cleanMode: boolean; // Show a delete button on each card

@@ -20,10 +20,13 @@ import {
   restoreCurrentPair,
   skipPair,
   updateClimbPoolWarning,
+  updateLeastTestedNote,
   updateModeInfo,
   updateRatingsNote,
   verifyCurrentPair,
 } from "./mainUI";
+import { renderExploreTab, setExploreFilters, stopExplorePreview } from "./exploreTab";
+import { renderStatsTab, type StatsActions } from "./statsTab";
 import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
 import { refreshSceneElo } from "./sceneElo";
 import { hideSetupScreen, isSetupRunning, showSetupScreen } from "./setupScreen";
@@ -124,6 +127,84 @@ function afterSetup(modal: HTMLElement): void {
   void loadNewPair(getSceneIdFromUrl());
 }
 
+/** Change mode: the run, shuffle position and "Battle the least-tested" start over. */
+function switchMode(modal: HTMLElement, mode: Mode): void {
+  state.currentMode = mode;
+  resetRunState();
+  state.shuffleIndex = 0;
+  state.leastTested = false;
+  modal.querySelectorAll<HTMLElement>(".sb-mode-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mode === state.currentMode);
+  });
+  updateModeInfo();
+  updateClimbPoolWarning();
+  updateLeastTestedNote();
+}
+
+/** The Stats and Explore tabs' actions: battle a scene, battle the least-tested, or explore an ELO range. */
+function statsActions(modal: HTMLElement): StatsActions {
+  const toBattle = (): void => {
+    resetRunState();
+    state.currentPair = { left: null, right: null };
+    state.currentRanks = { left: null, right: null };
+    updateLeastTestedNote();
+    showTab(modal, "battle");
+    applyPreviewSettings();
+  };
+  return {
+    // Like opening Stash Battle from the scene's page: a new battle with it, in the current mode
+    battleScene: (sceneId) => {
+      state.leastTested = false;
+      toBattle();
+      void loadNewPair(sceneId);
+    },
+    // Explore at this ELO range (a histogram bar)
+    exploreRange: (eloMin, eloMax) => {
+      setExploreFilters({ eloMin, eloMax });
+      showTab(modal, "explore");
+      // Coming from the bottom of Stats: scroll so the first row of cards starts just below the
+      // top, with the scene count and "Battle these" line above it
+      const scrollToCards = (): void => {
+        const scroller = modal.querySelector<HTMLElement>(".sb-modal-content");
+        const status = modal.querySelector<HTMLElement>(".sb-explore-status-row");
+        if (!scroller) return;
+        scroller.scrollTop = 0;
+        if (status) scroller.scrollTop = status.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 8;
+      };
+      void renderExploreTab(modal, statsActions(modal)).then(scrollToCards);
+    },
+    // Swiss with the fewest-battled scenes on the left, until stopped or the mode changes
+    battleLeastTested: () => {
+      if (state.currentMode !== "swiss") switchMode(modal, "swiss");
+      state.explorePool = null;
+      state.leastTested = true;
+      toBattle();
+      void loadNewPair();
+    },
+    // Battle an Explore filter until stopped: unrated scenes go to Placement; other filters use
+    // Swiss (the mode can be changed after)
+    battleFilter: (filters, label) => {
+      state.leastTested = false;
+      state.explorePool = { filters: { ...filters }, label };
+      resetShuffle();
+      const mode: Mode = filters.group === "unrated" ? "placement" : "swiss";
+      if (state.currentMode !== mode) switchMode(modal, mode);
+      toBattle();
+      void loadNewPair();
+      saveState();
+    },
+  };
+}
+
+/** Explore → "Battle these" Stop link: back to the Scenes page filter (or the whole library). */
+function stopExplorePool(): void {
+  state.explorePool = null;
+  resetShuffle();
+  resetRunState();
+  saveState();
+  void loadNewPair();
+}
+
 function onSettingChanged(key: keyof Settings): void {
   switch (key) {
     case "stashRatings":
@@ -154,7 +235,7 @@ function onSettingChanged(key: keyof Settings): void {
       break;
     case "openInNewTab":
     case "cleanMode":
-    case "showTiers":
+    case "tierBorders":
       rerenderCurrentPair();
       break;
   }
@@ -308,6 +389,15 @@ export async function openModal(): Promise<void> {
     modalContent.setAttribute("tabindex", "-1");
     modalContent.style.outline = "none";
     modalContent.focus();
+    // Nothing in Stash Battle scrolls sideways, but focusing or scrolling to an element can still
+    // shift an overflow-x: hidden box sideways (on phones, everything then looked cut off)
+    modalContent.addEventListener(
+      "scroll",
+      () => {
+        if (modalContent.scrollLeft !== 0) modalContent.scrollLeft = 0;
+      },
+      { passive: true },
+    );
   }
 
   // Mode toggle buttons
@@ -315,22 +405,9 @@ export async function openModal(): Promise<void> {
     btn.addEventListener("click", () => {
       const newMode = btn.dataset.mode as Mode;
       if (newMode !== state.currentMode) {
-        state.currentMode = newMode;
-
-        resetRunState();
-
-        // Reset shuffle to start fresh with new mode
-        state.shuffleIndex = 0;
-
-        // Update button states
-        modal.querySelectorAll<HTMLElement>(".sb-mode-btn").forEach((b) => {
-          b.classList.toggle("active", b.dataset.mode === state.currentMode);
-        });
-        updateModeInfo();
-
+        switchMode(modal, newMode);
         // Load new pair in new mode, preserving scene page context
         loadNewPair(getSceneIdFromUrl());
-        updateClimbPoolWarning();
         saveState();
       }
     });
@@ -346,10 +423,33 @@ export async function openModal(): Promise<void> {
     modeInfoBtn.setAttribute("aria-expanded", String(!modeInfo.hidden));
   });
 
-  // Battle / Settings tabs, settings controls, volume
+  // Battle / Settings / Stats tabs, settings controls, volume
   showTab(modal, "battle");
-  bindSettingsControls(modal, onSettingChanged, () => applyPreviewSettings(), confirmSettingChange);
+  bindSettingsControls(
+    modal,
+    onSettingChanged,
+    (tab) => {
+      applyPreviewSettings();
+      // A small card's preview (Explore, or a hidden gems card) never keeps playing on another tab
+      stopExplorePreview();
+      if (tab === "stats") void renderStatsTab(modal, statsActions(modal));
+      if (tab === "explore") void renderExploreTab(modal, statsActions(modal));
+    },
+    confirmSettingChange,
+  );
   updateRatingsNote();
+  updateLeastTestedNote();
+  modal.querySelector('[data-action="stop-least-tested"]')?.addEventListener("click", (e) => {
+    e.preventDefault();
+    state.leastTested = false;
+    updateLeastTestedNote();
+  });
+  // The pool line is redrawn often, so its Stop link is handled on the line itself
+  modal.querySelector("#sb-pool-status")?.addEventListener("click", (e) => {
+    if (!(e.target as Element).closest('[data-action="stop-explore-pool"]')) return;
+    e.preventDefault();
+    stopExplorePool();
+  });
 
   modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));
   // Battle tab note's "change in Settings" link
@@ -530,6 +630,9 @@ export function closeModal(): void {
 
   cancelDeleteDialog();
   cancelConfirmDialog();
+  // "Battle the least-tested" and a battled Explore filter stay on (until Stop): closing Stash
+  // Battle to watch a scene and coming back carries on where it was
+  stopExplorePreview();
   // Stash's scene lists show the ratings written while Stash Battle was open, and a scene page its ELO
   holdStashListRefresh(false);
   refreshSceneElo();

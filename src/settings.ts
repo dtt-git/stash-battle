@@ -3,6 +3,7 @@
 
 import {
   DEFAULT_SETTINGS,
+  EXPLORE_PAGE_SIZES,
   LEGACY_FILTER_OPPONENTS_KEY,
   LEGACY_MUTE_PREVIEWS_KEY,
   PLUGIN_ID,
@@ -53,8 +54,9 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
     cleanMode: bool("cleanMode"),
     pauseMediaOnOpen: bool("pauseMediaOnOpen"),
     placementFromBottom: bool("placementFromBottom"),
-    showTiers: bool("showTiers"),
+    tierBorders: bool("tierBorders"),
     previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
+    explorePageSize: EXPLORE_PAGE_SIZES.includes(Number(raw.explorePageSize)) ? Number(raw.explorePageSize) : base.explorePageSize,
   };
 }
 

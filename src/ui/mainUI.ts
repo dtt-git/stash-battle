@@ -16,7 +16,7 @@ import { recordPlacementResult } from "../placement";
 import { writeElo } from "../rating";
 import { fetchSceneFields } from "../sceneActions";
 import { battles, effectiveElo, kGames } from "../score";
-import { isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
+import { explorePoolWithin, isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { tierMap } from "../stats";
 import { saveState } from "../storage";
 import type { Mode, Rank, Scene, Tier } from "../types";
@@ -24,6 +24,8 @@ import { confirmDeleteScene } from "./deleteDialog";
 import { createSceneCard } from "./sceneCard";
 import { showPlacementScreen, showVictoryScreen } from "./screens";
 import { createSettingsTab, createTabBar, getActiveTab } from "./settingsPanel";
+import { createExploreTab } from "./exploreTab";
+import { createStatsTab } from "./statsTab";
 
 const MODES: { mode: Mode; icon: string; title: string; desc: string; tip: string }[] = [
   {
@@ -85,6 +87,9 @@ export function createMainUI(): string {
           <p id="sb-ratings-note" class="sb-pool-status sb-ratings-note" hidden>
             Stash ratings aren't being changed · <a href="#" data-action="open-settings">change in Settings</a>
           </p>
+          <p id="sb-least-tested-note" class="sb-pool-status sb-ratings-note" hidden>
+            Battling your least-tested scenes first · <a href="#" data-action="stop-least-tested">Stop</a>
+          </p>
 
           <div class="sb-content">
             <div id="sb-comparison-area" class="sb-comparison-area">
@@ -104,9 +109,17 @@ export function createMainUI(): string {
           </div>
         </div>
 
+        ${createExploreTab()}
+        ${createStatsTab()}
         ${createSettingsTab()}
       </div>
     `;
+}
+
+/** Battle tab note while "Battle the least-tested" (Stats tab) is on. */
+export function updateLeastTestedNote(): void {
+  const note = document.getElementById("sb-least-tested-note");
+  if (note) note.hidden = !state.leastTested;
 }
 
 /** Touch screens have no hover tooltips: the ⓘ button shows the current mode's explanation here. */
@@ -130,7 +143,11 @@ export function updatePoolStatus(): void {
   const countHtml =
     count === null ? "" : ` · <strong>${count} scene${count === 1 ? "" : "s"}</strong>`;
 
-  if (readFilters().filterActive) {
+  const pool = state.explorePool;
+  if (pool) {
+    const against = explorePoolWithin() ? "against each other" : "against your whole library";
+    status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
+  } else if (readFilters().filterActive) {
     const opponents = state.settings.filterOpponents ? " · opponents from the filter too" : "";
     status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${opponents}`;
   } else {
@@ -183,7 +200,7 @@ function isTouchDevice(): boolean {
 }
 
 /** Thumbnail / ↗ link click: native link for new tab or modifier clicks, SPA navigation otherwise. */
-function handleSceneLinkClick(e: MouseEvent, link: HTMLAnchorElement): void {
+export function handleSceneLinkClick(e: MouseEvent, link: HTMLAnchorElement): void {
   const nativeNewTab = link.target === "_blank" && state.settings.openInNewTab;
   if (nativeNewTab || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
@@ -194,7 +211,7 @@ function handleSceneLinkClick(e: MouseEvent, link: HTMLAnchorElement): void {
  * Slider (0-100) to media volume on a cubic curve, so the slider tracks perceived loudness.
  * (Stash's player is linear, but generated preview clips are much louder than the source.)
  */
-function sliderToVolume(slider: number): number {
+export function sliderToVolume(slider: number): number {
   return Math.pow(slider / 100, 3);
 }
 
@@ -272,10 +289,10 @@ function vsDivider(left: Scene, right: Scene): string {
         </div>`;
 }
 
-/** Each scene's tier when "Show tiers on cards" is on (from the whole library's ELO order). */
+/** Each scene's tier (from the whole library's ELO order). */
 function pairTiers(scenes: Scene[]): (Tier | null)[] {
   const library = state.memoryCache.allScenes;
-  if (!state.settings.showTiers || !library) return scenes.map(() => null);
+  if (!library) return scenes.map(() => null);
   const tiers = tierMap(library);
   return scenes.map((scene) => tiers.get(scene.id) ?? null);
 }

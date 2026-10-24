@@ -5,7 +5,21 @@
 // mutable values live on this single `state` object that every module imports.
 
 import { DEFAULT_SETTINGS } from "./constants";
+import { filterBattlesWithin, type ExploreFilters } from "./explore";
 import type { Mode, Pair, PlacementRun, Ranks, Scene, Settings } from "./types";
+
+/** An Explore filter being battled (see filterBattlesWithin for who battles whom). */
+export interface ExplorePool {
+  filters: ExploreFilters;
+  /** "👑 Legendary · ELO 1600–1700", for the note above the cards. */
+  label: string;
+}
+
+/** The battled Explore filter's scenes are on both sides (read each pick, so the setting applies at once). */
+export function explorePoolWithin(): boolean {
+  const pool = state.explorePool;
+  return pool !== null && filterBattlesWithin(pool.filters, state.settings.filterOpponents);
+}
 
 export interface MemoryCache {
   allScenes: Scene[] | null; // All scenes (no filter)
@@ -32,6 +46,8 @@ export interface BattleState {
   // User settings (defaults until loadSettings() resolves)
   settings: Settings;
   resettingElo: boolean; // Reset ELO's setup screen is showing (battles wait, like a first setup)
+  leastTested: boolean; // Stats → "Battle the least-tested": Swiss takes the fewest-battled scene on the left
+  explorePool: ExplorePool | null; // Explore → "Battle these": the filter's scenes replace the Scenes page filter
   // Shuffle state for the left-side pool (prevents repeats when skipping)
   shuffledFilteredScenes: Scene[];
   shuffleIndex: number;
@@ -54,6 +70,8 @@ export const state: BattleState = {
   savedFilterParams: "",
   settings: { ...DEFAULT_SETTINGS },
   resettingElo: false,
+  leastTested: false,
+  explorePool: null,
   shuffledFilteredScenes: [],
   shuffleIndex: 0,
   shuffleFilterKey: null,

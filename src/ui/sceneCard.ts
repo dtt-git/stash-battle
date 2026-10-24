@@ -63,6 +63,8 @@ export function createSceneCard(
   } else {
     eloLabel = unratedAs !== null ? `ELO ${unratedAs} · Unrated` : "Unrated";
   }
+  // "Tier colours on card borders": the border takes the tier's colour (the pill always shows)
+  const border = tier !== null && state.settings.tierBorders;
   const rankTitle = provisional ? ` title="${PROVISIONAL_TIP}"` : "";
   const rankDisplay = `${tier ? tierPill(tier) : ""}<span class="sb-scene-rank"${rankTitle}>${eloLabel}</span>`;
 
@@ -82,7 +84,7 @@ export function createSceneCard(
   // pwr-* classes are the plugin's pre-2.0 names; SFW Switch still targets them to blur Stash Battle.
   // Badges sit outside the (blurred) image container so they stay readable in SFW mode.
   return `
-      <div class="sb-scene-card${tier ? ` sb-tier-${tier.id}` : ""}" data-side="${side}"${tier ? ` data-tier="${tier.id}"` : ""}>
+      <div class="sb-scene-card${border ? ` sb-tier-${tier?.id}` : ""}" data-side="${side}"${border ? ` data-tier="${tier?.id}"` : ""}>
         <div class="sb-scene-media">
           <a class="sb-scene-image-container pwr-scene-image-container" href="${sceneUrl}"${linkTarget}>
             ${
