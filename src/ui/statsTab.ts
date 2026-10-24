@@ -18,10 +18,13 @@ import {
   overview,
   ratingScaleTicks,
   settledBuckets,
+  topByRecord,
   tierMap,
   type GemsSplit,
 } from "../stats";
 import type { Scene } from "../types";
+import { noteTopScene } from "../rating";
+import { getHallOfFame } from "../settings";
 import { handleSceneLinkClick } from "./mainUI";
 import { miniCardHtml, plural, sceneUrl } from "./miniCard";
 import { resolveSceneTitle } from "../sceneTitle";
@@ -300,6 +303,56 @@ function settledHtml(): string {
           </div>`;
 }
 
+// ---------- Records ----------
+
+/** Scenes listed in each Records row. */
+const RECORDS_TOP = 5;
+
+function shortDate(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** A row of small cards, each with a caption above it ("#1 since Oct 24, 2026"). */
+function recordRow(title: string, items: { scene: Scene; caption: string }[], empty: string): string {
+  const cards = items
+    .map(({ scene, caption }) => {
+      const entry = entriesById.get(scene.id);
+      return entry ? `<div class="sb-record-item"><div class="sb-record-caption">${caption}</div>${miniCardHtml(entry)}</div>` : "";
+    })
+    .join("");
+  return `
+          <div class="sb-record-row">
+            <h3 class="sb-record-title">${title}</h3>
+            ${cards ? `<div class="sb-record-cards">${cards}</div>` : `<p class="sb-stats-muted">${empty}</p>`}
+          </div>`;
+}
+
+/** Hall of fame (newest #1 first), and the top scenes by best win streak and by peak ELO. */
+function recordsHtml(): string {
+  const byId = new Map(scenes.map((s) => [s.id, s]));
+  const hall = [...getHallOfFame()]
+    .reverse()
+    .map((e) => ({ scene: byId.get(e.id), date: e.date }))
+    .filter((e): e is { scene: Scene; date: string } => e.scene !== undefined)
+    .map(({ scene, date }) => ({ scene, caption: `👑 #1 since ${shortDate(date)}` }));
+  const streaks = topByRecord(scenes, (r) => r.bestStreak, RECORDS_TOP).map(({ scene, record }) => ({
+    scene,
+    caption: `🔥 ${plural(record.bestStreak, "win")} in a row`,
+  }));
+  const peaks = topByRecord(scenes, (r) => r.peak, RECORDS_TOP).map(({ scene, record }) => ({
+    scene,
+    caption: `📈 Peak ELO ${Math.round(record.peak)}`,
+  }));
+  return `
+          <div class="sb-records">
+            ${recordRow("Hall of fame", hall, "No scene has been #1 yet.")}
+            ${recordRow("Longest win streaks", streaks, "No win streaks yet: records start counting with your next battle.")}
+            ${recordRow("Highest peak ELO", peaks, "No peaks yet: records start counting with your next battle.")}
+            <p class="sb-stats-note">Records count battles since they began; earlier battles only add to a scene's battle count.</p>
+          </div>`;
+}
+
 // ---------- Rendering and events ----------
 
 function drawCharts(root: HTMLElement): void {
@@ -420,6 +473,14 @@ function onContentClick(e: MouseEvent): void {
   const target = e.target as Element;
   const root = e.currentTarget as HTMLElement;
   if (!actions) return;
+  // The Records section's cards: ⚔️ battles the scene, the rest opens the scene's page
+  if (target.closest(".sb-records")) {
+    const battle = target.closest<HTMLElement>("[data-battle]");
+    const link = target.closest<HTMLAnchorElement>(".sb-mini-link");
+    if (battle?.dataset.battle) actions.battleScene(battle.dataset.battle);
+    else if (link) handleSceneLinkClick(e, link);
+    return;
+  }
   // A pinned tip (touch): a card's ⚔️ battles the scene and the rest opens the scene's page; a
   // bar's button opens Explore at its range
   if (target.closest(".sb-chart-tip-pinned")) {
@@ -507,11 +568,14 @@ export async function renderStatsTab(modal: HTMLElement, statsActions: StatsActi
     return;
   }
   const tiers = tierMap(scenes);
+  // The current #1 joins the hall of fame if it isn't there yet (as after a battle)
+  noteTopScene();
   entriesById = new Map(exploreEntries(scenes, tiers, resolveSceneTitle).map((entry) => [entry.scene.id, entry]));
 
   content.innerHTML = [
     section("Overview", overviewHtml()),
     section("How settled the rankings are", settledHtml()),
+    section("Records", recordsHtml(), "sb-stats-records"),
     section(
       "ELO distribution",
       `<div class="sb-chart" id="sb-stats-histogram"></div>${distributionNote()}<p class="sb-stats-note">Click a bar to see its scenes in Explore.</p>`,

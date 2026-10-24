@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { refreshSceneInCache } from "../src/cache";
 import { holdStashListRefresh, refreshStashCache } from "../src/graphql";
 import { syncStashRatings, writeElo } from "../src/rating";
-import { battles, elo } from "../src/score";
+import { battles, elo, sceneRecord } from "../src/score";
 import { updateSettingsNow } from "../src/settings";
 import { state } from "../src/state";
 import type { Scene } from "../src/types";
@@ -149,13 +149,46 @@ test("writeElo puts the old ELO back when the write fails", async () => {
   const originalError = console.error;
   console.error = () => {};
   try {
-    await writeElo(held, 1640, 5);
+    await writeElo(held, 1640, 5, [true]);
   } finally {
     console.error = originalError;
   }
   assert.equal(elo(state.memoryCache.allScenes[0]), 1600);
   assert.equal(battles(state.memoryCache.allScenes[0]), 4);
   assert.equal(elo(held), 1600);
+  // The record it would have started is rolled back too
+  assert.equal(sceneRecord(state.memoryCache.allScenes[0]), null);
+});
+
+test("writeElo sends the record in the same request as the ELO, then notes a new #1", async () => {
+  const bodies: { query: string; variables: { input: { custom_fields: { partial: Record<string, unknown> } } } }[] = [];
+  globalThis.fetch = (async (_url: unknown, init: { body: string }) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (body.query.includes("configuration")) return { json: async () => ({ data: { configuration: { plugins: {} } } }) };
+    return { json: async () => ({ data: { sceneUpdate: { id: "r" }, configurePlugin: {} } }) };
+  }) as unknown as typeof fetch;
+  fakeApollo({});
+  state.settings = { ...state.settings, stashRatings: "off" };
+  const cached = { ...scene("r", 1600, null), custom_fields: { stash_battle_elo: 1600, stash_battle_battles: 4, stash_battle_wins: 2, stash_battle_losses: 1, stash_battle_peak: 1610, stash_battle_streak: 1, stash_battle_best_streak: 2 } };
+  state.memoryCache.allScenes = [cached];
+  state.memoryCache.filteredScenes = null;
+  await writeElo(cached, 1625, 5, [true]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const updates = bodies.filter((body) => body.query.includes("sceneUpdate"));
+  assert.equal(updates.length, 1);
+  // The only scene is #1, so it joins the hall of fame (a config read, then the save)
+  assert.ok(bodies.some((body) => body.query.includes("configurePlugin") && JSON.stringify(body.variables).includes('\\"id\\":\\"r\\"')));
+  assert.deepEqual(updates[0].variables.input.custom_fields.partial, {
+    stash_battle_elo: 1625,
+    stash_battle_battles: 5,
+    stash_battle_seeded: false,
+    stash_battle_wins: 3,
+    stash_battle_losses: 1,
+    stash_battle_peak: 1625,
+    stash_battle_streak: 2,
+    stash_battle_best_streak: 2,
+  });
 });
 
 test("a settings save keeps what another tab stored, plus only this tab's changes", async () => {

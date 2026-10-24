@@ -13,6 +13,7 @@ import {
   ratingScaleTicks,
   settledBuckets,
   tierMap,
+  topByRecord,
 } from "../src/stats";
 import type { Scene } from "../src/types";
 
@@ -178,4 +179,11 @@ test("leastTestedPool counts the scenes sharing the fewest battles, unrated ones
   assert.deepEqual(leastTestedPool([sc("a", 1500, 0), sc("b", 1500, 0), sc("c", 1500, 3), sc("u")]), { battles: 0, count: 3, unrated: 1 });
   assert.deepEqual(leastTestedPool([sc("a", 1500, 4), sc("b", 1500, 2)]), { battles: 2, count: 1, unrated: 0 });
   assert.equal(leastTestedPool([]), null);
+});
+
+test("topByRecord: highest first, only scenes with that record, capped", () => {
+  const r = (id: string, best: number, peak: number): Scene => ({ id, custom_fields: { stash_battle_elo: 1500, stash_battle_wins: 1, stash_battle_best_streak: best, stash_battle_peak: peak } });
+  const lib = [r("a", 2, 1600), r("b", 5, 1550), r("c", 0, 1700), sc("n", 1500, 4)];
+  assert.deepEqual(topByRecord(lib, (x) => x.bestStreak, 5).map((t) => t.scene.id), ["b", "a"]);
+  assert.deepEqual(topByRecord(lib, (x) => x.peak, 2).map((t) => t.scene.id), ["c", "a"]);
 });

@@ -1,7 +1,7 @@
 // Renders an individual scene card (returns an HTML string).
 
 import { CHAMPION_UNRATED_ELO, ELO_K_TIERS, ELO_START } from "../constants";
-import { battles, elo, isProvisional } from "../score";
+import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
 import { tierDescription } from "../stats";
 import { isStashDeleteDialogAvailable } from "./deleteDialog";
@@ -66,6 +66,8 @@ export function createSceneCard(
   // "Tier colours on card borders": the border takes the tier's colour (the pill always shows)
   const border = tier !== null && state.settings.tierBorders;
   const rankTitle = provisional ? ` title="${PROVISIONAL_TIP}"` : "";
+  // "Record: 12–5"; battles from before records began show as "Battles: N"
+  const record = recordText(scene);
   const rankDisplay = `${tier ? tierPill(tier) : ""}<span class="sb-scene-rank"${rankTitle}>${eloLabel}</span>`;
 
   // Status badge: win-streak count (formatted) or custom label (e.g. falling mode)
@@ -112,7 +114,7 @@ export function createSceneCard(
               <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
               <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="sb-meta-item sb-meta-battles"><strong>Battles:</strong> ${battles(scene)}</div>
+              <div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>
               <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>

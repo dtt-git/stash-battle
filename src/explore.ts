@@ -1,8 +1,8 @@
 // The Explore tab's search, filters and sorting over the library. Pure functions: no state, no I/O.
 
-import { battles, elo, isProvisional } from "./score";
+import { battles, elo, isProvisional, sceneRecord } from "./score";
 import { cachedTierMap } from "./stats";
-import type { Scene, Tier } from "./types";
+import type { Scene, SceneRecord, Tier } from "./types";
 
 /** A library scene with what Explore shows and filters on. */
 export interface ExploreEntry {
@@ -17,7 +17,16 @@ export interface ExploreEntry {
 /** A tier id, or "provisional" / "unrated"; null shows everyone. */
 export type ExploreGroup = string | null;
 
-export type ExploreSort = "elo-desc" | "elo-asc" | "plays-desc" | "plays-asc" | "battles-desc" | "battles-asc";
+export type ExploreSort =
+  | "elo-desc"
+  | "elo-asc"
+  | "plays-desc"
+  | "plays-asc"
+  | "battles-desc"
+  | "battles-asc"
+  | "record-desc"
+  | "peak-desc"
+  | "streak-desc";
 
 export interface ExploreFilters {
   query: string;
@@ -78,6 +87,21 @@ export function filterExplore(entries: ExploreEntry[], filters: ExploreFilters):
   return sortExplore(matches, filters.sort);
 }
 
+/**
+ * Highest first by each key in turn (wins − losses, then wins, say); scenes without a record go
+ * last. 0 when equal.
+ */
+function byRecord(a: ExploreEntry, b: ExploreEntry, ...keys: ((r: SceneRecord) => number)[]): number {
+  const ra = sceneRecord(a.scene);
+  const rb = sceneRecord(b.scene);
+  if (!ra || !rb) return (ra ? 0 : 1) - (rb ? 0 : 1);
+  for (const key of keys) {
+    const diff = key(rb) - key(ra);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
 /** Sorted copy. ELO sorts keep unrated scenes last either way; ties keep the library (ELO) order. */
 export function sortExplore(entries: ExploreEntry[], sort: ExploreSort): ExploreEntry[] {
   const byRank = (a: ExploreEntry, b: ExploreEntry): number => (a.rank ?? Infinity) - (b.rank ?? Infinity);
@@ -89,6 +113,10 @@ export function sortExplore(entries: ExploreEntry[], sort: ExploreSort): Explore
     "plays-asc": (a, b) => plays(a) - plays(b) || byRank(a, b),
     "battles-desc": (a, b) => battles(b.scene) - battles(a.scene) || byRank(a, b),
     "battles-asc": (a, b) => battles(a.scene) - battles(b.scene) || byRank(a, b),
+    // Record sorts put scenes without a record last
+    "record-desc": (a, b) => byRecord(a, b, (r) => r.wins - r.losses, (r) => r.wins) || byRank(a, b),
+    "peak-desc": (a, b) => byRecord(a, b, (r) => r.peak) || byRank(a, b),
+    "streak-desc": (a, b) => byRecord(a, b, (r) => r.bestStreak) || byRank(a, b),
   };
   return [...entries].sort(compare[sort]);
 }

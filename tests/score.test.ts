@@ -12,6 +12,9 @@ import {
   kGames,
   linearRating,
   percentileRatings,
+  recordAfter,
+  recordText,
+  sceneRecord,
   seed,
   stashRatingChanges,
   swissOpponentIndexes,
@@ -209,4 +212,32 @@ test("swissOpponentIndexes: unrated scenes count as 1500", () => {
   const pool = [scene("a", 1700), scene("b", 1520), scene("u"), scene("c", 1300)];
   // An unrated scene (not in the pool) matches around 1500
   assert.deepEqual(swissOpponentIndexes(pool, 1500, "x", 100, 1), [1, 2]);
+});
+
+test("recordAfter: wins, losses, streaks and peak", () => {
+  // A first record starts from the ELO before the picks as its peak
+  assert.deepEqual(recordAfter(null, [true], 1500, 1512), { wins: 1, losses: 0, peak: 1512, streak: 1, bestStreak: 1 });
+  assert.deepEqual(recordAfter(null, [false], 1500, 1488), { wins: 0, losses: 1, peak: 1500, streak: 0, bestStreak: 0 });
+  // A loss ends the streak; the best one stays
+  const before = { wins: 5, losses: 2, peak: 1700, streak: 3, bestStreak: 4 };
+  assert.deepEqual(recordAfter(before, [true, true, false, true], 1650, 1690), { wins: 8, losses: 3, peak: 1700, streak: 1, bestStreak: 5 });
+  assert.equal(recordAfter(before, [true], 1690, 1712.34).peak, 1712.3);
+  // Placement's run: several picks added at once, in order
+  assert.deepEqual(recordAfter(null, [true, true, true], 1400, 1640), { wins: 3, losses: 0, peak: 1640, streak: 3, bestStreak: 3 });
+  // The record passed in isn't changed
+  assert.equal(before.wins, 5);
+});
+
+test("sceneRecord reads the stored record, or null before the first one", () => {
+  assert.equal(sceneRecord(scene("a", 1500, 3)), null);
+  const s = { id: "b", custom_fields: { stash_battle_elo: 1600, stash_battle_wins: 2, stash_battle_losses: "1", stash_battle_streak: 2, stash_battle_best_streak: 2 } };
+  // No peak stored yet: the current ELO
+  assert.deepEqual(sceneRecord(s), { wins: 2, losses: 1, peak: 1600, streak: 2, bestStreak: 2 });
+});
+
+test("recordText: wins–losses, 0–0 with no battles, null for battles from before records", () => {
+  assert.equal(recordText({ id: "a", custom_fields: { stash_battle_elo: 1600, stash_battle_wins: 12, stash_battle_losses: 5 } }), "12–5");
+  assert.equal(recordText(scene("b", 1500, 0)), "0–0");
+  assert.equal(recordText(scene("c")), "0–0");
+  assert.equal(recordText(scene("d", 1500, 3)), null);
 });

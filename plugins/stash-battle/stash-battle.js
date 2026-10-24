@@ -33,7 +33,13 @@
   var ELO_FIELD = "stash_battle_elo";
   var BATTLES_FIELD = "stash_battle_battles";
   var SEEDED_FIELD = "stash_battle_seeded";
-  var ELO_FIELD_KEYS = [ELO_FIELD, BATTLES_FIELD, SEEDED_FIELD];
+  var WINS_FIELD = "stash_battle_wins";
+  var LOSSES_FIELD = "stash_battle_losses";
+  var PEAK_FIELD = "stash_battle_peak";
+  var STREAK_FIELD = "stash_battle_streak";
+  var BEST_STREAK_FIELD = "stash_battle_best_streak";
+  var RECORD_FIELD_KEYS = [WINS_FIELD, LOSSES_FIELD, PEAK_FIELD, STREAK_FIELD, BEST_STREAK_FIELD];
+  var ELO_FIELD_KEYS = [ELO_FIELD, BATTLES_FIELD, SEEDED_FIELD, ...RECORD_FIELD_KEYS];
   var ELO_START = 1500;
   var ELO_DIVISOR = 400;
   var ELO_K_TIERS = [
@@ -109,8 +115,57 @@
   function isProvisional(scene) {
     return isRated(scene) && kGames(scene) < ELO_K_TIERS[0][0];
   }
+  function sceneRecord(scene) {
+    const fields = scene.custom_fields;
+    const count = (key) => {
+      const n = readNumber(fields?.[key]);
+      return n === null ? null : Math.max(0, Math.floor(n));
+    };
+    const wins = count(WINS_FIELD);
+    const losses = count(LOSSES_FIELD);
+    const peak = readNumber(fields?.[PEAK_FIELD]);
+    if (wins === null && losses === null && peak === null) return null;
+    return {
+      wins: wins ?? 0,
+      losses: losses ?? 0,
+      peak: peak ?? elo(scene) ?? 0,
+      streak: count(STREAK_FIELD) ?? 0,
+      bestStreak: count(BEST_STREAK_FIELD) ?? 0
+    };
+  }
+  function recordText(scene) {
+    const record = sceneRecord(scene);
+    if (record) return `${record.wins}–${record.losses}`;
+    return battles(scene) === 0 ? "0–0" : null;
+  }
+  function recordAfter(record, results2, startElo, newElo) {
+    const next = record ? { ...record } : { wins: 0, losses: 0, peak: startElo, streak: 0, bestStreak: 0 };
+    for (const won of results2) {
+      if (won) {
+        next.wins++;
+        next.streak++;
+        next.bestStreak = Math.max(next.bestStreak, next.streak);
+      } else {
+        next.losses++;
+        next.streak = 0;
+      }
+    }
+    next.peak = roundElo(Math.max(next.peak, newElo));
+    return next;
+  }
   function eloCustomFields(value) {
-    return { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
+    const fields = { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
+    const record = value.record;
+    if (record) {
+      Object.assign(fields, {
+        [WINS_FIELD]: record.wins,
+        [LOSSES_FIELD]: record.losses,
+        [PEAK_FIELD]: record.peak,
+        [STREAK_FIELD]: record.streak,
+        [BEST_STREAK_FIELD]: record.bestStreak
+      });
+    }
+    return fields;
   }
   function seed(rating100) {
     return ELO_START + (rating100 - 50) * ELO_PER_RATING_POINT;
@@ -171,7 +226,9 @@
   }
   function eloFields(scene) {
     const value = elo(scene);
-    return value === null ? null : { elo: value, battles: battles(scene), seeded: isSeeded(scene) };
+    if (value === null) return null;
+    const record = sceneRecord(scene);
+    return { elo: value, battles: battles(scene), seeded: isSeeded(scene), ...record ? { record } : {} };
   }
   function afterSetup(scene, start) {
     return { ...scene, custom_fields: withEloFields(scene.custom_fields, startingElo(scene, start)) };
@@ -721,6 +778,9 @@
     const where = index === TIERS.length - 1 && index > 0 ? `below the top ${percent(TIERS[index - 1].top)}` : `in the top ${percent(tier.top)}`;
     return `${tier.name}: ${where} of your scenes with a settled ELO`;
   }
+  function topByRecord(scenes2, key, n) {
+    return scenes2.map((scene) => ({ scene, record: sceneRecord(scene) })).filter((s) => s.record !== null && key(s.record) > 0).sort((a, b) => key(b.record) - key(a.record)).slice(0, n);
+  }
   function leastTestedPool(scenes2) {
     if (scenes2.length === 0) return null;
     const fewest = Math.min(...scenes2.map(battles));
@@ -766,6 +826,16 @@
     });
     return sortExplore(matches, filters2.sort);
   }
+  function byRecord(a, b, ...keys) {
+    const ra = sceneRecord(a.scene);
+    const rb = sceneRecord(b.scene);
+    if (!ra || !rb) return (ra ? 0 : 1) - (rb ? 0 : 1);
+    for (const key of keys) {
+      const diff = key(rb) - key(ra);
+      if (diff) return diff;
+    }
+    return 0;
+  }
   function sortExplore(entries2, sort) {
     const byRank = (a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity);
     const plays = (e) => e.scene.play_count ?? 0;
@@ -775,7 +845,11 @@
       "plays-desc": (a, b) => plays(b) - plays(a) || byRank(a, b),
       "plays-asc": (a, b) => plays(a) - plays(b) || byRank(a, b),
       "battles-desc": (a, b) => battles(b.scene) - battles(a.scene) || byRank(a, b),
-      "battles-asc": (a, b) => battles(a.scene) - battles(b.scene) || byRank(a, b)
+      "battles-asc": (a, b) => battles(a.scene) - battles(b.scene) || byRank(a, b),
+      // Record sorts put scenes without a record last
+      "record-desc": (a, b) => byRecord(a, b, (r) => r.wins - r.losses, (r) => r.wins) || byRank(a, b),
+      "peak-desc": (a, b) => byRecord(a, b, (r) => r.peak) || byRank(a, b),
+      "streak-desc": (a, b) => byRecord(a, b, (r) => r.bestStreak) || byRank(a, b)
     };
     return [...entries2].sort(compare[sort]);
   }
@@ -1208,6 +1282,149 @@
     return error instanceof Error && /not found/i.test(error.message);
   }
 
+  // src/settings.ts
+  var CONFIG_QUERY = `{ configuration { plugins } }`;
+  var CONFIGURE_PLUGIN_MUTATION = `
+      mutation ConfigurePlugin($plugin_id: ID!, $input: Map!) {
+        configurePlugin(plugin_id: $plugin_id, input: $input)
+      }
+    `;
+  var SAVE_DEBOUNCE_MS = 400;
+  var saveTimer = null;
+  var legacyFunMode = false;
+  var STASH_RATINGS_MODES = ["off", "percentile", "linear"];
+  var ELO_STARTS = ["ratings", "fresh"];
+  function oneOf(value, allowed, fallback) {
+    return allowed.includes(value) ? value : fallback;
+  }
+  function clampPercent(value, fallback) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : fallback;
+  }
+  function normalize(raw, base) {
+    const bool = (key) => typeof raw[key] === "boolean" ? raw[key] : base[key];
+    return {
+      // A missing or unknown value is "off". (Removed keys, see REMOVED_KEYS, are dropped.)
+      stashRatings: oneOf(raw.stashRatings, STASH_RATINGS_MODES, "off"),
+      // Setup flags have no fallback: raw always carries them (stored config, or current + patch)
+      eloSetupAt: typeof raw.eloSetupAt === "string" && raw.eloSetupAt ? raw.eloSetupAt : null,
+      eloSetupMode: ELO_STARTS.includes(raw.eloSetupMode) ? raw.eloSetupMode : null,
+      openInNewTab: bool("openInNewTab"),
+      autoplayPreviews: bool("autoplayPreviews"),
+      filterOpponents: bool("filterOpponents"),
+      cleanMode: bool("cleanMode"),
+      pauseMediaOnOpen: bool("pauseMediaOnOpen"),
+      placementFromBottom: bool("placementFromBottom"),
+      tierBorders: bool("tierBorders"),
+      previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
+      explorePageSize: EXPLORE_PAGE_SIZES.includes(Number(raw.explorePageSize)) ? Number(raw.explorePageSize) : base.explorePageSize
+    };
+  }
+  function legacyDefaults() {
+    const settings = { ...DEFAULT_SETTINGS };
+    try {
+      if (localStorage.getItem(LEGACY_FILTER_OPPONENTS_KEY) === "1") settings.filterOpponents = true;
+      if (localStorage.getItem(LEGACY_MUTE_PREVIEWS_KEY) === "1") settings.previewVolume = 0;
+    } catch {
+    }
+    return settings;
+  }
+  async function loadSettings() {
+    try {
+      const stored = await fetchStoredConfig();
+      legacyFunMode = stored?.funMode === true;
+      hallOfFame = parseHallOfFame(stored?.[HALL_OF_FAME_KEY]);
+      state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
+      return true;
+    } catch (e) {
+      console.error("[Stash Battle] Failed to load settings, using current values:", e);
+      return false;
+    }
+  }
+  function hadFunMode() {
+    return legacyFunMode;
+  }
+  var unsaved = /* @__PURE__ */ new Set();
+  async function fetchStoredConfig() {
+    const data = await graphqlQuery(
+      CONFIG_QUERY
+    );
+    return data.configuration.plugins?.[PLUGIN_ID];
+  }
+  var REMOVED_KEYS = ["funMode", "unratedRating", "showTiers"];
+  function mergeConfig(stored, current, unsavedKeys, extra = {}) {
+    const merged = stored ? { ...stored, ...normalize(stored, current) } : { ...current };
+    for (const key of unsavedKeys) merged[key] = current[key];
+    Object.assign(merged, extra);
+    for (const key of REMOVED_KEYS) delete merged[key];
+    return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null && value !== void 0));
+  }
+  var configWrites = Promise.resolve();
+  function saveConfig(extra = {}) {
+    const run = configWrites.then(async () => {
+      const keys = [...unsaved];
+      unsaved.clear();
+      try {
+        const input = mergeConfig(await fetchStoredConfig(), state.settings, keys, extra);
+        await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
+        return true;
+      } catch (e) {
+        console.error("[Stash Battle] Failed to save settings:", e);
+        for (const key of keys) unsaved.add(key);
+        return false;
+      }
+    });
+    configWrites = run;
+    return run;
+  }
+  function persistSettings() {
+    return saveConfig();
+  }
+  var HALL_OF_FAME_KEY = "statsHallOfFame";
+  var hallOfFame = [];
+  function parseHallOfFame(value) {
+    if (typeof value !== "string" || !value) return [];
+    try {
+      const list = JSON.parse(value);
+      if (!Array.isArray(list)) return [];
+      return list.filter(
+        (e) => typeof e?.id === "string" && typeof e?.date === "string"
+      );
+    } catch {
+      return [];
+    }
+  }
+  function getHallOfFame() {
+    return hallOfFame;
+  }
+  async function addToHallOfFame(sceneId, date = (/* @__PURE__ */ new Date()).toISOString()) {
+    if (hallOfFame.some((e) => e.id === sceneId)) return;
+    hallOfFame = [...hallOfFame, { id: sceneId, date }];
+    await saveConfig({ [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) });
+  }
+  async function clearHallOfFame() {
+    hallOfFame = [];
+    await saveConfig({ [HALL_OF_FAME_KEY]: null });
+  }
+  function updateSettings(patch) {
+    state.settings = normalize({ ...state.settings, ...patch }, state.settings);
+    for (const key of Object.keys(patch)) unsaved.add(key);
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void persistSettings();
+    }, SAVE_DEBOUNCE_MS);
+  }
+  async function updateSettingsNow(patch) {
+    state.settings = normalize({ ...state.settings, ...patch }, state.settings);
+    for (const key of Object.keys(patch)) unsaved.add(key);
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    return persistSettings();
+  }
+
   // src/rating.ts
   var SCENE_MISSING_EVENT = "stash-battle:scene-missing";
   var SCENE_UPDATE_MUTATION = `
@@ -1225,7 +1442,7 @@
   }
   function sameElo(a, b) {
     if (a === null || b === null) return a === b;
-    return a.elo === b.elo && a.battles === b.battles && a.seeded === b.seeded;
+    return JSON.stringify(eloCustomFields(a)) === JSON.stringify(eloCustomFields(b));
   }
   async function saveEloFields(scene, value, customFields, what) {
     const previous = eloFields(latestScene(scene));
@@ -1244,11 +1461,18 @@
     scheduleStashRatingSync();
     return true;
   }
-  async function writeElo(scene, elo2, battles2) {
-    const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene) };
+  async function writeElo(scene, elo2, battles2, results2) {
+    const current = latestScene(scene);
+    const record = recordAfter(sceneRecord(current), results2, elo(current) ?? elo2, elo2);
+    const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene), record };
     if (await saveEloFields(scene, value, { partial: eloCustomFields(value) }, "save ELO")) {
       console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo2} (${battles2} battles)`);
+      noteTopScene();
     }
+  }
+  function noteTopScene() {
+    const top = state.memoryCache.allScenes?.[0];
+    if (top && isRated(top) && !getHallOfFame().some((e) => e.id === top.id)) void addToHallOfFame(top.id);
   }
   async function writeStashRatings(ratings) {
     const idsByRating = /* @__PURE__ */ new Map();
@@ -1358,7 +1582,7 @@
     const variables = Object.fromEntries(
       values.map((r) => {
         const partial = eloCustomFields({ elo: seed(r), battles: 0, seeded: true });
-        return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial } }];
+        return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial, remove: RECORD_FIELD_KEYS } }];
       })
     );
     await graphqlQuery(mutation, variables);
@@ -1383,11 +1607,19 @@
       onProgress("elo", 0, ids.length);
       if (ids.length > 0) {
         await graphqlQuery(BULK_UPDATE_MUTATION, {
-          input: { ids, custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }) } }
+          input: {
+            ids,
+            custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }), remove: RECORD_FIELD_KEYS }
+          }
         });
       }
       onProgress("elo", ids.length, ids.length);
       summary.eloWritten = ids.length;
+    }
+    try {
+      await clearHallOfFame();
+    } catch (e) {
+      console.warn("[Stash Battle] Couldn't clear the hall of fame:", e);
     }
     const changes = setupRatingChanges(scenes2, start, stashRatings);
     if (changes.size > 0) {
@@ -1404,109 +1636,6 @@
       `[Stash Battle] ✅ ELO setup (${start}, Stash ratings ${stashRatings}): ${summary.eloWritten} ELO written, ${summary.eloCleared} cleared, ${summary.ratingsWritten} Stash ratings written`
     );
     return summary;
-  }
-
-  // src/settings.ts
-  var CONFIG_QUERY = `{ configuration { plugins } }`;
-  var CONFIGURE_PLUGIN_MUTATION = `
-      mutation ConfigurePlugin($plugin_id: ID!, $input: Map!) {
-        configurePlugin(plugin_id: $plugin_id, input: $input)
-      }
-    `;
-  var SAVE_DEBOUNCE_MS = 400;
-  var saveTimer = null;
-  var legacyFunMode = false;
-  var STASH_RATINGS_MODES = ["off", "percentile", "linear"];
-  var ELO_STARTS = ["ratings", "fresh"];
-  function oneOf(value, allowed, fallback) {
-    return allowed.includes(value) ? value : fallback;
-  }
-  function clampPercent(value, fallback) {
-    const n = Number(value);
-    return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : fallback;
-  }
-  function normalize(raw, base) {
-    const bool = (key) => typeof raw[key] === "boolean" ? raw[key] : base[key];
-    return {
-      // A missing or unknown value is "off". (Removed keys, funMode and unratedRating, are dropped.)
-      stashRatings: oneOf(raw.stashRatings, STASH_RATINGS_MODES, "off"),
-      // Setup flags have no fallback: raw always carries them (stored config, or current + patch)
-      eloSetupAt: typeof raw.eloSetupAt === "string" && raw.eloSetupAt ? raw.eloSetupAt : null,
-      eloSetupMode: ELO_STARTS.includes(raw.eloSetupMode) ? raw.eloSetupMode : null,
-      openInNewTab: bool("openInNewTab"),
-      autoplayPreviews: bool("autoplayPreviews"),
-      filterOpponents: bool("filterOpponents"),
-      cleanMode: bool("cleanMode"),
-      pauseMediaOnOpen: bool("pauseMediaOnOpen"),
-      placementFromBottom: bool("placementFromBottom"),
-      tierBorders: bool("tierBorders"),
-      previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
-      explorePageSize: EXPLORE_PAGE_SIZES.includes(Number(raw.explorePageSize)) ? Number(raw.explorePageSize) : base.explorePageSize
-    };
-  }
-  function legacyDefaults() {
-    const settings = { ...DEFAULT_SETTINGS };
-    try {
-      if (localStorage.getItem(LEGACY_FILTER_OPPONENTS_KEY) === "1") settings.filterOpponents = true;
-      if (localStorage.getItem(LEGACY_MUTE_PREVIEWS_KEY) === "1") settings.previewVolume = 0;
-    } catch {
-    }
-    return settings;
-  }
-  async function loadSettings() {
-    try {
-      const stored = await fetchStoredConfig();
-      legacyFunMode = stored?.funMode === true;
-      state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
-      return true;
-    } catch (e) {
-      console.error("[Stash Battle] Failed to load settings, using current values:", e);
-      return false;
-    }
-  }
-  function hadFunMode() {
-    return legacyFunMode;
-  }
-  var unsaved = /* @__PURE__ */ new Set();
-  async function fetchStoredConfig() {
-    const data = await graphqlQuery(
-      CONFIG_QUERY
-    );
-    return data.configuration.plugins?.[PLUGIN_ID];
-  }
-  async function persistSettings() {
-    const keys = [...unsaved];
-    unsaved.clear();
-    try {
-      const stored = await fetchStoredConfig();
-      const merged = stored ? { ...normalize(stored, state.settings) } : { ...state.settings };
-      for (const key of keys) merged[key] = state.settings[key];
-      const input = Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null));
-      await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
-      return true;
-    } catch (e) {
-      console.error("[Stash Battle] Failed to save settings:", e);
-      for (const key of keys) unsaved.add(key);
-      return false;
-    }
-  }
-  function updateSettings(patch) {
-    state.settings = normalize({ ...state.settings, ...patch }, state.settings);
-    for (const key of Object.keys(patch)) unsaved.add(key);
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      void persistSettings();
-    }, SAVE_DEBOUNCE_MS);
-  }
-  async function updateSettingsNow(patch) {
-    state.settings = normalize({ ...state.settings, ...patch }, state.settings);
-    for (const key of Object.keys(patch)) unsaved.add(key);
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    return persistSettings();
   }
 
   // src/storage.ts
@@ -1648,6 +1777,7 @@
       step: 1,
       battles: 0,
       streak: 0,
+      results: [],
       rangeLo: 0,
       rangeHi: 0
     };
@@ -1707,6 +1837,7 @@
     run.lastOpponentId = opponentId;
     run.lastWon = won;
     run.battles++;
+    run.results = [...run.results ?? [], won];
   }
   function landingElo(pool, slot) {
     let above = null;
@@ -1975,7 +2106,7 @@
       console.log(
         `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`
       );
-      await writeElo(run.scene, newElo, newBattles);
+      await writeElo(run.scene, newElo, newBattles, run.results ?? []);
       return {
         done: true,
         scene: run.scene,
@@ -2027,6 +2158,7 @@
     }
     const border = tier !== null && state.settings.tierBorders;
     const rankTitle = provisional ? ` title="${PROVISIONAL_TIP}"` : "";
+    const record = recordText(scene);
     const rankDisplay = `${tier ? tierPill(tier) : ""}<span class="sb-scene-rank"${rankTitle}>${eloLabel}</span>`;
     let statusBadgeHtml = "";
     if (typeof statusBadge === "string") {
@@ -2062,7 +2194,7 @@
               <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
               <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="sb-meta-item sb-meta-battles"><strong>Battles:</strong> ${battles(scene)}</div>
+              <div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>
               <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
@@ -2377,7 +2509,7 @@
           <div class="sb-mini-body pwr-scene-info">
             <div class="sb-mini-title" title="${title}">${title}</div>
             <div class="sb-mini-elo">${tier ? tierPill(tier) : ""}<span class="sb-mini-rank"${provisional ? ` title="${PROVISIONAL_TIP}"` : ""}>${eloText}</span></div>
-            <div class="sb-mini-meta">${plural(plays, "play")} · ${plural(battles(scene), "battle")}</div>
+            <div class="sb-mini-meta">${plural(plays, "play")} · ${recordText(scene) ?? plural(battles(scene), "battle")}</div>
           </div>`;
     const tierAttrs = tier ? ` sb-tier-${tier.id}" data-tier="${tier.id}` : "";
     const preview = scene.paths?.preview ? ` data-preview="${scene.paths.preview}"` : "";
@@ -2425,7 +2557,10 @@
     { value: "plays-desc", label: "Most played" },
     { value: "plays-asc", label: "Least played" },
     { value: "battles-desc", label: "Most battles" },
-    { value: "battles-asc", label: "Fewest battles" }
+    { value: "battles-asc", label: "Fewest battles" },
+    { value: "record-desc", label: "Best record" },
+    { value: "peak-desc", label: "Highest peak ELO" },
+    { value: "streak-desc", label: "Longest win streak" }
   ];
   var filters = { ...DEFAULT_EXPLORE_FILTERS };
   var entries = [];
@@ -2867,6 +3002,41 @@
             <span class="sb-stats-muted">${leastTestedText()}</span>
           </div>`;
   }
+  var RECORDS_TOP = 5;
+  function shortDate(iso) {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(void 0, { year: "numeric", month: "short", day: "numeric" });
+  }
+  function recordRow(title, items, empty) {
+    const cards = items.map(({ scene, caption }) => {
+      const entry = entriesById.get(scene.id);
+      return entry ? `<div class="sb-record-item"><div class="sb-record-caption">${caption}</div>${miniCardHtml(entry)}</div>` : "";
+    }).join("");
+    return `
+          <div class="sb-record-row">
+            <h3 class="sb-record-title">${title}</h3>
+            ${cards ? `<div class="sb-record-cards">${cards}</div>` : `<p class="sb-stats-muted">${empty}</p>`}
+          </div>`;
+  }
+  function recordsHtml() {
+    const byId = new Map(scenes.map((s) => [s.id, s]));
+    const hall = [...getHallOfFame()].reverse().map((e) => ({ scene: byId.get(e.id), date: e.date })).filter((e) => e.scene !== void 0).map(({ scene, date }) => ({ scene, caption: `👑 #1 since ${shortDate(date)}` }));
+    const streaks = topByRecord(scenes, (r) => r.bestStreak, RECORDS_TOP).map(({ scene, record }) => ({
+      scene,
+      caption: `🔥 ${plural(record.bestStreak, "win")} in a row`
+    }));
+    const peaks = topByRecord(scenes, (r) => r.peak, RECORDS_TOP).map(({ scene, record }) => ({
+      scene,
+      caption: `📈 Peak ELO ${Math.round(record.peak)}`
+    }));
+    return `
+          <div class="sb-records">
+            ${recordRow("Hall of fame", hall, "No scene has been #1 yet.")}
+            ${recordRow("Longest win streaks", streaks, "No win streaks yet: records start counting with your next battle.")}
+            ${recordRow("Highest peak ELO", peaks, "No peaks yet: records start counting with your next battle.")}
+            <p class="sb-stats-note">Records count battles since they began; earlier battles only add to a scene's battle count.</p>
+          </div>`;
+  }
   function drawCharts(root) {
     const histogram = root.querySelector("#sb-stats-histogram");
     if (histogram) histogram.innerHTML = histogramSvg(histogram.clientWidth) + '<div class="sb-chart-tip" hidden></div>';
@@ -2958,6 +3128,13 @@
     const target = e.target;
     const root = e.currentTarget;
     if (!actions2) return;
+    if (target.closest(".sb-records")) {
+      const battle = target.closest("[data-battle]");
+      const link = target.closest(".sb-mini-link");
+      if (battle?.dataset.battle) actions2.battleScene(battle.dataset.battle);
+      else if (link) handleSceneLinkClick(e, link);
+      return;
+    }
     if (target.closest(".sb-chart-tip-pinned")) {
       const battle = target.closest("[data-battle]");
       const link = target.closest(".sb-mini-link");
@@ -3033,10 +3210,12 @@
       return;
     }
     const tiers = tierMap(scenes);
+    noteTopScene();
     entriesById = new Map(exploreEntries(scenes, tiers, resolveSceneTitle).map((entry) => [entry.scene.id, entry]));
     content.innerHTML = [
       section("Overview", overviewHtml()),
       section("How settled the rankings are", settledHtml()),
+      section("Records", recordsHtml(), "sb-stats-records"),
       section(
         "ELO distribution",
         `<div class="sb-chart" id="sb-stats-histogram"></div>${distributionNote()}<p class="sb-stats-note">Click a bar to see its scenes in Explore.</p>`
@@ -3526,8 +3705,8 @@
     const winnerSide = { elo: battleElo(latestWinner), kGames: kGames(latestWinner) };
     const loserSide = { elo: battleElo(latestLoser), kGames: kGames(latestLoser) };
     const result = eloResult(winnerSide, loserSide);
-    void writeElo(winner, result.winner, battles(latestWinner) + 1);
-    void writeElo(loser, result.loser, battles(latestLoser) + 1);
+    void writeElo(winner, result.winner, battles(latestWinner) + 1, [true]);
+    void writeElo(loser, result.loser, battles(latestLoser) + 1, [false]);
     return {
       winner: { from: winnerSide.elo, to: result.winner },
       loser: { from: loserSide.elo, to: result.loser },

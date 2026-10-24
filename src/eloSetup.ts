@@ -2,9 +2,10 @@
 // then optionally sync Stash ratings from the new ELO. Re-running it overwrites, so an
 // interrupted setup is safe to repeat.
 
-import { ELO_FIELD_KEYS, ELO_START } from "./constants";
+import { ELO_FIELD_KEYS, ELO_START, RECORD_FIELD_KEYS } from "./constants";
 import { graphqlQuery, refreshStashCache } from "./graphql";
 import { writeStashRatings } from "./rating";
+import { clearHallOfFame } from "./settings";
 import { afterSetup, eloCustomFields, isRated, seed, startingElo, stashRatingChanges } from "./score";
 import type { EloStart, Scene, StashRatingsMode } from "./types";
 
@@ -76,7 +77,8 @@ async function seedFromRatings(rated: Scene[]): Promise<void> {
   const variables = Object.fromEntries(
     values.map((r) => {
       const partial = eloCustomFields({ elo: seed(r), battles: 0, seeded: true });
-      return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial } }];
+      // Records start over too (setup and Reset ELO)
+      return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial, remove: RECORD_FIELD_KEYS } }];
     }),
   );
   await graphqlQuery(mutation, variables);
@@ -115,11 +117,21 @@ export async function runEloSetup(
     onProgress("elo", 0, ids.length);
     if (ids.length > 0) {
       await graphqlQuery(BULK_UPDATE_MUTATION, {
-        input: { ids, custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }) } },
+        input: {
+          ids,
+          custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }), remove: RECORD_FIELD_KEYS },
+        },
       });
     }
     onProgress("elo", ids.length, ids.length);
     summary.eloWritten = ids.length;
+  }
+
+  // Records start over with the ELO, the hall of fame too
+  try {
+    await clearHallOfFame();
+  } catch (e) {
+    console.warn("[Stash Battle] Couldn't clear the hall of fame:", e);
   }
 
   const changes = setupRatingChanges(scenes, start, stashRatings);

@@ -642,8 +642,8 @@ function resolveComparison(winner: Scene, loser: Scene): { winner: EloChange; lo
   const loserSide = { elo: battleElo(latestLoser), kGames: kGames(latestLoser) };
   const result = eloResult(winnerSide, loserSide);
 
-  void writeElo(winner, result.winner, battles(latestWinner) + 1);
-  void writeElo(loser, result.loser, battles(latestLoser) + 1);
+  void writeElo(winner, result.winner, battles(latestWinner) + 1, [true]);
+  void writeElo(loser, result.loser, battles(latestLoser) + 1, [false]);
 
   return {
     winner: { from: winnerSide.elo, to: result.winner },

@@ -623,6 +623,33 @@
   white-space: normal;
 }
 
+/* Stats → Records: rows of small cards, each with a caption */
+.sb-record-row:not(:first-child) {
+  margin-top: 16px;
+}
+
+.sb-record-title {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: #ddd;
+}
+
+.sb-record-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.sb-record-caption {
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---------- Explore tab ---------- */
 .sb-explore-tab {
   max-width: 1400px;
@@ -2574,8 +2601,8 @@ body.sb-battle-open > .modal {
 /* Scene page Custom Fields: Stash cuts names at 130px, which hides the end of ours
    (stash_battle_battles). Widened for the whole list so the values still line up. */
 .custom-fields:has(.detail-item[class*="custom-field-stash_battle_"]) .detail-item-title {
-  width: 22ch;
-  max-width: 22ch;
+  width: 25ch;
+  max-width: 25ch;
 }
 
 /* Narrow phones: four tabs and the volume slider don't fit on one line, so only the

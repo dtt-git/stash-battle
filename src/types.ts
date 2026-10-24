@@ -55,11 +55,22 @@ export interface Scene {
   tags?: NamedRef[] | null;
 }
 
+/** A scene's record since records began (wins and losses count each pick, Placement's too). */
+export interface SceneRecord {
+  wins: number;
+  losses: number;
+  peak: number;
+  streak: number; // Current win streak
+  bestStreak: number;
+}
+
 /** Stash Battle's per-scene data, stored as scene custom fields (see constants.ts). */
 export interface EloFields {
   elo: number;
   battles: number;
   seeded: boolean;
+  /** Absent until the scene's first battle since records began (and after setup or Reset ELO). */
+  record?: SceneRecord;
 }
 
 /** A tier on the ladder (see TIERS in constants.ts). */
@@ -139,6 +150,8 @@ export interface PlacementRun {
   step: number;
   battles: number;
   streak: number; // Wins before the first loss (the climb's win streak)
+  /** Every pick's result in order (true = won), added to the scene's record when it lands. Missing in runs saved before records. */
+  results?: boolean[];
   rangeLo: number; // Current slot range for display (0-based, inclusive)
   rangeHi: number;
 }

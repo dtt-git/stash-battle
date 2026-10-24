@@ -43,7 +43,7 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
   const bool = (key: keyof Settings): boolean =>
     typeof raw[key] === "boolean" ? (raw[key] as boolean) : (base[key] as boolean);
   return {
-    // A missing or unknown value is "off". (Removed keys, funMode and unratedRating, are dropped.)
+    // A missing or unknown value is "off". (Removed keys, see REMOVED_KEYS, are dropped.)
     stashRatings: oneOf(raw.stashRatings, STASH_RATINGS_MODES, "off"),
     // Setup flags have no fallback: raw always carries them (stored config, or current + patch)
     eloSetupAt: typeof raw.eloSetupAt === "string" && raw.eloSetupAt ? raw.eloSetupAt : null,
@@ -80,6 +80,7 @@ export async function loadSettings(): Promise<boolean> {
   try {
     const stored = await fetchStoredConfig();
     legacyFunMode = stored?.funMode === true;
+    hallOfFame = parseHallOfFame(stored?.[HALL_OF_FAME_KEY]);
     state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
     return true;
   } catch (e) {
@@ -104,25 +105,96 @@ async function fetchStoredConfig(): Promise<Record<string, unknown> | undefined>
   return data.configuration.plugins?.[PLUGIN_ID];
 }
 
-async function persistSettings(): Promise<boolean> {
-  const keys = [...unsaved];
-  unsaved.clear();
+/** Keys earlier versions stored and this one drops from the config on its next save. */
+const REMOVED_KEYS = ["funMode", "unratedRating", "showTiers"];
+
+/**
+ * The config map to save. configurePlugin replaces the whole map, so it starts from the stored
+ * one, not this tab's copy (another tab may have saved since this one loaded: finished the ELO
+ * setup, say), with this tab's unsaved settings on top. Keys that aren't settings (the hall of
+ * fame) are kept; removed ones and unset values are left out. `extra` adds or replaces such keys.
+ */
+export function mergeConfig(
+  stored: Record<string, unknown> | undefined,
+  current: Settings,
+  unsavedKeys: readonly (keyof Settings)[],
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = stored ? { ...stored, ...normalize(stored, current) } : { ...current };
+  for (const key of unsavedKeys) merged[key] = current[key];
+  Object.assign(merged, extra);
+  for (const key of REMOVED_KEYS) delete merged[key];
+  return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null && value !== undefined));
+}
+
+/** The config write in progress (or the last one), so the next starts from what it saved. */
+let configWrites: Promise<unknown> = Promise.resolve();
+
+/** Save this tab's unsaved settings plus `extra` keys, after any config write in progress. */
+function saveConfig(extra: Record<string, unknown> = {}): Promise<boolean> {
+  const run = configWrites.then(async () => {
+    const keys = [...unsaved];
+    unsaved.clear();
+    try {
+      const input = mergeConfig(await fetchStoredConfig(), state.settings, keys, extra);
+      await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
+      return true;
+    } catch (e) {
+      console.error("[Stash Battle] Failed to save settings:", e);
+      for (const key of keys) unsaved.add(key);
+      return false;
+    }
+  });
+  configWrites = run;
+  return run;
+}
+
+function persistSettings(): Promise<boolean> {
+  return saveConfig();
+}
+
+// ---------- Hall of fame (Stats → Records) ----------
+
+/** Plugin config key: every scene that has ever been #1, with the date it first got there. */
+const HALL_OF_FAME_KEY = "statsHallOfFame";
+
+export interface HallOfFameEntry {
+  id: string;
+  /** When it first reached #1 (ISO time). */
+  date: string;
+}
+
+let hallOfFame: HallOfFameEntry[] = [];
+
+/** The stored list (a JSON string in the config); anything unreadable counts as empty. */
+export function parseHallOfFame(value: unknown): HallOfFameEntry[] {
+  if (typeof value !== "string" || !value) return [];
   try {
-    // configurePlugin replaces the whole map, so this tab's unsaved changes go on top of the
-    // stored config, not this tab's copy of it: another tab may have saved since this one loaded
-    // (finished the ELO setup, say), and an older copy would undo that.
-    const stored = await fetchStoredConfig();
-    const merged: Record<string, unknown> = stored ? { ...normalize(stored, state.settings) } : { ...state.settings };
-    for (const key of keys) merged[key] = state.settings[key];
-    // Unset keys are left out
-    const input = Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null));
-    await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
-    return true;
-  } catch (e) {
-    console.error("[Stash Battle] Failed to save settings:", e);
-    for (const key of keys) unsaved.add(key);
-    return false;
+    const list: unknown = JSON.parse(value);
+    if (!Array.isArray(list)) return [];
+    return list.filter(
+      (e): e is HallOfFameEntry => typeof e?.id === "string" && typeof e?.date === "string",
+    );
+  } catch {
+    return [];
   }
+}
+
+export function getHallOfFame(): readonly HallOfFameEntry[] {
+  return hallOfFame;
+}
+
+/** Add a scene that has just reached #1 (once: its first date is kept) and save the list. */
+export async function addToHallOfFame(sceneId: string, date = new Date().toISOString()): Promise<void> {
+  if (hallOfFame.some((e) => e.id === sceneId)) return;
+  hallOfFame = [...hallOfFame, { id: sceneId, date }];
+  await saveConfig({ [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) });
+}
+
+/** Empty the list (setup and Reset ELO start every record over). */
+export async function clearHallOfFame(): Promise<void> {
+  hallOfFame = [];
+  await saveConfig({ [HALL_OF_FAME_KEY]: null });
 }
 
 /** Update settings locally right away and persist to Stash (debounced, for sliders). */

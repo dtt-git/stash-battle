@@ -151,3 +151,12 @@ test("placementElo never ties the lower neighbour, so the scene sorts into its s
   assert.equal(placementElo(1500.1, 1500), 1500.1);
   assert.equal(placementElo(1500, 1500), 1500);
 });
+
+test("a Placement run keeps every pick's result in order, for the scene's record", () => {
+  const run = newPlacementRun({ id: "p" }, false);
+  recordPlacementResult(run, true, "a");
+  recordPlacementResult(run, false, "b");
+  recordPlacementResult(run, true, "c");
+  assert.deepEqual(run.results, [true, false, true]);
+  assert.equal(run.battles, 3);
+});

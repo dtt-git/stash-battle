@@ -4,7 +4,8 @@ import { latestScene, setEloInCache, setRatingsInCache } from "./cache";
 import { ELO_FIELD_KEYS } from "./constants";
 import { graphqlQuery, refreshStashCache } from "./graphql";
 import { isSceneNotFoundError } from "./sceneActions";
-import { eloCustomFields, eloFields, isSeeded, stashRatingChanges } from "./score";
+import { elo as eloOf, eloCustomFields, eloFields, isRated, isSeeded, recordAfter, sceneRecord, stashRatingChanges } from "./score";
+import { addToHallOfFame, getHallOfFame } from "./settings";
 import { state } from "./state";
 import type { EloFields, Scene } from "./types";
 
@@ -26,10 +27,10 @@ function reportWriteError(sceneId: string, what: string, e: unknown): void {
   }
 }
 
-/** True when both are unrated, or hold the same ELO fields. */
+/** True when both are unrated, or hold the same ELO fields (record included). */
 function sameElo(a: EloFields | null, b: EloFields | null): boolean {
   if (a === null || b === null) return a === b;
-  return a.elo === b.elo && a.battles === b.battles && a.seeded === b.seeded;
+  return JSON.stringify(eloCustomFields(a)) === JSON.stringify(eloCustomFields(b));
 }
 
 /**
@@ -56,14 +57,24 @@ async function saveEloFields(scene: Scene, value: EloFields | null, customFields
 }
 
 /**
- * Save a scene's ELO and battle count (custom fields only; `partial` leaves other plugins'
- * fields alone). Whether it was seeded stays as it was.
+ * Save a scene's ELO and battle count, and its record with `results` added (each pick in order,
+ * true = won), in one write (custom fields only; `partial` leaves other plugins' fields alone).
+ * Whether it was seeded stays as it was.
  */
-export async function writeElo(scene: Scene, elo: number, battles: number): Promise<void> {
-  const value = { elo, battles, seeded: isSeeded(scene) };
+export async function writeElo(scene: Scene, elo: number, battles: number, results: boolean[]): Promise<void> {
+  const current = latestScene(scene);
+  const record = recordAfter(sceneRecord(current), results, eloOf(current) ?? elo, elo);
+  const value: EloFields = { elo, battles, seeded: isSeeded(scene), record };
   if (await saveEloFields(scene, value, { partial: eloCustomFields(value) }, "save ELO")) {
     console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo} (${battles} battles)`);
+    noteTopScene();
   }
+}
+
+/** The library's #1 (the all-scenes cache is ELO-sorted) joins the hall of fame if it's new there. */
+export function noteTopScene(): void {
+  const top = state.memoryCache.allScenes?.[0];
+  if (top && isRated(top) && !getHallOfFame().some((e) => e.id === top.id)) void addToHallOfFame(top.id);
 }
 
 /** Remove a scene's ELO fields, making it unrated again. */

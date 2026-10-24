@@ -3,17 +3,22 @@
 
 import {
   BATTLES_FIELD,
+  BEST_STREAK_FIELD,
   ELO_FIELD,
   ELO_FIELD_KEYS,
   ELO_K_TIERS,
   ELO_PER_RATING_POINT,
   ELO_START,
+  LOSSES_FIELD,
+  PEAK_FIELD,
   PLACEMENT_EDGE_GAP,
   SEEDED_FIELD,
   SEEDED_HEAD_START,
+  STREAK_FIELD,
+  WINS_FIELD,
 } from "./constants";
 import { roundElo } from "./elo";
-import type { EloFields, EloStart, Scene, StashRatingsMode } from "./types";
+import type { EloFields, EloStart, Scene, SceneRecord, StashRatingsMode } from "./types";
 
 /** Custom field values should come back as numbers; numeric strings are accepted too. */
 function readNumber(value: unknown): number | null {
@@ -59,9 +64,70 @@ export function isProvisional(scene: Scene): boolean {
   return isRated(scene) && kGames(scene) < ELO_K_TIERS[0][0];
 }
 
-/** EloFields as the custom fields map Stash stores. */
+/** The scene's record, or null before its first battle since records began. */
+export function sceneRecord(scene: Scene): SceneRecord | null {
+  const fields = scene.custom_fields;
+  const count = (key: string): number | null => {
+    const n = readNumber(fields?.[key]);
+    return n === null ? null : Math.max(0, Math.floor(n));
+  };
+  const wins = count(WINS_FIELD);
+  const losses = count(LOSSES_FIELD);
+  const peak = readNumber(fields?.[PEAK_FIELD]);
+  if (wins === null && losses === null && peak === null) return null;
+  return {
+    wins: wins ?? 0,
+    losses: losses ?? 0,
+    peak: peak ?? elo(scene) ?? 0,
+    streak: count(STREAK_FIELD) ?? 0,
+    bestStreak: count(BEST_STREAK_FIELD) ?? 0,
+  };
+}
+
+/**
+ * "12–5" (wins–losses), or null for a scene whose battles all came before records began (it
+ * shows its battle count instead). A scene with no battles at all shows "0–0".
+ */
+export function recordText(scene: Scene): string | null {
+  const record = sceneRecord(scene);
+  if (record) return `${record.wins}–${record.losses}`;
+  return battles(scene) === 0 ? "0–0" : null;
+}
+
+/**
+ * A record after more picks, in order (true = won), with the peak raised to `newElo`. A scene's
+ * first record starts from `startElo` (its ELO before these picks) as the peak.
+ */
+export function recordAfter(record: SceneRecord | null, results: boolean[], startElo: number, newElo: number): SceneRecord {
+  const next: SceneRecord = record ? { ...record } : { wins: 0, losses: 0, peak: startElo, streak: 0, bestStreak: 0 };
+  for (const won of results) {
+    if (won) {
+      next.wins++;
+      next.streak++;
+      next.bestStreak = Math.max(next.bestStreak, next.streak);
+    } else {
+      next.losses++;
+      next.streak = 0;
+    }
+  }
+  next.peak = roundElo(Math.max(next.peak, newElo));
+  return next;
+}
+
+/** EloFields as the custom fields map Stash stores (the record's fields only once it has one). */
 export function eloCustomFields(value: EloFields): Record<string, unknown> {
-  return { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
+  const fields: Record<string, unknown> = { [ELO_FIELD]: value.elo, [BATTLES_FIELD]: value.battles, [SEEDED_FIELD]: value.seeded };
+  const record = value.record;
+  if (record) {
+    Object.assign(fields, {
+      [WINS_FIELD]: record.wins,
+      [LOSSES_FIELD]: record.losses,
+      [PEAK_FIELD]: record.peak,
+      [STREAK_FIELD]: record.streak,
+      [BEST_STREAK_FIELD]: record.bestStreak,
+    });
+  }
+  return fields;
 }
 
 /** Starting ELO for a 1-100 Stash rating: 50 is 1500, so 1-100 maps onto 1010-2000. */
@@ -150,10 +216,12 @@ export function withEloFields(customFields: Record<string, unknown> | null | und
   return fields;
 }
 
-/** The scene's ELO fields, or null when it's unrated. */
+/** The scene's ELO fields (and record, once it has one), or null when it's unrated. */
 export function eloFields(scene: Scene): EloFields | null {
   const value = elo(scene);
-  return value === null ? null : { elo: value, battles: battles(scene), seeded: isSeeded(scene) };
+  if (value === null) return null;
+  const record = sceneRecord(scene);
+  return { elo: value, battles: battles(scene), seeded: isSeeded(scene), ...(record ? { record } : {}) };
 }
 
 /** A copy of the scene as it would be right after setup (its ELO fields replaced). */

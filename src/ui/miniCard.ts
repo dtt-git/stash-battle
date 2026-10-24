@@ -4,7 +4,7 @@
 // as it does the battle cards.
 
 import type { ExploreEntry } from "../explore";
-import { battles, elo, isProvisional } from "../score";
+import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
 import { sliderToVolume } from "./mainUI";
 import { tierPill, PROVISIONAL_TIP } from "./sceneCard";
@@ -44,7 +44,7 @@ export function miniCardHtml(entry: ExploreEntry, link = true): string {
           <div class="sb-mini-body pwr-scene-info">
             <div class="sb-mini-title" title="${title}">${title}</div>
             <div class="sb-mini-elo">${tier ? tierPill(tier) : ""}<span class="sb-mini-rank"${provisional ? ` title="${PROVISIONAL_TIP}"` : ""}>${eloText}</span></div>
-            <div class="sb-mini-meta">${plural(plays, "play")} · ${plural(battles(scene), "battle")}</div>
+            <div class="sb-mini-meta">${plural(plays, "play")} · ${recordText(scene) ?? plural(battles(scene), "battle")}</div>
           </div>`;
   const tierAttrs = tier ? ` sb-tier-${tier.id}" data-tier="${tier.id}` : "";
   const preview = scene.paths?.preview ? ` data-preview="${scene.paths.preview}"` : "";

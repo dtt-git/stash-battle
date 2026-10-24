@@ -95,3 +95,21 @@ test("explorePoolScenes: the filter's scenes in ELO order, whatever the Explore 
     ["u"],
   );
 });
+
+test("record sorts: best record, highest peak, longest win streak; no record last", () => {
+  const rec = (id: string, eloValue: number, r: Record<string, number>): Scene =>
+    sc(id, eloValue, { custom_fields: { stash_battle_elo: eloValue, stash_battle_battles: 1, stash_battle_seeded: 1, ...r } });
+  const lib = [
+    rec("a", 1900, { stash_battle_wins: 3, stash_battle_losses: 3, stash_battle_peak: 1950, stash_battle_best_streak: 2 }),
+    rec("b", 1800, { stash_battle_wins: 5, stash_battle_losses: 1, stash_battle_peak: 1820, stash_battle_best_streak: 4 }),
+    sc("n", 1700),
+    rec("c", 1600, { stash_battle_wins: 4, stash_battle_losses: 0, stash_battle_peak: 1660, stash_battle_best_streak: 4 }),
+  ];
+  const es = exploreEntries(lib, tierMap(lib), (s) => s.title ?? "");
+  const order = (sort: ExploreFilters["sort"]): string[] => filterExplore(es, { ...DEFAULT_EXPLORE_FILTERS, sort }).map((e) => e.scene.id);
+  // wins − losses: b and c are +4, b has more wins
+  assert.deepEqual(order("record-desc"), ["b", "c", "a", "n"]);
+  assert.deepEqual(order("peak-desc"), ["a", "b", "c", "n"]);
+  // b and c tie on a 4 streak: ELO order
+  assert.deepEqual(order("streak-desc"), ["b", "c", "a", "n"]);
+});

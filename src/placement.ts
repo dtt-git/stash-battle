@@ -23,6 +23,7 @@ export function newPlacementRun(scene: Scene, fromBottom: boolean): PlacementRun
     step: 1,
     battles: 0,
     streak: 0,
+    results: [],
     rangeLo: 0,
     rangeHi: 0,
   };
@@ -109,6 +110,7 @@ export function recordPlacementResult(run: PlacementRun, won: boolean, opponentI
   run.lastOpponentId = opponentId;
   run.lastWon = won;
   run.battles++;
+  run.results = [...(run.results ?? []), won];
 }
 
 /**

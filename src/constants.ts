@@ -70,8 +70,19 @@ export const ELO_FIELD = "stash_battle_elo";
 export const BATTLES_FIELD = "stash_battle_battles";
 /** True when the scene's starting ELO came from its Stash rating (setup's "Use my ratings"). */
 export const SEEDED_FIELD = "stash_battle_seeded";
+/**
+ * A scene's record (Stats → Records): picks won and lost, highest ELO, and win streaks (the
+ * current one is kept to know when it beats the best). Written with the ELO once a scene has one.
+ */
+export const WINS_FIELD = "stash_battle_wins";
+export const LOSSES_FIELD = "stash_battle_losses";
+export const PEAK_FIELD = "stash_battle_peak";
+export const STREAK_FIELD = "stash_battle_streak";
+export const BEST_STREAK_FIELD = "stash_battle_best_streak";
+/** The record's fields (removed by setup and Reset ELO, which start every record over). */
+export const RECORD_FIELD_KEYS = [WINS_FIELD, LOSSES_FIELD, PEAK_FIELD, STREAK_FIELD, BEST_STREAK_FIELD];
 /** All of Stash Battle's per-scene fields (removed together when a scene becomes unrated). */
-export const ELO_FIELD_KEYS = [ELO_FIELD, BATTLES_FIELD, SEEDED_FIELD];
+export const ELO_FIELD_KEYS = [ELO_FIELD, BATTLES_FIELD, SEEDED_FIELD, ...RECORD_FIELD_KEYS];
 
 export const ELO_START = 1500;
 export const ELO_DIVISOR = 400;

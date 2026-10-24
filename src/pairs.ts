@@ -371,7 +371,7 @@ export async function fetchPlacementPair(
     console.log(
       `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`,
     );
-    await writeElo(run.scene, newElo, newBattles);
+    await writeElo(run.scene, newElo, newBattles, run.results ?? []);
     return {
       done: true,
       scene: run.scene,

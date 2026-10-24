@@ -1,6 +1,6 @@
 ---
 name: Stats tab and battle extras
-overview: Part of 3.0 (on elo-mode). Show win chances, a provisional "?" and opt-in tiers on the battle cards; add a Stats tab (ELO distribution, hidden gems, how settled the rankings are) and, from new per-scene totals and small capped lists stored in Stash, records (win/loss, streaks, peak, hall of fame, top 10 with movement, biggest upsets). A full battle log (rating graphs, head-to-head) is deferred.
+overview: Part of 3.0 (on elo-mode). Show win chances, a provisional "?" and opt-in tiers on the battle cards; add a Stats tab (ELO distribution, hidden gems, how settled the rankings are) and, from new per-scene totals and small capped lists stored in Stash, records (win/loss, streaks, peak, hall of fame). Top-10 movement, biggest upsets and a full battle log were dropped (Brian, Oct 24).
 todos:
   - id: stage1-cards
     content: "Stage 1: battle cards - win chances, provisional '?', tiers (opt-in setting, off by default). Pure functions + tests, no new data."
@@ -9,8 +9,8 @@ todos:
     content: "Stage 2: Stats tab from existing data - overview numbers, ELO distribution, hidden gems / overplayed, how settled + 'battle the least-tested'."
     status: completed
   - id: stage3-records
-    content: "Stage 3: new data in Stash - per-scene wins/losses/peak/streaks, capped lists in the plugin config (hall of fame, daily top-10 snapshots, biggest upsets); Records section."
-    status: pending
+    content: "Stage 3 (trimmed, Brian Oct 24): per-scene wins/losses/peak/streak fields; hall of fame in the plugin config; record on battle and Explore cards, Explore sorts, Stats Records section."
+    status: completed
   - id: stage4-docs
     content: "Stage 4: DOCUMENTATION.md, README, the 3.0.0 CHANGELOG entry, Stats screenshot, forum drafts (no version bump)."
     status: pending
@@ -27,6 +27,7 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
 
 - **Stage 1 is done, reviewed and committed** (Oct 23). Win chances (`winChances` in `elo.ts`), `isProvisional` (`score.ts`), `tierMap` / `tierDescription` (new `stats.ts`), the `showTiers` setting (Settings tab "Scenes" section and yml; on by default). 47 tests pass (67 by the end of Stage 2). "Upset!" shows when the winner's chance was **40% or less** (`UPSET_MAX_CHANCE`, Brian's choice: under 50% would flag about half of all Swiss picks, and 35% never fires with the ±100 Swiss window).
 - **Swiss window (Brian, Oct 23, outside this plan):** Swiss now picks a random opponent within **±100 ELO** (`SWISS_OPPONENT_ELO_WINDOW`, `swissOpponentIndexes` in `score.ts`), or the 10 nearest when fewer are in range. The old ±10 ranks meant a median farthest opponent of 20 ELO, about a third of them exact ties. Live: 25 skipped pairs had gaps up to 100, average 40. **Stage 3 note:** with ±100, the "biggest upsets" list would mostly hold 36-40% wins; revisit it then. Checked live: the VS block, "Upset!" on an 8% win, the "?" on the card and the scene page button (scenes 1443/1446 are provisional), the Gold and Diamond pills, and the phone layout (`58% VS 42%` in the pill, emoji-only tier). Both test-pick scenes and the config were restored exactly.
+- **Stage 3 (trimmed) is done, reviewed and committed** (Oct 24). Record fields join the ELO's field group (`EloFields.record`, `sceneRecord` / `recordAfter` / `recordText` in `score.ts`), written by `writeElo(scene, elo, battles, results)` in the same request; Placement runs keep `results` and add them on landing; setup and Reset ELO `remove` the record fields and empty the hall of fame. `mergeConfig` (settings.ts) keeps keys that aren't settings and drops `REMOVED_KEYS`; config writes are queued. Hall of fame: `statsHallOfFame` (JSON string), `noteTopScene()` after each ELO write and when Stats opens. Display: "Record: 12–5" on battle cards (scenes with only pre-record battles keep "Battles: N"), "12–5" on small cards, Explore sorts Best record / Highest peak ELO / Longest win streak, Stats → Records (hall of fame, top 5 streaks, top 5 peaks) under "How settled". 77 tests. Live: 3 Swiss picks and a 7-pick Placement wrote one request per scene with the right records; hall of fame and config keys checked; everything restored exactly (7 scenes, config identical). The Stage 2 review session's fixes were committed separately first (`de5a05d`).
 - **Stage 2 is done, reviewed and committed** (Oct 24), together with the Explore tab and the feedback rounds below. `ui/statsTab.ts` (📊 Stats tab, third after Battle and Settings, filled from the all-scenes cache each time it opens); maths in `stats.ts` (`overview`, `eloHistogram`, `largestTie`, `ratingScaleTicks`, `gemsSplit` / `gemsQuadrant` at the median ELO and play count, `settledBuckets` by real battles 0 / 1-9 / 10-29 / 30+, `leastTested`). "Battle the least-tested" sets `state.leastTested`: Swiss takes the fewest-battled scene on the left (random among equals, never the one just shown) until Stop, a mode change or closing. 58 tests. Checked live with no writes: all sections, a dot click and "Battle this scene", least-tested (5 skips, all 0-battle scenes on the left), Stop, and 375 px.
 - **Explore tab and Stage 2 feedback (Brian, Oct 24, committed).** Goal from Brian: the tabs should help you *explore and navigate* your ELO library, not only show fun stats. So:
   - New **🔎 Explore** tab (tab order Battle · Explore · Stats · Settings): the library as small cards (thumbnail, tier pill and border, `ELO 1820 · #97`, plays and battles), with search (title, studio, performers), tier / Provisional / Unrated chips, an ELO range and six sorts. Clicking a card opens the scene page (`handleSceneLinkClick`, so the new-tab setting applies); its ⚔️ button battles it. Pages of 60 cards load as the modal scrolls (a scroll listener: the browser pane delivered no IntersectionObserver callbacks). Maths in `src/explore.ts` (tested); UI in `ui/exploreTab.ts` and `ui/miniCard.ts`.
@@ -55,13 +56,13 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
   - **Hidden gems / overplayed:** ELO against play count.
   - **ELO distribution**, with the Stash rating scale under it.
   - **How settled the rankings are** (battle counts), with a way to battle the least-tested scenes. Brian likes this one "a lot".
-  - **Records:** win/loss and longest win streak per scene, peak ELO, a hall of fame of scenes that were ever #1, the top 10 with ▲▼ movement, the biggest upsets.
+  - **Records:** win/loss and longest win streak per scene, peak ELO, a hall of fame of scenes that were ever #1. (Top 10 with ▲▼ movement and biggest upsets were dropped on Oct 24.)
 - **Not wanted:**
   - Averages by performer, tag or studio. Brian doesn't use them; other people might, but leave it out for now.
   - The "stars disagree with ELO" list.
 - **Storage: in Stash, not the browser.** Brian closes his browsers, so anything kept only in IndexedDB or localStorage would be lost. Keep it small (see "New data").
 - **Deferred:**
-  - **A full battle log** (needed only for rating graphs per scene and head-to-head records). Its storage needs a separate decision, see "Later".
+  - ~~A full battle log~~ (rating graphs, head-to-head): **dropped** on Oct 24, too much tracking for what it gives.
   - **Glicko** (ratings with their own uncertainty, like lichess). A change to the rating maths, so its own project.
 
 ## Design
@@ -113,9 +114,9 @@ Impact: **Medium-large**. Four stages, with a review point after each one, the s
   4. **How settled:** bars for 0, 1-9, 10-29 and 30+ battles (the K tiers), "212 scenes are still provisional", and a **Battle the least-tested** button.
      - Behaviour (open question, proposal): starts Swiss with the left side taken in order of fewest battles (random among equals) instead of the shuffle, until the mode changes, Stash Battle closes, or every provisional scene has had a battle. A note above the cards says it's on, with a "Stop" link.
 
-### 5. New data (Stage 3)
+### 5. Records (Stage 3, trimmed)
 
-All of it in Stash, all of it small.
+**Scope (Brian, Oct 24):** keep it simple, nothing that needs heavier tracking. **Dropped:** top-10 movement (daily snapshots), biggest upsets, and the full battle log (scene-vs-scene history, rating graphs, head-to-head) for good. No server-side scripts.
 
 **Per-scene totals: new custom fields**, written in the **same** `partial` update as the ELO (no extra request):
 
@@ -124,40 +125,25 @@ All of it in Stash, all of it small.
 | `stash_battle_wins` | picks won (Swiss, Champion, and each Placement pick) |
 | `stash_battle_losses` | picks lost |
 | `stash_battle_peak` | highest ELO reached |
-| `stash_battle_streak` | current win streak |
+| `stash_battle_streak` | current win streak (needed to know the best one) |
 | `stash_battle_best_streak` | longest win streak |
 
-- **Why these and not a history:** Stash returns *all* of a scene's custom fields with every scene, and the GraphQL field is a map with no way to pick keys. So anything per scene rides along on every library download, Stash Battle's and Stash's own. Five numbers are fine; a history per scene would roughly double the full-library download.
-- Placement: the run already counts its picks (`run.battles`, `run.streak`); also count wins and losses, and add them when the scene lands. The opponents of a Placement run don't change (as now).
-- Battles from before these fields existed have no win/loss (only Brian's own library, since 3.0 is unreleased): keep `stash_battle_battles` as the total, and show wins/losses as they are.
+- Stash returns every custom field with every scene, so per-scene data stays at these few numbers.
+- Placement: the run already counts its picks; also count wins and losses, and add them when the scene lands. Its opponents don't change (as now).
+- Battles from before these fields have no win/loss (only Brian's library, 3.0 is unreleased): keep `stash_battle_battles` as the total.
 - `peak` starts at the current ELO the first time it's written.
-- Add the new keys to `ELO_FIELD_KEYS` (so Reset ELO and `clearElo` remove them), to `eloCustomFields` / `withEloFields`, and to `EloFields` (or a separate `RecordFields`, decide while building).
-- Custom Fields CSS: `stash_battle_best_streak` is 24 characters; widen the 22ch rule.
+- Add the keys to `ELO_FIELD_KEYS` (Reset ELO and `clearElo` remove them) and the write helpers. Custom Fields CSS: `stash_battle_best_streak` is 24 characters; widen the 22ch rule.
 
-**Capped lists: Stash Battle's plugin config** (`configuration.plugins["stash-battle"]`), each stored as a JSON string, each with a fixed maximum size:
+**Hall of fame: one list in the plugin config** (`statsHallOfFame`, a JSON string): every scene that has ever been #1, with the date it first got there (a handful of entries).
 
-| Key | Holds | Cap |
-|---|---|---|
-| `statsHallOfFame` | scenes that were ever #1, with the date they first got there | one entry per scene that ever reaches #1 (a handful) |
-| `statsTopSnapshots` | the top 10 scene ids, once a day (taken on the first open each day) | last 8 days |
-| `statsUpsets` | the biggest upsets: winner, loser, their ELOs, the winner's chance, date | top 20 by how unlikely the result was (lowest chance first) |
+- **Required change first:** `normalize()` only returns keys it knows and `persistSettings` rebuilds the map from it, so this key would be dropped by the next settings save. Make `persistSettings` keep keys it doesn't know. Test it.
+- Checked after each ELO write: is the scene now #1 in the all-scenes cache?
 
-- **Required change first:** `normalize()` in `settings.ts` only returns keys it knows, and `persistSettings` rebuilds the map from it, so these keys would be dropped by the next settings save. Make `persistSettings` start from the **raw stored map** (keeping keys it doesn't know) and only overwrite this tab's unsaved keys. Test it.
-- The plugin config is sent to Stash's own pages too, so the caps matter. Rough size of all three: a few KB.
-- **Top 10 movement:** compare today's top 10 with the snapshot from 7 days ago (or the oldest kept): ▲3, ▼1, NEW.
-- **Hall of fame:** after each ELO write, check whether the scene is now #1 in the all-scenes cache.
-- **Upsets:** Swiss and Champion picks only (a Placement pick doesn't move ELO, and an unrated placed scene has no real ELO).
-- **Records section** in the Stats tab: hall of fame, top 10 with movement, biggest upsets, best win streaks, best records (min. battles). On the cards: maybe `Record: 12–5` in the meta lines (open question).
-
-### Later: full battle log
-
-Only the **rating graph per scene** (with its peak) and **head-to-head records** ("3–1") need every battle stored.
-
-- About 60 bytes a battle, so 10,000 battles ≈ 600 KB.
-- Not per scene (rides along on every download) and not in the plugin config (sent to every Stash page).
-- **Best candidate:** one dedicated Stash item, e.g. a single group "Stash Battle data", holding the log in its custom fields in chunks. It downloads only when the Stats tab needs it, it's in Stash's own backups, and every device sees it. The catch: that item shows up in the library.
-- Alternative: a server-side plugin task writing a file. Needs Python on the Stash machine, and a plugin update could wipe the folder.
-- Decide with Brian after Stage 3.
+**Where records show (Brian, Oct 24):**
+- **Battle cards:** the "Battles: 17" line becomes "Record: 12–5".
+- **Explore:** "12–5" in the small card's bottom line, and sorts "Best record", "Highest peak", "Longest win streak".
+- **Stats:** a Records section with the hall of fame, and the top 5 by best win streak and by peak ELO.
+- Not on the scene page tooltip.
 
 ### Separate project: Glicko
 
@@ -167,7 +153,7 @@ Ratings with an uncertainty that shrinks as a scene battles (`1740 ± 80`), as o
 
 1. **Battle cards:** win chances (with "Upset!"), provisional "?" on cards and the scene page button, tiers behind the new setting. Pure functions in `elo.ts` / `score.ts` / `stats.ts`, unit-tested. No new stored data.
 2. **Stats tab from existing data:** tab shell, overview, ELO distribution, hidden gems / overplayed (with Battle this scene), how settled (with Battle the least-tested).
-3. **Records:** `persistSettings` keeps unknown keys; per-scene wins / losses / peak / streak fields; hall of fame, daily top-10 snapshots, biggest upsets; Records section; card record line if Brian wants it.
+3. **Records (trimmed):** `persistSettings` keeps unknown keys; per-scene wins / losses / peak / streak fields; hall of fame; record on battle and Explore cards, Explore sorts, Stats Records section.
 4. **Docs:** DOCUMENTATION.md, README (features, a Stats screenshot), the existing CHANGELOG `v3.0.0` entry, the forum drafts in `docs/forum/`. The version stays 3.0.0.
 
 ## Review checkpoints (after every stage)
@@ -188,8 +174,6 @@ Same as 3.0 (see the handoff):
   - histogram buckets, sqrt scale, quadrant split;
   - least-tested ordering;
   - win/loss, peak, streak and best streak updates, including Placement adding a run's picks when it lands, and Reset ELO clearing them;
-  - upsets list: ranking, cap of 20, no duplicates;
-  - top-10 snapshots: one per day, last 8 kept, ▲▼/NEW computed against 7 days back;
   - hall of fame: one entry per scene, first date kept;
   - `persistSettings` keeps keys it doesn't know.
 - **Live:**
@@ -198,10 +182,8 @@ Same as 3.0 (see the handoff):
 
 ## Open questions for Brian
 
-- Tier names, emoji and cutoffs: is the proposed ladder right?
-- "Battle the least-tested": the proposed behaviour (Swiss with the least-battled scenes on the left until stopped), or something else?
-- A `Record: 12–5` line on the cards?
-- Later: where the full battle log lives.
+- Tier names, emoji and cutoffs: kept as proposed so far (no change asked for).
+- Answered: "Battle the least-tested" works as proposed (Brian likes it); the record line goes on the battle and Explore cards; the battle log is dropped.
 
 ## Working notes (things learned since the 3.0 handoff)
 

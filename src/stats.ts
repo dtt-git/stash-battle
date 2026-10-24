@@ -2,8 +2,8 @@
 // distribution, hidden gems and how settled the rankings are. Pure functions: no state, no I/O.
 
 import { ELO_K_TIERS, TIERS } from "./constants";
-import { battles, elo, isProvisional, percentileRatings, seed } from "./score";
-import type { Scene, StashRatingsMode, Tier } from "./types";
+import { battles, elo, isProvisional, percentileRatings, sceneRecord, seed } from "./score";
+import type { Scene, SceneRecord, StashRatingsMode, Tier } from "./types";
 
 /** Rated scenes with their ELO (unrated ones dropped). */
 function ratedElos(scenes: Scene[]): { scene: Scene; elo: number }[] {
@@ -217,6 +217,15 @@ export function tierDescription(tier: Tier): string {
       ? `below the top ${percent(TIERS[index - 1].top)}`
       : `in the top ${percent(tier.top)}`;
   return `${tier.name}: ${where} of your scenes with a settled ELO`;
+}
+
+/** Up to `n` scenes with a record, highest `key` first (ties keep the library's ELO order). */
+export function topByRecord(scenes: Scene[], key: (r: SceneRecord) => number, n: number): { scene: Scene; record: SceneRecord }[] {
+  return scenes
+    .map((scene) => ({ scene, record: sceneRecord(scene) }))
+    .filter((s): s is { scene: Scene; record: SceneRecord } => s.record !== null && key(s.record) > 0)
+    .sort((a, b) => key(b.record) - key(a.record))
+    .slice(0, n);
 }
 
 /**

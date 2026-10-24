@@ -38,6 +38,9 @@ const SORTS: { value: ExploreSort; label: string }[] = [
   { value: "plays-asc", label: "Least played" },
   { value: "battles-desc", label: "Most battles" },
   { value: "battles-asc", label: "Fewest battles" },
+  { value: "record-desc", label: "Best record" },
+  { value: "peak-desc", label: "Highest peak ELO" },
+  { value: "streak-desc", label: "Longest win streak" },
 ];
 
 let filters: ExploreFilters = { ...DEFAULT_EXPLORE_FILTERS };
