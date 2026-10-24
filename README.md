@@ -88,6 +88,12 @@ ELO is saved in each scene's custom fields, so **Stash Battle doesn't touch your
 |----------------|---------------|
 | <img width="480" alt="Placement mode: the scene being placed shows the range of ranks it could land in" src="docs/screenshots/placement.png" /> | <img width="480" alt="Champion mode: the winning scene stays on with a win streak badge" src="docs/screenshots/champion.png" /> |
 
+On a phone:
+
+| Battle | Explore | Stats |
+|--------|---------|-------|
+| <img width="260" alt="Phone: the two scenes stacked with the win chances between them, emoji tabs, and mute and open buttons on each card" src="docs/screenshots/phone-battle.png" /> | <img width="260" alt="Phone: Explore's filters and two columns of small scene cards" src="docs/screenshots/phone-explore.png" /> | <img width="260" alt="Phone: the Stats tab's overview, how settled the rankings are, and the ELO distribution" src="docs/screenshots/phone-stats.png" /> |
+
 ## Installation
 
 ⚠️ Install at your own risk, nearly entirely vibe coded for myself but I review (some) of the code and test as thoroughly as I can.
@@ -157,6 +163,8 @@ npm install
 | `npm run dev` | Watch `src/`, rebuild on save, and deploy the bundle + css + yml into your live Stash plugins folder (when `STASH_PLUGINS_DIR` is set in `.env`) |
 | `npm run typecheck` | Strict TypeScript type-check (`tsc --noEmit`) — esbuild does not type-check on its own. |
 | `npm test` | Unit tests (ELO math, Stash rating conversions, Placement search, tiers, stats, Explore, records, settings, rating sync) |
+| `npm run smoke` | Headless checks against your running Stash (a first install, an older Stash, a 20,000-scene library); nothing is written to Stash. Needs Chrome or Edge installed |
+| `npm run screenshots` | Retake the README screenshots (desktop and phone) from your running Stash, with placeholder titles and hidden thumbnails; nothing is written |
 
 ### Live development against Stash
 

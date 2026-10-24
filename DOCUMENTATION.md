@@ -113,6 +113,9 @@ The modules have intentional circular references (e.g. `navigation` → `modal` 
 
 - **esbuild** ([`scripts/build.mjs`](scripts/build.mjs)) bundles `src/main.ts` → `plugins/stash-battle/stash-battle.js` as an IIFE. esbuild transpiles but does **not** type-check.
 - **TypeScript** ([`tsconfig.json`](tsconfig.json), `strict: true`) is used purely for type-checking via `tsc --noEmit`.
+- **Headless harness** ([`scripts/harness.mjs`](scripts/harness.mjs)): `playwright-core` drives the Chrome (or Edge) already installed, headless, against the running Stash (`STASH_URL`, default `http://localhost:9999`). Every `/graphql` request goes through a fake layer, so **nothing is ever written to Stash**: `real` mode passes reads through and refuses every mutation; `fresh` hides Stash Battle's config and `stash_battle_*` fields (a first install) and keeps writes in memory, so later reads see them; `old` answers the custom-fields introspection without them; `big` serves a seeded synthetic library of any size. A privacy guard runs before Stash's scripts (the page behind the modal, images and videos hidden; titles, studios, performers and tags become placeholders). Both scripts snapshot Stash's scenes and Stash Battle's config before and compare after.
+- **Screenshots** ([`scripts/screenshots.mjs`](scripts/screenshots.mjs)): the README / forum shots as lossless PNGs, desktop at 2x (1040 px wide window, the modal box clipped) and phone at 3x (393 x 852, touch, hover off). The setup shot answers the config without `eloSetupAt` and hides the "earlier setup didn't finish" notice. Champion's streak and Placement's picks are made with their writes refused.
+- **Smoke checks** ([`scripts/smoke.mjs`](scripts/smoke.mjs)): `fresh` runs a first install twice ("Use my ratings" + Don't update, "Start everyone at 1500" + Percentile): setup, picks, records, undo, every mode and tab, no page errors. `old` checks the "needs a newer Stash" message. `big [size]` times opening, a pick, each tab, Explore's sort and search on a synthetic library (default 20,000 scenes) and reports the longest main-thread block. Measured Oct 2026: 20,000 scenes open in about 1 s and every tab in under 0.2 s; 50,000 open in 1.6 s, Stats in 0.5 s. (Stash's own time to return a big library isn't included: the synthetic library is served instantly.)
 - **Tests** ([`scripts/test.mjs`](scripts/test.mjs)): Node can't run TypeScript directly, so the script bundles `tests/*.test.ts` with esbuild into `.test-build/` and runs them with Node's built-in test runner. The pure modules (`elo.ts`, `score.ts`, `placement.ts`, `stats.ts`, `explore.ts`) and `mergeConfig` / the hall of fame helpers (`tests/settings.test.ts`) are tested directly; `tests/sync.test.ts` covers the Stash rating sync and the Apollo refresh with a fake `fetch` and a fake `PluginApi`.
 
 ### npm scripts
@@ -123,6 +126,8 @@ The modules have intentional circular references (e.g. `navigation` → `modal` 
 | `npm run dev` | Watch `src/`, rebuild on save, deploy bundle + css + yml into the live Stash plugins folder (when `STASH_PLUGINS_DIR` is set) |
 | `npm run typecheck` | Strict type-check (`tsc --noEmit`) |
 | `npm test` | Unit tests (`tests/*.test.ts`) |
+| `npm run smoke` | Headless smoke checks against the running Stash, nothing written (`-- fresh`, `-- old`, `-- big [size]`) |
+| `npm run screenshots` | Retake the README screenshots into `docs/screenshots/` (`-- battle,gems` for some), nothing written |
 
 ### Dev deploy + live reload
 
