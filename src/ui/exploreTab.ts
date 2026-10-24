@@ -1,7 +1,7 @@
 // The 🔎 Explore tab: the whole library as small cards, ranked by ELO, with search (title, studio,
 // performers), tier / provisional / unrated filters, an ELO range and sorting. Clicking a card
-// opens the scene's page; its ⚔️ button battles it; hovering plays its preview (at the preview
-// volume, like the battle cards). "Battle these" battles the filter's scenes. Built
+// opens the scene's page; its ⚔️ button battles it; hovering (on touch, tapping the thumbnail)
+// plays its preview (at the preview volume, like the battle cards). "Battle these" battles the filter's scenes. Built
 // from Stash Battle's all-scenes cache each time the tab opens, and shown a page at a time, so a
 // big library never puts thousands of cards on the page.
 
@@ -20,7 +20,7 @@ import { updateSettings } from "../settings";
 import { isEloSetupPending, state } from "../state";
 import { tierMap } from "../stats";
 import { handleSceneLinkClick } from "./mainUI";
-import { escapeHtml, miniCardHtml, miniPreviewCard, startMiniPreview, stopMiniPreview } from "./miniCard";
+import { escapeHtml, handleMiniMuteTap, handleMiniThumbTap, miniCardHtml, miniPreviewCard, startMiniPreview, stopMiniPreview } from "./miniCard";
 import { resolveSceneTitle } from "../sceneTitle";
 import type { StatsActions } from "./statsTab";
 
@@ -283,6 +283,7 @@ function onContentClick(e: Event, content: HTMLElement, scrollRoot: HTMLElement 
     actions?.battleFilter(filters, filterLabel());
     return;
   }
+  if (handleMiniMuteTap(e) || handleMiniThumbTap(e)) return;
   const battle = target.closest<HTMLElement>("[data-battle]");
   if (battle?.dataset.battle) {
     stopMiniPreview();

@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { refreshSceneInCache } from "../src/cache";
 import { holdStashListRefresh, refreshStashCache } from "../src/graphql";
-import { syncStashRatings, writeElo } from "../src/rating";
+import { restoreElo, syncStashRatings, writeElo } from "../src/rating";
 import { battles, elo, sceneRecord } from "../src/score";
 import { updateSettingsNow } from "../src/settings";
 import { state } from "../src/state";
@@ -222,4 +222,36 @@ test("refreshSceneInCache brings a scene's cached copy up to date and moves it t
   assert.equal(elo(cached[0]), 1900);
   assert.equal(battles(cached[0]), 7);
   assert.notEqual(cached[0], fresh, "the cached object is updated, not replaced");
+});
+
+test("restoreElo (undo) writes the old fields back and removes what the pick added", async () => {
+  const inputs: { custom_fields: Record<string, unknown> }[] = [];
+  globalThis.fetch = (async (_url: unknown, init: { body: string }) => {
+    const body = JSON.parse(init.body);
+    if (body.query.includes("sceneUpdate")) inputs.push(body.variables.input);
+    return { json: async () => ({ data: { sceneUpdate: { id: "x" } } }) };
+  }) as unknown as typeof fetch;
+  fakeApollo({});
+  state.settings = { ...state.settings, stashRatings: "off" };
+
+  // A scene whose first battle created its record: back to no record
+  const picked = { ...scene("x", 1600, null), custom_fields: { stash_battle_elo: 1612, stash_battle_battles: 5, stash_battle_seeded: 1, stash_battle_wins: 1, stash_battle_losses: 0, stash_battle_peak: 1612, stash_battle_streak: 1, stash_battle_best_streak: 1 } };
+  state.memoryCache.allScenes = [picked];
+  state.memoryCache.filteredScenes = null;
+  await restoreElo(picked, { elo: 1600, battles: 4, seeded: true });
+  assert.deepEqual(inputs[0].custom_fields, {
+    partial: { stash_battle_elo: 1600, stash_battle_battles: 4, stash_battle_seeded: true },
+    remove: ["stash_battle_wins", "stash_battle_losses", "stash_battle_peak", "stash_battle_streak", "stash_battle_best_streak"],
+  });
+  assert.equal(elo(picked), 1600);
+  assert.equal(sceneRecord(picked), null);
+
+  // Already as it was: nothing written
+  await restoreElo(picked, { elo: 1600, battles: 4, seeded: true });
+  assert.equal(inputs.length, 1);
+
+  // A scene that was unrated before the pick: unrated again
+  await restoreElo(picked, null);
+  assert.equal((inputs[1].custom_fields.remove as string[]).length, 8);
+  assert.equal(elo(picked), null);
 });

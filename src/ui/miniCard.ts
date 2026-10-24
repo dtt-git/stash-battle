@@ -52,7 +52,11 @@ export function miniCardHtml(entry: ExploreEntry, link = true): string {
   const target = state.settings.openInNewTab ? ` target="_blank" rel="noopener"` : "";
   return `
         <div class="sb-mini-card${tierAttrs}" data-scene-id="${scene.id}"${preview}>
-          <a class="sb-mini-link" href="${sceneUrl(scene.id)}"${target}>${body}</a>
+          <a class="sb-mini-link" href="${sceneUrl(scene.id)}"${target}>${body}</a>${
+            scene.paths?.preview
+              ? `<div class="sb-mini-overlay"><button type="button" class="sb-card-mute sb-mini-mute" aria-label="Play this preview with sound">🔇</button></div>`
+              : ""
+          }
           <button type="button" class="sb-mini-battle" data-battle="${scene.id}" title="Battle this scene">⚔️</button>
         </div>`;
 }
@@ -81,11 +85,68 @@ export function startMiniPreview(card: HTMLElement): void {
   video.playsInline = true;
   thumb.appendChild(video);
   video.play().catch(() => {});
+  updateMiniMuteIcons();
 }
 
 export function stopMiniPreview(): void {
   previewCard?.querySelector(".sb-mini-video")?.remove();
   previewCard = null;
+  updateMiniMuteIcons();
+}
+
+/** Each small card's mute button (touch) shows whether its preview is heard right now. */
+function updateMiniMuteIcons(): void {
+  document.querySelectorAll<HTMLElement>(".sb-mini-mute").forEach((button) => {
+    const card = button.closest(".sb-mini-card");
+    const video = card && card === previewCard ? card.querySelector<HTMLVideoElement>(".sb-mini-video") : null;
+    const heard = video !== null && !video.muted;
+    button.textContent = heard ? "🔊" : "🔇";
+    button.setAttribute("aria-label", heard ? "Mute this preview" : "Play this preview with sound");
+  });
+}
+
+/**
+ * Touch: a small card's mute button. Heard → muted (the preview keeps playing). Not heard → its
+ * preview plays with sound (starting it, and turning the preview volume back on if it was at 0).
+ * Returns true when it handled the tap.
+ */
+export function handleMiniMuteTap(e: Event): boolean {
+  const button = (e.target as Element).closest(".sb-mini-mute");
+  if (!button) return false;
+  e.preventDefault();
+  const card = button.closest<HTMLElement>(".sb-mini-card[data-preview]");
+  if (!card) return true;
+  const video = card === previewCard ? card.querySelector<HTMLVideoElement>(".sb-mini-video") : null;
+  if (video && !video.muted) {
+    video.muted = true;
+  } else {
+    // The tab bar's speaker restores the volume from before muting
+    if (state.settings.previewVolume === 0) document.querySelector<HTMLButtonElement>(".sb-volume-icon")?.click();
+    if (video) {
+      video.volume = sliderToVolume(state.settings.previewVolume);
+      video.muted = false;
+    } else {
+      startMiniPreview(card);
+    }
+  }
+  updateMiniMuteIcons();
+  return true;
+}
+
+/**
+ * Touch screens, like the battle cards: a tap on a small card's thumbnail plays its preview (with
+ * sound) or stops it, instead of following the card's link; the info below opens the scene.
+ * Returns true when it handled the tap.
+ */
+export function handleMiniThumbTap(e: Event): boolean {
+  if (!window.matchMedia("(hover: none)").matches) return false;
+  const thumb = (e.target as Element).closest(".sb-mini-thumb");
+  const card = thumb?.closest<HTMLElement>(".sb-mini-card[data-preview]");
+  if (!card) return false;
+  e.preventDefault();
+  if (previewCard === card) stopMiniPreview();
+  else startMiniPreview(card);
+  return true;
 }
 
 /** The small card whose preview is playing, if any. */

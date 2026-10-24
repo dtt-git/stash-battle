@@ -14,18 +14,20 @@ import {
   pairRanks,
 } from "../pairs";
 import { recordPlacementResult } from "../placement";
-import { writeElo } from "../rating";
+import { eloWritesSettled, restoreElo, writeElo } from "../rating";
 import { fetchSceneFields } from "../sceneActions";
-import { battles, effectiveElo, kGames } from "../score";
+import { battles, effectiveElo, eloFields, kGames } from "../score";
+import { getHallOfFame, keepOnlyHallOfFame } from "../settings";
 import { explorePoolWithin, isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { cachedTierMap } from "../stats";
 import { saveState } from "../storage";
-import type { Mode, Rank, Scene, Tier } from "../types";
+import type { EloFields, Mode, PlacementRun, Rank, Scene, Tier } from "../types";
 import { confirmDeleteScene } from "./deleteDialog";
 import { createSceneCard } from "./sceneCard";
 import { showPlacementScreen, showVictoryScreen } from "./screens";
 import { createSettingsTab, createTabBar, getActiveTab } from "./settingsPanel";
 import { createExploreTab } from "./exploreTab";
+import { createRecordsTab } from "./recordsTab";
 import { createStatsTab } from "./statsTab";
 
 const MODES: { mode: Mode; icon: string; title: string; desc: string; tip: string }[] = [
@@ -98,13 +100,15 @@ export function createMainUI(): string {
             </div>
             <div class="sb-actions">
               <div class="sb-action-buttons">
+                <button id="sb-undo-btn" class="btn btn-secondary" title="Undo your last pick (Backspace)" disabled>↶ Undo</button>
                 <button id="sb-skip-btn" class="btn btn-secondary">Skip</button>
                 <button id="sb-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh</button>
               </div>
               <div class="sb-keyboard-hint">
                 <span>←</span> choose left ·
                 <span>→</span> choose right ·
-                <span>Space</span> skip
+                <span>Space</span> skip ·
+                <span>⌫</span> undo
               </div>
             </div>
           </div>
@@ -112,6 +116,7 @@ export function createMainUI(): string {
 
         ${createExploreTab()}
         ${createStatsTab()}
+        ${createRecordsTab()}
         ${createSettingsTab()}
       </div>
     `;
@@ -189,6 +194,7 @@ function bindSceneChoice(body: HTMLElement, choice: SceneChoice): void {
   body.addEventListener("click", () => handleSceneChoice(choice));
 }
 
+
 /** Show or hide the Skip / Refresh bar. Only end screens hide it; every rendered pair shows it. */
 export function setActionsVisible(visible: boolean): void {
   const actionsEl = document.querySelector<HTMLElement>(".sb-actions");
@@ -225,9 +231,20 @@ export function applyPreviewSettings(): void {
   document.querySelectorAll<HTMLElement>("#sb-comparison-area .sb-scene-card").forEach((card) => {
     const video = card.querySelector<HTMLVideoElement>(".sb-hover-preview");
     if (!video) return;
-    const active = card.matches(":hover") || card.classList.contains("sb-previewing");
+    // Touch screens keep a tapped card ":hover" afterwards, so there only the tap state counts
+    // (otherwise the second tap couldn't mute the preview)
+    const hovered = !isTouchDevice() && card.matches(":hover");
+    const active = hovered || card.classList.contains("sb-previewing");
+    // sb-card-muted: muted from the card's own button (touch), the preview keeps playing
+    const muted = !active || previewVolume === 0 || card.classList.contains("sb-card-muted");
     video.volume = sliderToVolume(previewVolume);
-    video.muted = !active || previewVolume === 0;
+    video.muted = muted;
+    // The touch mute button shows whether this card's preview is heard right now
+    const button = card.querySelector<HTMLElement>(".sb-card-mute");
+    if (button) {
+      button.textContent = muted ? "🔇" : "🔊";
+      button.setAttribute("aria-label", muted ? "Play this preview with sound" : "Mute this preview");
+    }
     if (battleVisible && (autoplayPreviews || active)) {
       if (video.paused) video.play().catch(() => {});
     } else {
@@ -260,12 +277,34 @@ function bindPreview(card: HTMLElement): void {
   });
 }
 
-/** Touch: tap the thumbnail to play/stop its preview with sound. */
+/** Touch: tap the thumbnail to play/stop its preview with sound (the ↗ opens the scene). */
 function togglePreview(card: HTMLElement): void {
   const previewing = !card.classList.contains("sb-previewing");
   document.querySelectorAll(".sb-scene-card.sb-previewing").forEach((c) => c.classList.remove("sb-previewing"));
   card.classList.toggle("sb-previewing", previewing);
+  card.classList.remove("sb-card-muted");
   applyPreviewSettings();
+}
+
+/**
+ * Touch: the card's mute button. Heard → muted (the preview keeps playing). Not heard → this
+ * card's preview plays with sound (turning the preview volume back on if it was at 0).
+ */
+function toggleCardSound(card: HTMLElement): void {
+  const video = card.querySelector<HTMLVideoElement>(".sb-hover-preview");
+  if (video && !video.muted) {
+    card.classList.add("sb-card-muted");
+    applyPreviewSettings();
+    return;
+  }
+  // The tab bar's speaker restores the volume from before muting
+  if (state.settings.previewVolume === 0) document.querySelector<HTMLButtonElement>(".sb-volume-icon")?.click();
+  if (card.classList.contains("sb-previewing")) {
+    card.classList.remove("sb-card-muted");
+    applyPreviewSettings();
+  } else {
+    togglePreview(card);
+  }
 }
 
 /**
@@ -357,6 +396,10 @@ export function renderPair(scenes: Scene[], ranks: Rank[]): void {
       }
       handleSceneLinkClick(e, thumb);
     });
+    card.querySelector(".sb-card-mute")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      toggleCardSound(card);
+    });
     const openLink = card.querySelector<HTMLAnchorElement>(".sb-open-link");
     openLink?.addEventListener("click", (e) => {
       if (!state.settings.openInNewTab) handleSceneLinkClick(e, openLink);
@@ -370,6 +413,7 @@ export function renderPair(scenes: Scene[], ranks: Rank[]): void {
   // Update skip button state
   const skipBtn = document.querySelector<HTMLButtonElement>("#sb-skip-btn");
   if (skipBtn) skipBtn.disabled = isRunActive();
+  updateUndoButton();
 }
 
 /** Skip the current pair (not allowed mid-run). */
@@ -684,7 +728,7 @@ function handlePlacementChoice(choice: SceneChoice): void {
 
   choice.winnerCard.classList.add("sb-winner");
   choice.loserCard.classList.add("sb-loser");
-  setTimeout(() => loadNewPair(), 600);
+  scheduleNextPair(600);
 }
 
 /** Champion: two-sided ELO every pick; the winner defends next (a new winner takes over). */
@@ -724,6 +768,8 @@ function showPickResult(
 function handleSceneChoice(choice: SceneChoice): void {
   if (state.disableChoice) return;
   state.disableChoice = true;
+  lastPick = takePickSnapshot(choice);
+  updateUndoButton();
 
   const { winner: winnerScene, loser: loserScene, winnerCard, loserCard } = choice;
 
@@ -752,7 +798,117 @@ const RATING_ANIM_DEFAULT_STEP_MS = 50;
 const RATING_ANIM_MIN_STEP_MS = 8;
 
 function scheduleNextPairAfterAnimations(): void {
-  setTimeout(() => loadNewPair(), 1500);
+  scheduleNextPair(1500);
+}
+
+/** The next pair after a pick's animation (an undo in the meantime cancels it). */
+let nextPairTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleNextPair(ms: number): void {
+  if (nextPairTimer) clearTimeout(nextPairTimer);
+  nextPairTimer = setTimeout(() => {
+    nextPairTimer = null;
+    void loadNewPair();
+  }, ms);
+}
+
+// ---------- Undo the last pick ----------
+
+/** What the last pick changed, as it was just before (one level of undo). */
+interface PickSnapshot {
+  mode: Mode;
+  left: Scene;
+  right: Scene;
+  ranks: [Rank, Rank];
+  /** The scenes the pick writes (Placement's scene is written when it lands), with their fields before. */
+  fields: { scene: Scene; value: EloFields | null }[];
+  championScene: Scene | null;
+  championWins: number;
+  championDefeated: string[];
+  placement: PlacementRun | null;
+  /** The hall of fame's scenes before (a pick can add a new #1). */
+  hallIds: string[];
+}
+
+let lastPick: PickSnapshot | null = null;
+let undoing = false;
+
+function takePickSnapshot(choice: SceneChoice): PickSnapshot {
+  const run = state.placement;
+  const written = state.currentMode === "placement" ? (run ? [run.scene] : []) : [choice.left, choice.right];
+  return {
+    mode: state.currentMode,
+    left: choice.left,
+    right: choice.right,
+    ranks: [state.currentRanks.left, state.currentRanks.right],
+    fields: written.map((scene) => ({ scene, value: eloFields(latestScene(scene)) })),
+    championScene: state.championScene,
+    championWins: state.championWins,
+    championDefeated: [...state.championDefeated],
+    // A copy: the run object itself changes with every pick
+    placement: run ? { ...run, results: [...(run.results ?? [])] } : null,
+    hallIds: getHallOfFame().map((e) => e.id),
+  };
+}
+
+/** There's a pick to undo. */
+export function canUndo(): boolean {
+  return lastPick !== null && !undoing;
+}
+
+/** Forget the last pick (after a Reset ELO, say: its values no longer apply). */
+export function clearUndo(): void {
+  lastPick = null;
+  updateUndoButton();
+}
+
+function updateUndoButton(): void {
+  document.querySelectorAll<HTMLButtonElement>("#sb-undo-btn, #sb-end-undo").forEach((btn) => (btn.disabled = !canUndo()));
+}
+
+/**
+ * Take back the last pick: its scenes' ELO, battles and records as they were (written back,
+ * after any write still on its way), the mode's run (Champion's streak, Placement's search), any
+ * hall of fame entry it added, and the same pair on screen to pick again. Stash ratings follow
+ * the restored ELO on their own (the next sync).
+ */
+export async function undoLastPick(): Promise<void> {
+  const pick = lastPick;
+  if (!pick || undoing) return;
+  undoing = true;
+  lastPick = null;
+  updateUndoButton();
+  if (nextPairTimer) {
+    clearTimeout(nextPairTimer);
+    nextPairTimer = null;
+  }
+  state.disableChoice = true;
+  try {
+    await eloWritesSettled();
+    await Promise.all(pick.fields.map(({ scene, value }) => restoreElo(scene, value)));
+    await keepOnlyHallOfFame(pick.hallIds);
+  } catch (e) {
+    console.error("[Stash Battle] Undo couldn't put everything back:", e);
+  }
+
+  if (state.currentMode !== pick.mode) {
+    state.currentMode = pick.mode;
+    document.querySelectorAll<HTMLElement>(".sb-mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === pick.mode));
+    updateModeInfo();
+    updateClimbPoolWarning();
+  }
+  state.championScene = pick.championScene;
+  state.championWins = pick.championWins;
+  state.championDefeated = pick.championDefeated;
+  state.placement = pick.placement;
+  state.currentPair = { left: pick.left, right: pick.right };
+  state.currentRanks = { left: pick.ranks[0], right: pick.ranks[1] };
+  state.disableChoice = false;
+  undoing = false;
+  console.log(`[Stash Battle] ↶ Undid the last pick (scene ${pick.left.id} vs ${pick.right.id})`);
+  renderPair([pick.left, pick.right], pick.ranks);
+  updatePoolStatus();
+  saveState();
 }
 
 /**

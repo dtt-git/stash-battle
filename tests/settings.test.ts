@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { DEFAULT_SETTINGS } from "../src/constants";
-import { mergeConfig, parseHallOfFame } from "../src/settings";
+import { mergeConfig, mergeHallOfFame, parseHallOfFame } from "../src/settings";
 
 test("mergeConfig keeps keys that aren't settings, such as the hall of fame", () => {
   const stored = { stashRatings: "linear", previewVolume: 30, statsHallOfFame: '[{"id":"1","date":"2026-10-24"}]' };
@@ -31,4 +31,20 @@ test("parseHallOfFame reads the stored list and ignores anything broken", () => 
   assert.deepEqual(parseHallOfFame("not json"), []);
   assert.deepEqual(parseHallOfFame(undefined), []);
   assert.deepEqual(parseHallOfFame('{"id":"1"}'), []);
+});
+
+test("mergeHallOfFame: each scene once with its earliest time, oldest first by the time of day too", () => {
+  const thisTab = [
+    { id: "a", date: "2026-10-24T09:00:00.000Z" },
+    { id: "b", date: "2026-10-24T15:30:00.000Z" },
+  ];
+  const otherTab = [
+    { id: "c", date: "2026-10-24T12:00:00.000Z" },
+    { id: "a", date: "2026-10-24T08:00:00.000Z" },
+  ];
+  assert.deepEqual(mergeHallOfFame(thisTab, otherTab), [
+    { id: "a", date: "2026-10-24T08:00:00.000Z" },
+    { id: "c", date: "2026-10-24T12:00:00.000Z" },
+    { id: "b", date: "2026-10-24T15:30:00.000Z" },
+  ]);
 });

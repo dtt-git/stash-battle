@@ -5,7 +5,7 @@ import { elo, stashRatingTargets } from "../score";
 import { resetRunState, state } from "../state";
 import { saveState } from "../storage";
 import type { PlacementPairResult, Scene } from "../types";
-import { loadNewPair, setActionsVisible } from "./mainUI";
+import { canUndo, loadNewPair, setActionsVisible, undoLastPick } from "./mainUI";
 import { resolveSceneTitle } from "../sceneTitle";
 
 function buildEndScreenHtml(
@@ -47,6 +47,12 @@ function showEndScreen(html: string): void {
   comparisonArea.querySelector("#sb-new-run")?.addEventListener("click", () => {
     loadNewPair();
   });
+  // The pick that ended the run can be taken back from here too (the Undo bar is hidden)
+  const newRun = comparisonArea.querySelector("#sb-new-run");
+  if (newRun && canUndo()) {
+    newRun.insertAdjacentHTML("afterend", ` <button id="sb-end-undo" class="btn btn-secondary">↶ Undo last pick</button>`);
+    comparisonArea.querySelector("#sb-end-undo")?.addEventListener("click", () => void undoLastPick());
+  }
 }
 
 /** Capture display values, clear run state, then show the end screen. */

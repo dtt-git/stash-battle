@@ -1,7 +1,7 @@
 // Persist ELO (and Stash ratings) to Stash and keep the local cache in sync.
 
 import { latestScene, setEloInCache, setRatingsInCache } from "./cache";
-import { ELO_FIELD_KEYS } from "./constants";
+import { ELO_FIELD_KEYS, RECORD_FIELD_KEYS } from "./constants";
 import { graphqlQuery, refreshStashCache } from "./graphql";
 import { isSceneNotFoundError } from "./sceneActions";
 import { elo as eloOf, eloCustomFields, eloFields, isRated, isSeeded, recordAfter, sceneRecord, stashRatingChanges } from "./score";
@@ -61,7 +61,22 @@ async function saveEloFields(scene: Scene, value: EloFields | null, customFields
  * true = won), in one write (custom fields only; `partial` leaves other plugins' fields alone).
  * Whether it was seeded stays as it was.
  */
-export async function writeElo(scene: Scene, elo: number, battles: number, results: boolean[]): Promise<void> {
+export function writeElo(scene: Scene, elo: number, battles: number, results: boolean[]): Promise<void> {
+  const write = saveElo(scene, elo, battles, results);
+  pendingWrites.add(write);
+  void write.finally(() => pendingWrites.delete(write));
+  return write;
+}
+
+/** ELO writes still on their way to Stash (undo waits for them before putting values back). */
+const pendingWrites = new Set<Promise<void>>();
+
+/** Resolves once every ELO write started so far has finished. */
+export async function eloWritesSettled(): Promise<void> {
+  await Promise.allSettled([...pendingWrites]);
+}
+
+async function saveElo(scene: Scene, elo: number, battles: number, results: boolean[]): Promise<void> {
   const current = latestScene(scene);
   const record = recordAfter(sceneRecord(current), results, eloOf(current) ?? elo, elo);
   const value: EloFields = { elo, battles, seeded: isSeeded(scene), record };
@@ -75,6 +90,21 @@ export async function writeElo(scene: Scene, elo: number, battles: number, resul
 export function noteTopScene(): void {
   const top = state.memoryCache.allScenes?.[0];
   if (top && isRated(top) && !getHallOfFame().some((e) => e.id === top.id)) void addToHallOfFame(top.id);
+}
+
+/**
+ * Put a scene's ELO fields back exactly as `value` (undo): a scene that had no record loses the
+ * record fields its pick created, and one that was unrated loses its ELO again. Nothing is
+ * written when they already match.
+ */
+export async function restoreElo(scene: Scene, value: EloFields | null): Promise<void> {
+  if (sameElo(eloFields(latestScene(scene)), value)) return;
+  const customFields = value
+    ? { partial: eloCustomFields(value), ...(value.record ? {} : { remove: RECORD_FIELD_KEYS }) }
+    : { remove: ELO_FIELD_KEYS };
+  if (await saveEloFields(scene, value, customFields, "undo ELO")) {
+    console.log(`[Stash Battle] ↶ Restored scene ${scene.id} ELO ${value ? value.elo : "(unrated)"}`);
+  }
 }
 
 /** Remove a scene's ELO fields, making it unrated again. */

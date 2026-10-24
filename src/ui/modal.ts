@@ -13,12 +13,14 @@ import { cancelConfirmDialog, confirmDialog, isConfirmDialogOpen } from "./confi
 import { cancelDeleteDialog, isDeleteDialogOpen } from "./deleteDialog";
 import {
   applyPreviewSettings,
+  clearUndo,
   createMainUI,
   handleSceneGone,
   loadNewPair,
   renderPair,
   restoreCurrentPair,
   skipPair,
+  undoLastPick,
   updateClimbPoolWarning,
   updateLeastTestedNote,
   updateModeInfo,
@@ -27,6 +29,7 @@ import {
 } from "./mainUI";
 import { renderExploreTab, setExploreFilters } from "./exploreTab";
 import { stopMiniPreview } from "./miniCard";
+import { renderRecordsTab } from "./recordsTab";
 import { renderStatsTab, type StatsActions } from "./statsTab";
 import { bindSettingsControls, getActiveTab, showTab, syncSettingsControls } from "./settingsPanel";
 import { refreshSceneElo } from "./sceneElo";
@@ -123,6 +126,8 @@ async function startResetElo(modal: HTMLElement): Promise<void> {
 /** Setup (first time or Reset ELO) finished: settings it saved show, then battles start. */
 function afterSetup(modal: HTMLElement): void {
   state.resettingElo = false;
+  // The last pick's values belong to the old ELO
+  clearUndo();
   syncSettingsControls(modal);
   updateRatingsNote();
   void loadNewPair(getSceneIdFromUrl());
@@ -434,6 +439,7 @@ export async function openModal(): Promise<void> {
       // A small card's preview (Explore, or a hidden gems card) never keeps playing on another tab
       stopMiniPreview();
       if (tab === "stats") void renderStatsTab(modal, statsActions(modal));
+      if (tab === "records") void renderRecordsTab(modal, statsActions(modal).battleScene);
       if (tab === "explore") void renderExploreTab(modal, statsActions(modal));
     },
     confirmSettingChange,
@@ -460,8 +466,9 @@ export async function openModal(): Promise<void> {
     applyPreviewSettings();
   });
 
-  // Skip button
+  // Skip and Undo buttons
   modal.querySelector("#sb-skip-btn")?.addEventListener("click", skipPair);
+  modal.querySelector("#sb-undo-btn")?.addEventListener("click", () => void undoLastPick());
 
   // Refresh cache button
   const refreshCacheBtn = modal.querySelector<HTMLButtonElement>("#sb-refresh-cache-btn");
@@ -564,13 +571,21 @@ export async function openModal(): Promise<void> {
     // Arrow keys to choose
     if (e.key === "ArrowLeft" && state.currentPair.left) {
       e.preventDefault();
-      const leftBody = activeModal.querySelector<HTMLElement>('.sb-scene-card[data-side="left"] .sb-scene-body');
-      if (leftBody) leftBody.click();
+      // The Choose button (on touch screens the rest of the card opens the scene)
+      const leftChoose = activeModal.querySelector<HTMLElement>('.sb-scene-card[data-side="left"] .sb-choose-btn');
+      if (leftChoose) leftChoose.click();
     }
     if (e.key === "ArrowRight" && state.currentPair.right) {
       e.preventDefault();
-      const rightBody = activeModal.querySelector<HTMLElement>('.sb-scene-card[data-side="right"] .sb-scene-body');
-      if (rightBody) rightBody.click();
+      const rightChoose = activeModal.querySelector<HTMLElement>('.sb-scene-card[data-side="right"] .sb-choose-btn');
+      if (rightChoose) rightChoose.click();
+    }
+
+    // Backspace undoes the last pick
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      void undoLastPick();
+      return;
     }
 
     // Spacebar to skip

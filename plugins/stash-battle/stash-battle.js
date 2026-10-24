@@ -1333,7 +1333,7 @@
     try {
       const stored = await fetchStoredConfig();
       legacyFunMode = stored?.funMode === true;
-      hallOfFame = parseHallOfFame(stored?.[HALL_OF_FAME_KEY]);
+      hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), []);
       state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
       return true;
     } catch (e) {
@@ -1365,7 +1365,8 @@
       const keys = [...unsaved];
       unsaved.clear();
       try {
-        const input = mergeConfig(await fetchStoredConfig(), state.settings, keys, extra);
+        const stored = await fetchStoredConfig();
+        const input = mergeConfig(stored, state.settings, keys, typeof extra === "function" ? extra(stored) : extra);
         await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
         return true;
       } catch (e) {
@@ -1394,13 +1395,34 @@
       return [];
     }
   }
+  function mergeHallOfFame(a, b) {
+    const earliest = /* @__PURE__ */ new Map();
+    for (const entry of [...a, ...b]) {
+      const known = earliest.get(entry.id);
+      if (!known || Date.parse(entry.date) < Date.parse(known.date)) earliest.set(entry.id, entry);
+    }
+    return [...earliest.values()].sort((x, y) => Date.parse(x.date) - Date.parse(y.date));
+  }
   function getHallOfFame() {
     return hallOfFame;
   }
   async function addToHallOfFame(sceneId, date = (/* @__PURE__ */ new Date()).toISOString()) {
     if (hallOfFame.some((e) => e.id === sceneId)) return;
-    hallOfFame = [...hallOfFame, { id: sceneId, date }];
-    await saveConfig({ [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) });
+    hallOfFame = mergeHallOfFame(hallOfFame, [{ id: sceneId, date }]);
+    await saveConfig((stored) => {
+      hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), hallOfFame);
+      return { [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) };
+    });
+  }
+  async function keepOnlyHallOfFame(keepIds) {
+    const keep = new Set(keepIds);
+    if (hallOfFame.every((e) => keep.has(e.id))) return;
+    const drop = new Set(hallOfFame.filter((e) => !keep.has(e.id)).map((e) => e.id));
+    hallOfFame = hallOfFame.filter((e) => !drop.has(e.id));
+    await saveConfig((stored) => {
+      hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), hallOfFame).filter((e) => !drop.has(e.id));
+      return { [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) };
+    });
   }
   async function clearHallOfFame() {
     hallOfFame = [];
@@ -1461,7 +1483,17 @@
     scheduleStashRatingSync();
     return true;
   }
-  async function writeElo(scene, elo2, battles2, results2) {
+  function writeElo(scene, elo2, battles2, results2) {
+    const write = saveElo(scene, elo2, battles2, results2);
+    pendingWrites.add(write);
+    void write.finally(() => pendingWrites.delete(write));
+    return write;
+  }
+  var pendingWrites = /* @__PURE__ */ new Set();
+  async function eloWritesSettled() {
+    await Promise.allSettled([...pendingWrites]);
+  }
+  async function saveElo(scene, elo2, battles2, results2) {
     const current = latestScene(scene);
     const record = recordAfter(sceneRecord(current), results2, elo(current) ?? elo2, elo2);
     const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene), record };
@@ -1473,6 +1505,13 @@
   function noteTopScene() {
     const top = state.memoryCache.allScenes?.[0];
     if (top && isRated(top) && !getHallOfFame().some((e) => e.id === top.id)) void addToHallOfFame(top.id);
+  }
+  async function restoreElo(scene, value) {
+    if (sameElo(eloFields(latestScene(scene)), value)) return;
+    const customFields = value ? { partial: eloCustomFields(value), ...value.record ? {} : { remove: RECORD_FIELD_KEYS } } : { remove: ELO_FIELD_KEYS };
+    if (await saveEloFields(scene, value, customFields, "undo ELO")) {
+      console.log(`[Stash Battle] ↶ Restored scene ${scene.id} ELO ${value ? value.elo : "(unrated)"}`);
+    }
   }
   async function writeStashRatings(ratings) {
     const idsByRating = /* @__PURE__ */ new Map();
@@ -2177,6 +2216,7 @@
             ${previewPath ? `<video class="sb-hover-preview pwr-hover-preview" src="${previewPath}" loop muted playsinline></video>` : ""}
           </a>
           <div class="sb-scene-duration">${formatDuration(duration)}</div>
+          <button type="button" class="sb-card-mute" aria-label="Play this preview with sound">🔇</button>
           ${statusBadgeHtml}
           <div class="sb-click-hint">${openInNewTab ? "Click to open in new tab" : "Click to open scene"}</div>
           <a class="sb-open-link" href="${sceneUrl2}" target="_blank" rel="noopener" title="Open scene in new tab">↗</a>
@@ -2195,7 +2235,7 @@
               <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
               <div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>
-              <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}</div>
+              <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}<span class="sb-meta-record-inline"> · ${record !== null ? `<strong>Record:</strong> ${record}` : `${battles(scene)} battles`}</span></div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
           </div>
@@ -2233,6 +2273,11 @@
     comparisonArea.querySelector("#sb-new-run")?.addEventListener("click", () => {
       loadNewPair();
     });
+    const newRun = comparisonArea.querySelector("#sb-new-run");
+    if (newRun && canUndo()) {
+      newRun.insertAdjacentHTML("afterend", ` <button id="sb-end-undo" class="btn btn-secondary">↶ Undo last pick</button>`);
+      comparisonArea.querySelector("#sb-end-undo")?.addEventListener("click", () => void undoLastPick());
+    }
   }
   function finishRunShowEndScreen(html) {
     resetRunState();
@@ -2357,15 +2402,21 @@
             <label class="custom-control-label" for="${id}"></label>
           </div>`;
   }
+  var TABS = [
+    { id: "battle", emoji: "⚔️", name: "Battle" },
+    { id: "explore", emoji: "🔎", name: "Explore" },
+    { id: "stats", emoji: "📊", name: "Stats" },
+    { id: "records", emoji: "🏆", name: "Records" },
+    { id: "settings", emoji: "⚙", name: "Settings" }
+  ];
   function createTabBar() {
     const { previewVolume } = state.settings;
     return `
       <div class="sb-tab-bar">
         <nav class="nav nav-tabs sb-tabs" role="tablist">
-          <a class="nav-item nav-link active" role="tab" data-tab="battle" aria-selected="true">⚔️ Battle</a>
-          <a class="nav-item nav-link" role="tab" data-tab="explore" aria-selected="false">🔎 Explore</a>
-          <a class="nav-item nav-link" role="tab" data-tab="stats" aria-selected="false">📊 Stats</a>
-          <a class="nav-item nav-link" role="tab" data-tab="settings" aria-selected="false">⚙ Settings</a>
+          ${TABS.map(
+      ({ id, emoji, name }) => `<a class="nav-item nav-link${id === "battle" ? " active" : ""}" role="tab" data-tab="${id}" aria-selected="${id === "battle"}" aria-label="${name}" title="${name}"><span class="sb-tab-emoji" aria-hidden="true">${emoji}</span><span class="sb-tab-name"> ${name}</span></a>`
+    ).join("")}
         </nav>
         <div class="sb-volume" title="Preview volume">
           <button type="button" class="sb-volume-icon" aria-label="Mute previews">${volumeIcon(previewVolume)}</button>
@@ -2517,7 +2568,7 @@
     const target = state.settings.openInNewTab ? ` target="_blank" rel="noopener"` : "";
     return `
         <div class="sb-mini-card${tierAttrs}" data-scene-id="${scene.id}"${preview}>
-          <a class="sb-mini-link" href="${sceneUrl(scene.id)}"${target}>${body}</a>
+          <a class="sb-mini-link" href="${sceneUrl(scene.id)}"${target}>${body}</a>${scene.paths?.preview ? `<div class="sb-mini-overlay"><button type="button" class="sb-card-mute sb-mini-mute" aria-label="Play this preview with sound">🔇</button></div>` : ""}
           <button type="button" class="sb-mini-battle" data-battle="${scene.id}" title="Battle this scene">⚔️</button>
         </div>`;
   }
@@ -2539,10 +2590,52 @@
     thumb.appendChild(video);
     video.play().catch(() => {
     });
+    updateMiniMuteIcons();
   }
   function stopMiniPreview() {
     previewCard?.querySelector(".sb-mini-video")?.remove();
     previewCard = null;
+    updateMiniMuteIcons();
+  }
+  function updateMiniMuteIcons() {
+    document.querySelectorAll(".sb-mini-mute").forEach((button) => {
+      const card = button.closest(".sb-mini-card");
+      const video = card && card === previewCard ? card.querySelector(".sb-mini-video") : null;
+      const heard = video !== null && !video.muted;
+      button.textContent = heard ? "🔊" : "🔇";
+      button.setAttribute("aria-label", heard ? "Mute this preview" : "Play this preview with sound");
+    });
+  }
+  function handleMiniMuteTap(e) {
+    const button = e.target.closest(".sb-mini-mute");
+    if (!button) return false;
+    e.preventDefault();
+    const card = button.closest(".sb-mini-card[data-preview]");
+    if (!card) return true;
+    const video = card === previewCard ? card.querySelector(".sb-mini-video") : null;
+    if (video && !video.muted) {
+      video.muted = true;
+    } else {
+      if (state.settings.previewVolume === 0) document.querySelector(".sb-volume-icon")?.click();
+      if (video) {
+        video.volume = sliderToVolume(state.settings.previewVolume);
+        video.muted = false;
+      } else {
+        startMiniPreview(card);
+      }
+    }
+    updateMiniMuteIcons();
+    return true;
+  }
+  function handleMiniThumbTap(e) {
+    if (!window.matchMedia("(hover: none)").matches) return false;
+    const thumb = e.target.closest(".sb-mini-thumb");
+    const card = thumb?.closest(".sb-mini-card[data-preview]");
+    if (!card) return false;
+    e.preventDefault();
+    if (previewCard === card) stopMiniPreview();
+    else startMiniPreview(card);
+    return true;
   }
   function miniPreviewCard() {
     return previewCard;
@@ -2758,6 +2851,7 @@
       actions?.battleFilter(filters, filterLabel());
       return;
     }
+    if (handleMiniMuteTap(e) || handleMiniThumbTap(e)) return;
     const battle = target.closest("[data-battle]");
     if (battle?.dataset.battle) {
       stopMiniPreview();
@@ -2796,6 +2890,119 @@
     render(content, modal.querySelector(".sb-modal-content"));
   }
 
+  // src/ui/recordsTab.ts
+  var RECORDS_TOP = 5;
+  var HALL_OF_FAME_SHOWN = 10;
+  var entriesById = /* @__PURE__ */ new Map();
+  var battleScene = () => {
+  };
+  function createRecordsTab() {
+    return `
+      <div class="sb-tab-panel sb-records-tab" data-panel="records" hidden>
+        <div id="sb-records-content"></div>
+      </div>
+    `;
+  }
+  function shortDate(iso) {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(void 0, { year: "numeric", month: "short", day: "numeric" });
+  }
+  function fullDate(iso) {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(void 0, { dateStyle: "medium", timeStyle: "short" });
+  }
+  function recordRow(title, items, empty, shown = Infinity) {
+    const cards = items.filter(({ scene }) => entriesById.has(scene.id)).map(({ scene, caption, tip }, i) => {
+      const extra = i >= shown ? " sb-record-extra" : "";
+      return `<div class="sb-record-item${extra}"${extra ? " hidden" : ""}><div class="sb-record-caption"${tip ? ` title="${tip}"` : ""}>${caption}</div>${miniCardHtml(entriesById.get(scene.id))}</div>`;
+    });
+    const more = cards.length > shown ? ` <a href="#" class="sb-record-more" data-records-more>Show all (${cards.length})</a>` : "";
+    return `
+        <div class="setting-section sb-stats-section">
+          <h1>${title}${more}</h1>
+          <div class="card">
+            ${cards.length ? `<div class="sb-record-cards">${cards.join("")}</div>` : `<p class="sb-stats-muted">${empty}</p>`}
+          </div>
+        </div>`;
+  }
+  function recordsHtml(scenes2) {
+    const byId = new Map(scenes2.map((s) => [s.id, s]));
+    const hall = [...getHallOfFame()].sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).map((e) => ({ scene: byId.get(e.id), date: e.date })).filter((e) => e.scene !== void 0).map(({ scene, date }) => ({ scene, caption: `👑 #1 since ${shortDate(date)}`, tip: `First reached #1 on ${fullDate(date)}` }));
+    const streaks = topByRecord(scenes2, (r) => r.bestStreak, RECORDS_TOP).map(({ scene, record }) => ({
+      scene,
+      caption: `🔥 ${plural(record.bestStreak, "win")} in a row`
+    }));
+    const peaks = topByRecord(scenes2, (r) => r.peak, RECORDS_TOP).map(({ scene, record }) => ({
+      scene,
+      caption: `📈 Peak ELO ${Math.round(record.peak)}`
+    }));
+    return `
+        <div class="sb-records">
+          ${recordRow("👑 Hall of fame", hall, "No scene has been #1 yet.", HALL_OF_FAME_SHOWN)}
+          ${recordRow("🔥 Longest win streaks", streaks, "No win streaks yet: records start counting with your next battle.")}
+          ${recordRow("📈 Highest peak ELO", peaks, "No peaks yet: records start counting with your next battle.")}
+          <p class="sb-stats-note">Records count battles since they began; earlier battles only add to a scene's battle count.</p>
+        </div>`;
+  }
+  function onClick(e) {
+    const target = e.target;
+    const more = target.closest("[data-records-more]");
+    if (more) {
+      e.preventDefault();
+      more.closest(".sb-stats-section")?.querySelectorAll(".sb-record-extra").forEach((card) => card.hidden = false);
+      more.remove();
+      return;
+    }
+    if (handleMiniMuteTap(e) || handleMiniThumbTap(e)) return;
+    const battle = target.closest("[data-battle]");
+    if (battle?.dataset.battle) {
+      stopMiniPreview();
+      battleScene(battle.dataset.battle);
+      return;
+    }
+    const link = target.closest(".sb-mini-link");
+    if (link) {
+      stopMiniPreview();
+      handleSceneLinkClick(e, link);
+    }
+  }
+  function bindEvents(content) {
+    if (content.dataset.bound === "1") return;
+    content.dataset.bound = "1";
+    content.addEventListener("click", onClick);
+    content.addEventListener("mouseover", (e) => {
+      if (window.matchMedia("(hover: none)").matches) return;
+      const card = e.target.closest(".sb-mini-card[data-preview]");
+      if (card) startMiniPreview(card);
+    });
+    content.addEventListener("mouseout", (e) => {
+      const playing = miniPreviewCard();
+      if (playing && content.contains(playing) && !playing.contains(e.relatedTarget)) stopMiniPreview();
+    });
+  }
+  async function renderRecordsTab(modal, onBattleScene) {
+    battleScene = onBattleScene;
+    const content = modal.querySelector("#sb-records-content");
+    if (!content) return;
+    if (isEloSetupPending()) {
+      content.innerHTML = `<p class="sb-stats-empty">Records show once the ELO setup on the Battle tab is done.</p>`;
+      return;
+    }
+    if (!content.querySelector(".sb-records")) content.innerHTML = `<div class="sb-loading">Loading records...</div>`;
+    let scenes2;
+    try {
+      scenes2 = (await getAllScenesCached()).scenes ?? [];
+    } catch (e) {
+      console.error("[Stash Battle] Couldn't load scenes for records:", e);
+      content.innerHTML = `<p class="sb-stats-empty">Couldn't load your scenes. Switch tabs to try again.</p>`;
+      return;
+    }
+    noteTopScene();
+    entriesById = new Map(exploreEntries(scenes2, cachedTierMap(scenes2), resolveSceneTitle).map((entry) => [entry.scene.id, entry]));
+    content.innerHTML = recordsHtml(scenes2);
+    bindEvents(content);
+  }
+
   // src/ui/statsTab.ts
   var BUCKET_SIZE = 25;
   var NARROW_BUCKET_SIZE = 50;
@@ -2803,7 +3010,7 @@
   var TIE_NOTE_MIN = 10;
   var PLAY_TICKS = [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3];
   var scenes = [];
-  var entriesById = /* @__PURE__ */ new Map();
+  var entriesById2 = /* @__PURE__ */ new Map();
   var actions2 = null;
   var resizeBound = false;
   function createStatsTab() {
@@ -3002,41 +3209,6 @@
             <span class="sb-stats-muted">${leastTestedText()}</span>
           </div>`;
   }
-  var RECORDS_TOP = 5;
-  function shortDate(iso) {
-    const date = new Date(iso);
-    return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(void 0, { year: "numeric", month: "short", day: "numeric" });
-  }
-  function recordRow(title, items, empty) {
-    const cards = items.map(({ scene, caption }) => {
-      const entry = entriesById.get(scene.id);
-      return entry ? `<div class="sb-record-item"><div class="sb-record-caption">${caption}</div>${miniCardHtml(entry)}</div>` : "";
-    }).join("");
-    return `
-          <div class="sb-record-row">
-            <h3 class="sb-record-title">${title}</h3>
-            ${cards ? `<div class="sb-record-cards">${cards}</div>` : `<p class="sb-stats-muted">${empty}</p>`}
-          </div>`;
-  }
-  function recordsHtml() {
-    const byId = new Map(scenes.map((s) => [s.id, s]));
-    const hall = [...getHallOfFame()].reverse().map((e) => ({ scene: byId.get(e.id), date: e.date })).filter((e) => e.scene !== void 0).map(({ scene, date }) => ({ scene, caption: `👑 #1 since ${shortDate(date)}` }));
-    const streaks = topByRecord(scenes, (r) => r.bestStreak, RECORDS_TOP).map(({ scene, record }) => ({
-      scene,
-      caption: `🔥 ${plural(record.bestStreak, "win")} in a row`
-    }));
-    const peaks = topByRecord(scenes, (r) => r.peak, RECORDS_TOP).map(({ scene, record }) => ({
-      scene,
-      caption: `📈 Peak ELO ${Math.round(record.peak)}`
-    }));
-    return `
-          <div class="sb-records">
-            ${recordRow("Hall of fame", hall, "No scene has been #1 yet.")}
-            ${recordRow("Longest win streaks", streaks, "No win streaks yet: records start counting with your next battle.")}
-            ${recordRow("Highest peak ELO", peaks, "No peaks yet: records start counting with your next battle.")}
-            <p class="sb-stats-note">Records count battles since they began; earlier battles only add to a scene's battle count.</p>
-          </div>`;
-  }
   function drawCharts(root) {
     const histogram = root.querySelector("#sb-stats-histogram");
     if (histogram) histogram.innerHTML = histogramSvg(histogram.clientWidth) + '<div class="sb-chart-tip" hidden></div>';
@@ -3070,7 +3242,7 @@
       if (!tip || isTouch()) return;
       const target = e.target;
       const dot = target.closest(".sb-dot");
-      const entry = dot?.dataset.id ? entriesById.get(dot.dataset.id) : void 0;
+      const entry = dot?.dataset.id ? entriesById2.get(dot.dataset.id) : void 0;
       if (entry) {
         if (tip.dataset.cardFor !== entry.scene.id) {
           tip.dataset.cardFor = entry.scene.id;
@@ -3128,13 +3300,6 @@
     const target = e.target;
     const root = e.currentTarget;
     if (!actions2) return;
-    if (target.closest(".sb-records")) {
-      const battle = target.closest("[data-battle]");
-      const link = target.closest(".sb-mini-link");
-      if (battle?.dataset.battle) actions2.battleScene(battle.dataset.battle);
-      else if (link) handleSceneLinkClick(e, link);
-      return;
-    }
     if (target.closest(".sb-chart-tip-pinned")) {
       const battle = target.closest("[data-battle]");
       const link = target.closest(".sb-mini-link");
@@ -3158,7 +3323,7 @@
       return;
     }
     const dot = target.closest(".sb-dot");
-    const entry = dot?.dataset.id ? entriesById.get(dot.dataset.id) : void 0;
+    const entry = dot?.dataset.id ? entriesById2.get(dot.dataset.id) : void 0;
     if (dot && entry && isTouch()) {
       pinCard(dot, entry);
       return;
@@ -3170,7 +3335,7 @@
     }
     if (target.closest("[data-stats-action='least-tested']")) actions2.battleLeastTested();
   }
-  function bindEvents(root) {
+  function bindEvents2(root) {
     root.querySelectorAll(".sb-chart").forEach(bindTooltips);
     if (root.dataset.bound !== "1") {
       root.dataset.bound = "1";
@@ -3210,12 +3375,10 @@
       return;
     }
     const tiers = tierMap(scenes);
-    noteTopScene();
-    entriesById = new Map(exploreEntries(scenes, tiers, resolveSceneTitle).map((entry) => [entry.scene.id, entry]));
+    entriesById2 = new Map(exploreEntries(scenes, tiers, resolveSceneTitle).map((entry) => [entry.scene.id, entry]));
     content.innerHTML = [
       section("Overview", overviewHtml()),
       section("How settled the rankings are", settledHtml()),
-      section("Records", recordsHtml(), "sb-stats-records"),
       section(
         "ELO distribution",
         `<div class="sb-chart" id="sb-stats-histogram"></div>${distributionNote()}<p class="sb-stats-note">Click a bar to see its scenes in Explore.</p>`
@@ -3227,7 +3390,7 @@
       )
     ].join("");
     drawCharts(panel);
-    bindEvents(content);
+    bindEvents2(content);
   }
 
   // src/ui/mainUI.ts
@@ -3299,13 +3462,15 @@
             </div>
             <div class="sb-actions">
               <div class="sb-action-buttons">
+                <button id="sb-undo-btn" class="btn btn-secondary" title="Undo your last pick (Backspace)" disabled>↶ Undo</button>
                 <button id="sb-skip-btn" class="btn btn-secondary">Skip</button>
                 <button id="sb-refresh-cache-btn" class="btn btn-secondary" title="Refresh scene list from server (use if you've added new scenes)">🔄 Refresh</button>
               </div>
               <div class="sb-keyboard-hint">
                 <span>←</span> choose left ·
                 <span>→</span> choose right ·
-                <span>Space</span> skip
+                <span>Space</span> skip ·
+                <span>⌫</span> undo
               </div>
             </div>
           </div>
@@ -3313,6 +3478,7 @@
 
         ${createExploreTab()}
         ${createStatsTab()}
+        ${createRecordsTab()}
         ${createSettingsTab()}
       </div>
     `;
@@ -3386,9 +3552,16 @@
     document.querySelectorAll("#sb-comparison-area .sb-scene-card").forEach((card) => {
       const video = card.querySelector(".sb-hover-preview");
       if (!video) return;
-      const active = card.matches(":hover") || card.classList.contains("sb-previewing");
+      const hovered = !isTouchDevice() && card.matches(":hover");
+      const active = hovered || card.classList.contains("sb-previewing");
+      const muted = !active || previewVolume === 0 || card.classList.contains("sb-card-muted");
       video.volume = sliderToVolume(previewVolume);
-      video.muted = !active || previewVolume === 0;
+      video.muted = muted;
+      const button = card.querySelector(".sb-card-mute");
+      if (button) {
+        button.textContent = muted ? "🔇" : "🔊";
+        button.setAttribute("aria-label", muted ? "Play this preview with sound" : "Mute this preview");
+      }
       if (battleVisible && (autoplayPreviews || active)) {
         if (video.paused) video.play().catch(() => {
         });
@@ -3423,7 +3596,23 @@
     const previewing = !card.classList.contains("sb-previewing");
     document.querySelectorAll(".sb-scene-card.sb-previewing").forEach((c) => c.classList.remove("sb-previewing"));
     card.classList.toggle("sb-previewing", previewing);
+    card.classList.remove("sb-card-muted");
     applyPreviewSettings();
+  }
+  function toggleCardSound(card) {
+    const video = card.querySelector(".sb-hover-preview");
+    if (video && !video.muted) {
+      card.classList.add("sb-card-muted");
+      applyPreviewSettings();
+      return;
+    }
+    if (state.settings.previewVolume === 0) document.querySelector(".sb-volume-icon")?.click();
+    if (card.classList.contains("sb-previewing")) {
+      card.classList.remove("sb-card-muted");
+      applyPreviewSettings();
+    } else {
+      togglePreview(card);
+    }
   }
   function vsDivider(left, right) {
     if (state.currentMode === "placement") {
@@ -3500,6 +3689,10 @@
         }
         handleSceneLinkClick(e, thumb);
       });
+      card.querySelector(".sb-card-mute")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        toggleCardSound(card);
+      });
       const openLink = card.querySelector(".sb-open-link");
       openLink?.addEventListener("click", (e) => {
         if (!state.settings.openInNewTab) handleSceneLinkClick(e, openLink);
@@ -3510,6 +3703,7 @@
     setActionsVisible(true);
     const skipBtn = document.querySelector("#sb-skip-btn");
     if (skipBtn) skipBtn.disabled = isRunActive();
+    updateUndoButton();
   }
   function skipPair() {
     if (isRunActive() || state.disableChoice) return;
@@ -3732,7 +3926,7 @@
     saveState();
     choice.winnerCard.classList.add("sb-winner");
     choice.loserCard.classList.add("sb-loser");
-    setTimeout(() => loadNewPair(), 600);
+    scheduleNextPair(600);
   }
   function handleChampionChoice(choice) {
     const { winner: winnerScene, loser: loserScene, left, winnerCard, loserCard } = choice;
@@ -3759,6 +3953,8 @@
   function handleSceneChoice(choice) {
     if (state.disableChoice) return;
     state.disableChoice = true;
+    lastPick = takePickSnapshot(choice);
+    updateUndoButton();
     const { winner: winnerScene, loser: loserScene, winnerCard, loserCard } = choice;
     if (state.currentMode === "placement") {
       handlePlacementChoice(choice);
@@ -3778,7 +3974,81 @@
   var RATING_ANIM_DEFAULT_STEP_MS = 50;
   var RATING_ANIM_MIN_STEP_MS = 8;
   function scheduleNextPairAfterAnimations() {
-    setTimeout(() => loadNewPair(), 1500);
+    scheduleNextPair(1500);
+  }
+  var nextPairTimer = null;
+  function scheduleNextPair(ms) {
+    if (nextPairTimer) clearTimeout(nextPairTimer);
+    nextPairTimer = setTimeout(() => {
+      nextPairTimer = null;
+      void loadNewPair();
+    }, ms);
+  }
+  var lastPick = null;
+  var undoing = false;
+  function takePickSnapshot(choice) {
+    const run = state.placement;
+    const written = state.currentMode === "placement" ? run ? [run.scene] : [] : [choice.left, choice.right];
+    return {
+      mode: state.currentMode,
+      left: choice.left,
+      right: choice.right,
+      ranks: [state.currentRanks.left, state.currentRanks.right],
+      fields: written.map((scene) => ({ scene, value: eloFields(latestScene(scene)) })),
+      championScene: state.championScene,
+      championWins: state.championWins,
+      championDefeated: [...state.championDefeated],
+      // A copy: the run object itself changes with every pick
+      placement: run ? { ...run, results: [...run.results ?? []] } : null,
+      hallIds: getHallOfFame().map((e) => e.id)
+    };
+  }
+  function canUndo() {
+    return lastPick !== null && !undoing;
+  }
+  function clearUndo() {
+    lastPick = null;
+    updateUndoButton();
+  }
+  function updateUndoButton() {
+    document.querySelectorAll("#sb-undo-btn, #sb-end-undo").forEach((btn) => btn.disabled = !canUndo());
+  }
+  async function undoLastPick() {
+    const pick = lastPick;
+    if (!pick || undoing) return;
+    undoing = true;
+    lastPick = null;
+    updateUndoButton();
+    if (nextPairTimer) {
+      clearTimeout(nextPairTimer);
+      nextPairTimer = null;
+    }
+    state.disableChoice = true;
+    try {
+      await eloWritesSettled();
+      await Promise.all(pick.fields.map(({ scene, value }) => restoreElo(scene, value)));
+      await keepOnlyHallOfFame(pick.hallIds);
+    } catch (e) {
+      console.error("[Stash Battle] Undo couldn't put everything back:", e);
+    }
+    if (state.currentMode !== pick.mode) {
+      state.currentMode = pick.mode;
+      document.querySelectorAll(".sb-mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === pick.mode));
+      updateModeInfo();
+      updateClimbPoolWarning();
+    }
+    state.championScene = pick.championScene;
+    state.championWins = pick.championWins;
+    state.championDefeated = pick.championDefeated;
+    state.placement = pick.placement;
+    state.currentPair = { left: pick.left, right: pick.right };
+    state.currentRanks = { left: pick.ranks[0], right: pick.ranks[1] };
+    state.disableChoice = false;
+    undoing = false;
+    console.log(`[Stash Battle] ↶ Undid the last pick (scene ${pick.left.id} vs ${pick.right.id})`);
+    renderPair([pick.left, pick.right], pick.ranks);
+    updatePoolStatus();
+    saveState();
   }
   function showRatingAnimation(card, oldElo, newElo, isWinner, upset = false) {
     const oldRating = Math.round(oldElo);
@@ -3939,8 +4209,8 @@
   function refreshSceneElo() {
     void renderSceneElo(true);
   }
-  function registerSceneElo(onClick) {
-    openBattle = onClick;
+  function registerSceneElo(onClick2) {
+    openBattle = onClick2;
     let queued = false;
     const check = () => {
       queued = false;
@@ -4377,6 +4647,7 @@
   }
   function afterSetup2(modal) {
     state.resettingElo = false;
+    clearUndo();
     syncSettingsControls(modal);
     updateRatingsNote();
     void loadNewPair(getSceneIdFromUrl());
@@ -4615,6 +4886,7 @@
         applyPreviewSettings();
         stopMiniPreview();
         if (tab === "stats") void renderStatsTab(modal, statsActions(modal));
+        if (tab === "records") void renderRecordsTab(modal, statsActions(modal).battleScene);
         if (tab === "explore") void renderExploreTab(modal, statsActions(modal));
       },
       confirmSettingChange
@@ -4638,6 +4910,7 @@
       applyPreviewSettings();
     });
     modal.querySelector("#sb-skip-btn")?.addEventListener("click", skipPair);
+    modal.querySelector("#sb-undo-btn")?.addEventListener("click", () => void undoLastPick());
     const refreshCacheBtn = modal.querySelector("#sb-refresh-cache-btn");
     if (refreshCacheBtn) {
       refreshCacheBtn.addEventListener("click", async () => {
@@ -4707,13 +4980,18 @@
       if (tag === "INPUT" && !isToggle || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "ArrowLeft" && state.currentPair.left) {
         e.preventDefault();
-        const leftBody = activeModal.querySelector('.sb-scene-card[data-side="left"] .sb-scene-body');
-        if (leftBody) leftBody.click();
+        const leftChoose = activeModal.querySelector('.sb-scene-card[data-side="left"] .sb-choose-btn');
+        if (leftChoose) leftChoose.click();
       }
       if (e.key === "ArrowRight" && state.currentPair.right) {
         e.preventDefault();
-        const rightBody = activeModal.querySelector('.sb-scene-card[data-side="right"] .sb-scene-body');
-        if (rightBody) rightBody.click();
+        const rightChoose = activeModal.querySelector('.sb-scene-card[data-side="right"] .sb-choose-btn');
+        if (rightChoose) rightChoose.click();
+      }
+      if (e.key === "Backspace") {
+        e.preventDefault();
+        void undoLastPick();
+        return;
       }
       if (e.key === " " || e.code === "Space") {
         if (tag === "BUTTON" || isToggle) return;
@@ -4782,6 +5060,7 @@
 
   // src/ui/navButton.ts
   var BUTTON_ID = "plugin_sb";
+  var ICON_ID = "plugin_sb_icon";
   var NAV_ITEM_CLASS = "col-4 col-sm-3 col-md-2 col-lg-auto nav-link";
   var LINK_CLASS = "minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center btn btn-primary";
   var LINK_HTML = `
@@ -4796,7 +5075,57 @@
     e.preventDefault();
     void openModal();
   }
+  function placeNavIcon() {
+    const existing = document.getElementById(ICON_ID);
+    const buttons = document.querySelector(".navbar-buttons");
+    if (!shouldShowNavButton() || !buttons) {
+      existing?.remove();
+      return;
+    }
+    if (existing && buttons.contains(existing)) {
+      fitNavIcon(existing);
+      return;
+    }
+    const item = existing ?? document.createElement("a");
+    item.id = ICON_ID;
+    item.className = "mr-2 sb-nav-icon";
+    item.innerHTML = `
+        <button type="button" class="minimal d-flex align-items-center h-100 btn btn-primary" title="Stash Battle" aria-label="Stash Battle">
+          <svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon" viewBox="0 0 36 36">${SWORDS_PATHS}</svg>
+        </button>`;
+    item.querySelector("button")?.addEventListener("click", onButtonClick);
+    const after = buttons.querySelector("#tcode-nav-btn") ?? buttons.querySelector("#plugin_sfw")?.closest(".navbar-buttons > *");
+    if (after) after.after(item);
+    else buttons.prepend(item);
+    fitNavIcon(item);
+  }
+  function fitNavIcon(item) {
+    item.style.removeProperty("display");
+    if (getComputedStyle(item).display === "none") return;
+    const brand = document.querySelector(".navbar-brand");
+    if (!brand) return;
+    const wrapped = item.getBoundingClientRect().top >= brand.getBoundingClientRect().bottom - 1;
+    if (wrapped) item.style.display = "none";
+  }
+  function registerNavIcon() {
+    let queued = false;
+    new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      setTimeout(() => {
+        queued = false;
+        placeNavIcon();
+      }, 50);
+    }).observe(document.body, { childList: true, subtree: true });
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(placeNavIcon, 100);
+    });
+    placeNavIcon();
+  }
   function registerNavButton() {
+    registerNavIcon();
     const api = window.PluginApi;
     if (api?.components?.["MainNavBar.MenuItems"] && typeof api.patch?.before === "function") {
       patchNavButton(api);

@@ -80,7 +80,7 @@ export async function loadSettings(): Promise<boolean> {
   try {
     const stored = await fetchStoredConfig();
     legacyFunMode = stored?.funMode === true;
-    hallOfFame = parseHallOfFame(stored?.[HALL_OF_FAME_KEY]);
+    hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), []);
     state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
     return true;
   } catch (e) {
@@ -130,13 +130,19 @@ export function mergeConfig(
 /** The config write in progress (or the last one), so the next starts from what it saved. */
 let configWrites: Promise<unknown> = Promise.resolve();
 
-/** Save this tab's unsaved settings plus `extra` keys, after any config write in progress. */
-function saveConfig(extra: Record<string, unknown> = {}): Promise<boolean> {
+/**
+ * Save this tab's unsaved settings plus `extra` keys, after any config write in progress. `extra`
+ * can be worked out from the stored config (to merge with what another tab saved).
+ */
+function saveConfig(
+  extra: Record<string, unknown> | ((stored: Record<string, unknown> | undefined) => Record<string, unknown>) = {},
+): Promise<boolean> {
   const run = configWrites.then(async () => {
     const keys = [...unsaved];
     unsaved.clear();
     try {
-      const input = mergeConfig(await fetchStoredConfig(), state.settings, keys, extra);
+      const stored = await fetchStoredConfig();
+      const input = mergeConfig(stored, state.settings, keys, typeof extra === "function" ? extra(stored) : extra);
       await graphqlQuery(CONFIGURE_PLUGIN_MUTATION, { plugin_id: PLUGIN_ID, input });
       return true;
     } catch (e) {
@@ -180,15 +186,50 @@ export function parseHallOfFame(value: unknown): HallOfFameEntry[] {
   }
 }
 
+/**
+ * Two lists as one: each scene once, with its earliest time, oldest first (by the stored time, not
+ * the day: several scenes can reach #1 on the same day).
+ */
+export function mergeHallOfFame(a: readonly HallOfFameEntry[], b: readonly HallOfFameEntry[]): HallOfFameEntry[] {
+  const earliest = new Map<string, HallOfFameEntry>();
+  for (const entry of [...a, ...b]) {
+    const known = earliest.get(entry.id);
+    if (!known || Date.parse(entry.date) < Date.parse(known.date)) earliest.set(entry.id, entry);
+  }
+  return [...earliest.values()].sort((x, y) => Date.parse(x.date) - Date.parse(y.date));
+}
+
+/** The hall of fame, oldest first (by the time each scene first reached #1). */
 export function getHallOfFame(): readonly HallOfFameEntry[] {
   return hallOfFame;
 }
 
-/** Add a scene that has just reached #1 (once: its first date is kept) and save the list. */
+/**
+ * Add a scene that has just reached #1 (once: its first time is kept) and save the list, merged
+ * with the stored one, so another tab's additions aren't lost.
+ */
 export async function addToHallOfFame(sceneId: string, date = new Date().toISOString()): Promise<void> {
   if (hallOfFame.some((e) => e.id === sceneId)) return;
-  hallOfFame = [...hallOfFame, { id: sceneId, date }];
-  await saveConfig({ [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) });
+  hallOfFame = mergeHallOfFame(hallOfFame, [{ id: sceneId, date }]);
+  await saveConfig((stored) => {
+    hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), hallOfFame);
+    return { [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) };
+  });
+}
+
+/**
+ * Undo: take out the entries for scenes not in `keepIds` (added by the pick being undone), from
+ * this tab's list and the stored one.
+ */
+export async function keepOnlyHallOfFame(keepIds: readonly string[]): Promise<void> {
+  const keep = new Set(keepIds);
+  if (hallOfFame.every((e) => keep.has(e.id))) return;
+  const drop = new Set(hallOfFame.filter((e) => !keep.has(e.id)).map((e) => e.id));
+  hallOfFame = hallOfFame.filter((e) => !drop.has(e.id));
+  await saveConfig((stored) => {
+    hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), hallOfFame).filter((e) => !drop.has(e.id));
+    return { [HALL_OF_FAME_KEY]: JSON.stringify(hallOfFame) };
+  });
 }
 
 /** Empty the list (setup and Reset ELO start every record over). */

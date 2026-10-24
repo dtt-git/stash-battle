@@ -8,7 +8,7 @@ import type { Settings, StashRatingsMode } from "../types";
 import { STASH_RATINGS_OPTIONS, stashRatingsOption } from "./stashRatingsText";
 
 type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
-export type TabId = "battle" | "explore" | "stats" | "settings";
+export type TabId = "battle" | "explore" | "stats" | "records" | "settings";
 
 type SettingRow =
   | { key: keyof Settings; title: string; hint: string; className?: string }
@@ -84,16 +84,25 @@ function settingControl(key: keyof Settings): string {
           </div>`;
 }
 
-/** Tab bar: Battle / Explore / Stats / Settings on the left, preview volume on the right. */
+/** The tabs, in order. On narrow phones the tabs you're not on show only their emoji. */
+const TABS: { id: TabId; emoji: string; name: string }[] = [
+  { id: "battle", emoji: "⚔️", name: "Battle" },
+  { id: "explore", emoji: "🔎", name: "Explore" },
+  { id: "stats", emoji: "📊", name: "Stats" },
+  { id: "records", emoji: "🏆", name: "Records" },
+  { id: "settings", emoji: "⚙", name: "Settings" },
+];
+
+/** Tab bar: the tabs on the left, preview volume on the right. */
 export function createTabBar(): string {
   const { previewVolume } = state.settings;
   return `
       <div class="sb-tab-bar">
         <nav class="nav nav-tabs sb-tabs" role="tablist">
-          <a class="nav-item nav-link active" role="tab" data-tab="battle" aria-selected="true">⚔️ Battle</a>
-          <a class="nav-item nav-link" role="tab" data-tab="explore" aria-selected="false">🔎 Explore</a>
-          <a class="nav-item nav-link" role="tab" data-tab="stats" aria-selected="false">📊 Stats</a>
-          <a class="nav-item nav-link" role="tab" data-tab="settings" aria-selected="false">⚙ Settings</a>
+          ${TABS.map(
+            ({ id, emoji, name }) =>
+              `<a class="nav-item nav-link${id === "battle" ? " active" : ""}" role="tab" data-tab="${id}" aria-selected="${id === "battle"}" aria-label="${name}" title="${name}"><span class="sb-tab-emoji" aria-hidden="true">${emoji}</span><span class="sb-tab-name"> ${name}</span></a>`,
+          ).join("")}
         </nav>
         <div class="sb-volume" title="Preview volume">
           <button type="button" class="sb-volume-icon" aria-label="Mute previews">${volumeIcon(previewVolume)}</button>
