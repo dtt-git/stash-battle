@@ -23,8 +23,8 @@ import {
   skipPair,
   undoLastPick,
   updateClimbPoolWarning,
-  updateLeastTestedNote,
   updateModeInfo,
+  updatePoolStatus,
   updateRatingsNote,
   verifyCurrentPair,
 } from "./mainUI";
@@ -162,7 +162,7 @@ function switchMode(modal: HTMLElement, mode: Mode): void {
   });
   updateModeInfo();
   updateClimbPoolWarning();
-  updateLeastTestedNote();
+  updatePoolStatus();
 }
 
 /** The Stats and Explore tabs' actions: battle a scene, battle the least-tested, or explore an ELO range. */
@@ -171,7 +171,7 @@ function statsActions(modal: HTMLElement): StatsActions {
     resetRunState();
     state.currentPair = { left: null, right: null };
     state.currentRanks = { left: null, right: null };
-    updateLeastTestedNote();
+    updatePoolStatus();
     showTab(modal, "battle");
     applyPreviewSettings();
   };
@@ -463,17 +463,18 @@ export async function openModal(): Promise<void> {
     confirmSettingChange,
   );
   updateRatingsNote();
-  updateLeastTestedNote();
-  modal.querySelector('[data-action="stop-least-tested"]')?.addEventListener("click", (e) => {
-    e.preventDefault();
-    state.leastTested = false;
-    updateLeastTestedNote();
-  });
-  // The pool line is redrawn often, so its Stop link is handled on the line itself
+  updatePoolStatus();
+  // The pool line is redrawn often, so its Stop links are handled on the line itself
   modal.querySelector("#sb-pool-status")?.addEventListener("click", (e) => {
-    if (!(e.target as Element).closest('[data-action="stop-explore-pool"]')) return;
-    e.preventDefault();
-    stopExplorePool();
+    const target = e.target as Element;
+    if (target.closest('[data-action="stop-explore-pool"]')) {
+      e.preventDefault();
+      stopExplorePool();
+    } else if (target.closest('[data-action="stop-least-tested"]')) {
+      e.preventDefault();
+      state.leastTested = false;
+      updatePoolStatus();
+    }
   });
 
   modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));

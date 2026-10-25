@@ -5,7 +5,8 @@
 
 import { clearSceneCache } from "../cache";
 import { fetchSetupScenes, runEloSetup, setupRatingChanges, type SetupPhase, type SetupSummary } from "../eloSetup";
-import { isRated } from "../score";
+import { exampleRating, formatRating, ratingStarts } from "../ratingDisplay";
+import { isRated, seed } from "../score";
 import { hadFunMode, updateSettingsNow } from "../settings";
 import { resetRunState, resetShuffle, state } from "../state";
 import { saveState } from "../storage";
@@ -101,9 +102,9 @@ function ratingsMessage(start: EloStart, mode: StashRatingsMode, changes: number
     text = "No Stash ratings change now: every scene converts back to its current rating.";
     warn = false;
   } else if (start === "fresh") {
-    text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 5.0 (2.5 stars)</strong>: ${plural(changes, "rating")} change, unrated scenes included. ${backup}`;
+    text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes ${formatRating(50, true)}</strong>: ${plural(changes, "rating")} change, unrated scenes included. ${backup}`;
   } else {
-    text = `⚠️ <strong>${plural(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 10.0 (5 stars) by hand may end up lower. ${backup}`;
+    text = `⚠️ <strong>${plural(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated ${formatRating(100, true)} by hand may end up lower. ${backup}`;
   }
   return `<p class="sb-setup-message${warn ? " sb-setup-warning" : ""}">${text}</p>`;
 }
@@ -144,7 +145,7 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
               "start",
               "ratings",
               "Use my ratings",
-              `Your ${plural(rated, "rated scene")} start from their rating: a 5.0 (2.5 stars) starts at 1500 ELO.${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
+              `Your ${plural(rated, "rated scene")} start from their rating: ${ratingStarts(exampleRating(50))} at ${seed(exampleRating(50))} ELO.${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
               true,
             )}
             ${radio(

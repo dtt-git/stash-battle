@@ -9,10 +9,13 @@ import {
   PLUGIN_ID,
 } from "./constants";
 import { graphqlQuery } from "./graphql";
+import { setRatingSystem } from "./ratingDisplay";
 import { state } from "./state";
 import type { EloStart, Settings, StashRatingsMode } from "./types";
 
 const CONFIG_QUERY = `{ configuration { plugins } }`;
+/** On load, also Stash's interface settings: how it shows ratings (stars or decimal). */
+const LOAD_QUERY = `{ configuration { plugins ui } }`;
 
 const CONFIGURE_PLUGIN_MUTATION = `
       mutation ConfigurePlugin($plugin_id: ID!, $input: Map!) {
@@ -78,7 +81,9 @@ function legacyDefaults(): Settings {
  */
 export async function loadSettings(): Promise<boolean> {
   try {
-    const stored = await fetchStoredConfig();
+    const data = await graphqlQuery<{ configuration: { plugins: Record<string, Record<string, unknown>>; ui: unknown } }>(LOAD_QUERY);
+    setRatingSystem(data.configuration.ui);
+    const stored = data.configuration.plugins?.[PLUGIN_ID];
     legacyFunMode = stored?.funMode === true;
     hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), []);
     state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();

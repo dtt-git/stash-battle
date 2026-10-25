@@ -90,9 +90,6 @@ export function createMainUI(): string {
           <p id="sb-ratings-note" class="sb-pool-status sb-ratings-note" hidden>
             Stash ratings aren't being changed · <a href="#" data-action="open-settings">change in Settings</a>
           </p>
-          <p id="sb-least-tested-note" class="sb-pool-status sb-ratings-note" hidden>
-            Battling your least-tested scenes first · <a href="#" data-action="stop-least-tested">Stop</a>
-          </p>
 
           <div class="sb-content">
             <div id="sb-comparison-area" class="sb-comparison-area">
@@ -122,12 +119,6 @@ export function createMainUI(): string {
     `;
 }
 
-/** Battle tab note while "Battle the least-tested" (Stats tab) is on. */
-export function updateLeastTestedNote(): void {
-  const note = document.getElementById("sb-least-tested-note");
-  if (note) note.hidden = !state.leastTested;
-}
-
 /** Touch screens have no hover tooltips: the ⓘ button shows the current mode's explanation here. */
 export function updateModeInfo(): void {
   const info = document.getElementById("sb-mode-info");
@@ -141,7 +132,10 @@ export function updateRatingsNote(): void {
   if (note) note.hidden = state.settings.stashRatings !== "off";
 }
 
-/** "Which scenes am I rating?" line above the cards: the Scenes page filter or the whole library. */
+/**
+ * "Which scenes am I rating?" line above the cards: a battled Explore filter, the least-tested
+ * (Stats), the Scenes page filter, or the whole library. One line, whichever applies.
+ */
 export function updatePoolStatus(): void {
   const status = document.getElementById("sb-pool-status");
   if (!status) return;
@@ -153,6 +147,9 @@ export function updatePoolStatus(): void {
   if (pool) {
     const against = explorePoolWithin() ? "against each other" : "against your whole library";
     status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
+  } else if (state.leastTested) {
+    const from = readFilters().filterActive ? "your Scenes page filter" : "your whole library";
+    status.innerHTML = `Battling your least-tested scenes first, from ${from}${countHtml} · <a href="#" data-action="stop-least-tested">Stop</a>`;
   } else if (readFilters().filterActive) {
     // Who they battle, worded as for a battled Explore filter
     const opponents = state.settings.filterOpponents ? " · against each other" : " · against your whole library";

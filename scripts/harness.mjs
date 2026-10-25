@@ -194,7 +194,8 @@ const json = (route, body) => route.fulfill({ status: 200, contentType: "applica
  * Launch a headless browser on Stash. Options: mode (see the top), size (big mode), phone
  * (a 393 x 852 touch screen at 3x), viewport, scale, config (fake config to start with in
  * fresh / big mode), hideSetupDone (real mode: answer the config without eloSetupAt, so the
- * first-run setup shows).
+ * first-run setup shows), ratingSystem (Stash's rating display to pretend, e.g. { type: "stars",
+ * starPrecision: "half" }).
  */
 export async function launch(opts = {}) {
   const mode = opts.mode || "real";
@@ -236,13 +237,15 @@ export async function launch(opts = {}) {
       return json(route, { data: { __type: { fields: [{ name: "id" }, { name: "title" }, { name: "rating100" }] } } });
     }
 
-    if (/configuration\s*\{\s*plugins/.test(query) && (mode !== "real" || opts.hideSetupDone)) {
+    if (/configuration\s*\{\s*plugins/.test(query) && (mode !== "real" || opts.hideSetupDone || opts.ratingSystem)) {
       const res = await route.fetch();
       const data = await res.json();
+      const ui = data?.data?.configuration?.ui;
+      if (opts.ratingSystem && ui) ui.ratingSystemOptions = opts.ratingSystem;
       const plugins = data?.data?.configuration?.plugins;
       if (plugins) {
         if (mode === "real") {
-          const cfg = plugins[PLUGIN_ID];
+          const cfg = opts.hideSetupDone ? plugins[PLUGIN_ID] : null;
           if (cfg) { delete cfg.eloSetupAt; delete cfg.eloSetupMode; }
         } else if (writes.config === undefined) delete plugins[PLUGIN_ID];
         else plugins[PLUGIN_ID] = writes.config;

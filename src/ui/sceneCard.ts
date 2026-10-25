@@ -2,6 +2,7 @@
 
 import { CHAMPION_UNRATED_ELO, ELO_K_TIERS, ELO_START } from "../constants";
 import { scenesListQuery } from "../filters";
+import { formatRating } from "../ratingDisplay";
 import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
 import { tierDescription } from "../stats";
@@ -49,7 +50,7 @@ export function createSceneCard(
   const screenshotPath = scene.paths ? scene.paths.screenshot : null;
   const previewPath = scene.paths ? scene.paths.preview : null;
   const { openInNewTab, cleanMode } = state.settings;
-  const stashRating = scene.rating100 ? `${scene.rating100}/100` : "None";
+  const stashRating = scene.rating100 ? formatRating(scene.rating100) : "None";
 
   // ELO badge: "ELO 1740 · #50" when rated (rank when known), with a "?" while it's provisional.
   // Unrated scenes show the ELO they count as in this mode in the same order, "ELO 1500 ·

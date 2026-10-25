@@ -68,22 +68,20 @@ export interface ScaleTick {
   rating: number;
 }
 
-/** Stash ratings marked on the ELO axis. */
-const SCALE_RATINGS = [1, 25, 50, 75, 100];
 
 /**
  * Where Stash ratings sit on the ELO axis under the update mode: Straight-line is fixed (1 at
  * 1010, 50 at 1500, 100 at 2000); Percentile depends on the library (each mark at the ELO of the
  * scene whose rating is closest to it). None for "off".
  */
-export function ratingScaleTicks(scenes: Scene[], mode: StashRatingsMode): ScaleTick[] {
-  if (mode === "linear") return SCALE_RATINGS.map((rating) => ({ elo: seed(rating), rating }));
+export function ratingScaleTicks(scenes: Scene[], mode: StashRatingsMode, marks: readonly number[] = [1, 25, 50, 75, 100]): ScaleTick[] {
+  if (mode === "linear") return marks.map((rating) => ({ elo: seed(rating), rating }));
   if (mode !== "percentile") return [];
   const ratings = percentileRatings(scenes);
   const rated = ratedElos(scenes).filter((s) => ratings.has(s.scene.id));
   if (rated.length === 0) return [];
   const ticks: ScaleTick[] = [];
-  for (const rating of SCALE_RATINGS) {
+  for (const rating of marks) {
     let nearest = rated[0];
     for (const s of rated) {
       const gap = Math.abs((ratings.get(s.scene.id) as number) - rating);

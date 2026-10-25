@@ -207,10 +207,10 @@
     return targets;
   }
   function stashRatingChanges(scenes2, mode) {
-    const current = new Map(scenes2.map((scene) => [scene.id, scene.rating100 ?? null]));
+    const current2 = new Map(scenes2.map((scene) => [scene.id, scene.rating100 ?? null]));
     const changes = /* @__PURE__ */ new Map();
     for (const [id, rating] of stashRatingTargets(scenes2, mode)) {
-      if (current.get(id) !== rating) changes.set(id, rating);
+      if (current2.get(id) !== rating) changes.set(id, rating);
     }
     return changes;
   }
@@ -703,15 +703,14 @@
     }
     return best;
   }
-  var SCALE_RATINGS = [1, 25, 50, 75, 100];
-  function ratingScaleTicks(scenes2, mode) {
-    if (mode === "linear") return SCALE_RATINGS.map((rating) => ({ elo: seed(rating), rating }));
+  function ratingScaleTicks(scenes2, mode, marks = [1, 25, 50, 75, 100]) {
+    if (mode === "linear") return marks.map((rating) => ({ elo: seed(rating), rating }));
     if (mode !== "percentile") return [];
     const ratings = percentileRatings(scenes2);
     const rated = ratedElos(scenes2).filter((s) => ratings.has(s.scene.id));
     if (rated.length === 0) return [];
     const ticks = [];
-    for (const rating of SCALE_RATINGS) {
+    for (const rating of marks) {
       let nearest = rated[0];
       for (const s of rated) {
         const gap = Math.abs(ratings.get(s.scene.id) - rating);
@@ -1286,8 +1285,50 @@
     return error instanceof Error && /not found/i.test(error.message);
   }
 
+  // src/ratingDisplay.ts
+  var STAR_STEPS = { full: 1, half: 0.5, quarter: 0.25, tenth: 0.1 };
+  var DEFAULT_RATING_SYSTEM = { type: "stars", starStep: 1 };
+  var current = DEFAULT_RATING_SYSTEM;
+  function parseRatingSystem(ui) {
+    const options2 = ui?.ratingSystemOptions;
+    return {
+      type: options2?.type === "decimal" ? "decimal" : "stars",
+      starStep: STAR_STEPS[String(options2?.starPrecision)] ?? 1
+    };
+  }
+  function setRatingSystem(ui) {
+    current = parseRatingSystem(ui);
+  }
+  function getRatingSystem() {
+    return current;
+  }
+  function ratingValue(rating100, system = current) {
+    if (system.type === "decimal") return (Math.round(rating100) / 10).toFixed(1);
+    const stars = Math.max(system.starStep, Math.round(rating100 / 20 / system.starStep) * system.starStep);
+    return String(Number(stars.toFixed(2)));
+  }
+  function formatRating(rating100, long = false, system = current) {
+    const value = ratingValue(rating100, system);
+    if (system.type === "decimal") return value;
+    return long ? `${value} star${value === "1" ? "" : "s"}` : `${value}★`;
+  }
+  function ratingStarts(rating100, system = current) {
+    if (system.type === "decimal") return `a ${ratingValue(rating100, system)} starts`;
+    const text = formatRating(rating100, true, system);
+    return `${text} ${text.endsWith("stars") ? "start" : "starts"}`;
+  }
+  function scaleMarks(system = current) {
+    return system.type === "decimal" ? [1, 25, 50, 75, 100] : [1, 40, 60, 80, 100];
+  }
+  function exampleRating(rating100, system = current) {
+    if (system.type === "decimal") return rating100;
+    const grid = 20 * system.starStep;
+    return Math.max(grid, Math.floor(rating100 / grid) * grid);
+  }
+
   // src/settings.ts
   var CONFIG_QUERY = `{ configuration { plugins } }`;
+  var LOAD_QUERY = `{ configuration { plugins ui } }`;
   var CONFIGURE_PLUGIN_MUTATION = `
       mutation ConfigurePlugin($plugin_id: ID!, $input: Map!) {
         configurePlugin(plugin_id: $plugin_id, input: $input)
@@ -1335,7 +1376,9 @@
   }
   async function loadSettings() {
     try {
-      const stored = await fetchStoredConfig();
+      const data = await graphqlQuery(LOAD_QUERY);
+      setRatingSystem(data.configuration.ui);
+      const stored = data.configuration.plugins?.[PLUGIN_ID];
       legacyFunMode = stored?.funMode === true;
       hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), []);
       state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
@@ -1356,9 +1399,9 @@
     return data.configuration.plugins?.[PLUGIN_ID];
   }
   var REMOVED_KEYS = ["funMode", "unratedRating", "showTiers"];
-  function mergeConfig(stored, current, unsavedKeys, extra = {}) {
-    const merged = stored ? { ...stored, ...normalize(stored, current) } : { ...current };
-    for (const key of unsavedKeys) merged[key] = current[key];
+  function mergeConfig(stored, current2, unsavedKeys, extra = {}) {
+    const merged = stored ? { ...stored, ...normalize(stored, current2) } : { ...current2 };
+    for (const key of unsavedKeys) merged[key] = current2[key];
     Object.assign(merged, extra);
     for (const key of REMOVED_KEYS) delete merged[key];
     return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== null && value !== void 0));
@@ -1503,8 +1546,8 @@
     await Promise.allSettled([...pendingWrites]);
   }
   async function saveElo(scene, elo2, battles2, results2) {
-    const current = latestScene(scene);
-    const record = recordAfter(sceneRecord(current), results2, elo(current) ?? elo2, elo2);
+    const current2 = latestScene(scene);
+    const record = recordAfter(sceneRecord(current2), results2, elo(current2) ?? elo2, elo2);
     const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene), record };
     if (await saveEloFields(scene, value, { partial: eloCustomFields(value) }, "save ELO")) {
       console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo2} (${battles2} battles)`);
@@ -1516,10 +1559,10 @@
     if (top && isRated(top) && !getHallOfFame().some((e) => e.id === top.id)) void addToHallOfFame(top.id);
   }
   async function restoreElo(scene, value, rating100 = null) {
-    const current = latestScene(scene);
-    if (sameElo(eloFields(current), value)) return;
+    const current2 = latestScene(scene);
+    if (sameElo(eloFields(current2), value)) return;
     const customFields = value ? { partial: eloCustomFields(value), ...value.record ? {} : { remove: RECORD_FIELD_KEYS } } : { remove: ELO_FIELD_KEYS };
-    const ratingBack = value === null && (current.rating100 ?? null) !== rating100 ? rating100 : void 0;
+    const ratingBack = value === null && (current2.rating100 ?? null) !== rating100 ? rating100 : void 0;
     if (await saveEloFields(scene, value, customFields, "undo ELO", ratingBack)) {
       console.log(`[Stash Battle] ↶ Restored scene ${scene.id} ELO ${value ? value.elo : "(unrated)"}`);
     }
@@ -2201,7 +2244,7 @@
     const screenshotPath = scene.paths ? scene.paths.screenshot : null;
     const previewPath = scene.paths ? scene.paths.preview : null;
     const { openInNewTab, cleanMode } = state.settings;
-    const stashRating = scene.rating100 ? `${scene.rating100}/100` : "None";
+    const stashRating = scene.rating100 ? formatRating(scene.rating100) : "None";
     const eloValue = elo(scene);
     const unratedAs = state.currentMode === "swiss" ? ELO_START : state.currentMode === "champion" ? CHAMPION_UNRATED_ELO : null;
     const provisional = isProvisional(scene);
@@ -2309,7 +2352,7 @@
     const scenes2 = state.memoryCache.allScenes;
     if (mode !== "off" && scenes2) {
       const rating = stashRatingTargets(scenes2, mode).get(scene.id);
-      if (rating !== void 0) line += ` · Stash Rating: <strong>${rating}</strong>`;
+      if (rating !== void 0) line += ` · Stash Rating: <strong>${formatRating(rating)}</strong>`;
     }
     return line;
   }
@@ -2343,12 +2386,18 @@
     {
       value: "linear",
       label: "Straight-line",
-      desc: "Rating = ELO converted back (1500 = 5.0, or 2.5 stars). Very high or low scenes stop at the top or bottom of the scale."
+      get desc() {
+        const ex = exampleRating(50);
+        return `Rating = ELO converted back (${seed(ex)} = ${formatRating(ex, true)}). Very high or low scenes stop at the top or bottom of the scale.`;
+      }
     },
     {
       value: "percentile",
       label: "Percentile",
-      desc: "Rating = percentile in your library: 9.0 (4.5 stars) means the scene ranks above about 90% of your scenes. The top scene gets the top rating, the bottom scene the lowest."
+      get desc() {
+        const ex = exampleRating(90);
+        return `Rating = percentile in your library: ${formatRating(ex, true)} means the scene ranks above about ${ex}% of your scenes. The top scene gets the top rating, the bottom scene the lowest.`;
+      }
     }
   ];
   function stashRatingsOption(value) {
@@ -2539,9 +2588,9 @@
     });
     root.querySelectorAll(".sb-volume-icon").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const current = state.settings.previewVolume;
-        if (current > 0) {
-          volumeBeforeMute = current;
+        const current2 = state.settings.previewVolume;
+        if (current2 > 0) {
+          volumeBeforeMute = current2;
           apply({ previewVolume: 0 }, "previewVolume");
         } else {
           apply({ previewVolume: volumeBeforeMute ?? DEFAULT_UNMUTE_VOLUME }, "previewVolume");
@@ -3073,7 +3122,7 @@
     const buckets = eloHistogram(scenes, size);
     if (buckets.length === 0) return "";
     const mode = state.settings.stashRatings;
-    const ticks = ratingScaleTicks(scenes, mode);
+    const ticks = ratingScaleTicks(scenes, mode, scaleMarks());
     let lo = buckets[0].from;
     let hi = buckets[buckets.length - 1].from + size;
     for (const t of ticks) {
@@ -3098,12 +3147,12 @@
       const last = ticks[ticks.length - 1];
       if (lo < first.elo) {
         parts.push(
-          `<rect class="sb-chart-clamp" x="${x(lo)}" y="${m.top}" width="${x(first.elo) - x(lo)}" height="${plotH}" data-tip="Below ${first.elo}, every ELO is a Stash rating of ${first.rating}"/>`
+          `<rect class="sb-chart-clamp" x="${x(lo)}" y="${m.top}" width="${x(first.elo) - x(lo)}" height="${plotH}" data-tip="Below ${first.elo}, every ELO is a Stash rating of ${formatRating(first.rating, true)}"/>`
         );
       }
       if (hi > last.elo) {
         parts.push(
-          `<rect class="sb-chart-clamp" x="${x(last.elo)}" y="${m.top}" width="${x(hi) - x(last.elo)}" height="${plotH}" data-tip="Above ${last.elo}, every ELO is a Stash rating of ${last.rating}"/>`
+          `<rect class="sb-chart-clamp" x="${x(last.elo)}" y="${m.top}" width="${x(hi) - x(last.elo)}" height="${plotH}" data-tip="Above ${last.elo}, every ELO is a Stash rating of ${formatRating(last.rating, true)}"/>`
         );
       }
     }
@@ -3131,7 +3180,7 @@
       for (const t of ticks) {
         parts.push(`<line class="sb-chart-scale" x1="${x(t.elo)}" x2="${x(t.elo)}" y1="${lineY - 4}" y2="${lineY + 4}"/>`);
         parts.push(
-          `<text class="sb-chart-label sb-chart-scale-label" x="${x(t.elo)}" y="${lineY + 18}" text-anchor="middle" data-tip="Stash rating ${t.rating} at ELO ${Math.round(t.elo)}">${t.rating}</text>`
+          `<text class="sb-chart-label sb-chart-scale-label" x="${x(t.elo)}" y="${lineY + 18}" text-anchor="middle" data-tip="Stash rating ${formatRating(t.rating, true)} at ELO ${Math.round(t.elo)}">${formatRating(t.rating)}</text>`
         );
       }
     }
@@ -3480,9 +3529,6 @@
           <p id="sb-ratings-note" class="sb-pool-status sb-ratings-note" hidden>
             Stash ratings aren't being changed · <a href="#" data-action="open-settings">change in Settings</a>
           </p>
-          <p id="sb-least-tested-note" class="sb-pool-status sb-ratings-note" hidden>
-            Battling your least-tested scenes first · <a href="#" data-action="stop-least-tested">Stop</a>
-          </p>
 
           <div class="sb-content">
             <div id="sb-comparison-area" class="sb-comparison-area">
@@ -3511,10 +3557,6 @@
       </div>
     `;
   }
-  function updateLeastTestedNote() {
-    const note = document.getElementById("sb-least-tested-note");
-    if (note) note.hidden = !state.leastTested;
-  }
   function updateModeInfo() {
     const info = document.getElementById("sb-mode-info");
     const mode = MODES2.find((m) => m.mode === state.currentMode);
@@ -3533,6 +3575,9 @@
     if (pool) {
       const against = explorePoolWithin() ? "against each other" : "against your whole library";
       status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
+    } else if (state.leastTested) {
+      const from = readFilters().filterActive ? "your Scenes page filter" : "your whole library";
+      status.innerHTML = `Battling your least-tested scenes first, from ${from}${countHtml} · <a href="#" data-action="stop-least-tested">Stop</a>`;
     } else if (readFilters().filterActive) {
       const opponents = state.settings.filterOpponents ? " · against each other" : " · against your whole library";
       status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${opponents}`;
@@ -4285,7 +4330,7 @@
     return `
             <div class="sb-pv-cell">
               <span class="sb-pv-elo">${eloValue === null ? "" : Math.round(eloValue)}</span>
-              <span class="${classes.join(" ")}"${fill}>${rating ?? "–"}</span>
+              <span class="${classes.join(" ")}"${fill}>${rating === null ? "–" : ratingValue(rating)}</span>
             </div>`;
   }
   function rowHtml(label, cells, note, options2 = {}) {
@@ -4308,21 +4353,22 @@
     }
     const from = Number(el.textContent);
     const to = Number(target);
+    const decimals = target.includes(".") ? target.split(".")[1].length : 0;
     if (el.textContent === "" || target === "" || !Number.isFinite(from) || !Number.isFinite(to) || from === to) {
       el.textContent = target;
       return;
     }
     const startTime = performance.now();
     const timer = setTimeout(() => {
-      const current = tweens.get(el);
-      if (current) cancelAnimationFrame(current.frame);
+      const current2 = tweens.get(el);
+      if (current2) cancelAnimationFrame(current2.frame);
       tweens.delete(el);
       el.textContent = target;
     }, TWEEN_MS + 50);
     const step = (now) => {
       const t = Math.min(1, (now - startTime) / TWEEN_MS);
       const eased = 1 - Math.pow(1 - t, 3);
-      el.textContent = String(Math.round(from + (to - from) * eased));
+      el.textContent = (from + (to - from) * eased).toFixed(decimals);
       if (t < 1) tweens.set(el, { frame: requestAnimationFrame(step), timer });
     };
     tweens.set(el, { frame: requestAnimationFrame(step), timer });
@@ -4330,15 +4376,15 @@
   function showRatingPreview(container, start, stashRatings) {
     const next = document.createElement("div");
     next.innerHTML = renderRatingPreview(start, stashRatings);
-    const current = container.querySelector(".sb-rating-preview");
+    const current2 = container.querySelector(".sb-rating-preview");
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!current || reducedMotion) {
+    if (!current2 || reducedMotion) {
       container.replaceChildren(...next.childNodes);
       return;
     }
     const fresh = next.querySelector(".sb-rating-preview");
     const pairs = (selector) => {
-      const now = current.querySelectorAll(selector);
+      const now = current2.querySelectorAll(selector);
       return [...fresh.querySelectorAll(selector)].map((el, i) => [now[i], el]);
     };
     for (const [el, to] of pairs(".sb-pv-row")) el.className = to.className;
@@ -4358,10 +4404,10 @@
     const battled = exampleScenes().map((scene, i) => ({ ...scene, custom_fields: { [ELO_FIELD]: BATTLED_ELO[i] } }));
     const later = squares(battled, stashRatings);
     const unchangedNote = "Stash ratings stay as they are";
-    const laterNote = off ? unchangedNote : stashRatings === "percentile" ? "Evenly spaced by rank, whatever the gaps" : "Gaps show, but 2150 is stuck at 100";
+    const laterNote = off ? unchangedNote : stashRatings === "percentile" ? "Evenly spaced by rank, whatever the gaps" : `Gaps show, but 2150 is stuck at ${formatRating(100, true)}`;
     return `
         <div class="sb-rating-preview">
-          <p class="sb-pv-legend">Each square below is an example scene: its ELO above, its Stash rating inside.</p>
+          <p class="sb-pv-legend">Each square below is an example scene: its ELO above, its Stash rating${getRatingSystem().type === "stars" ? " in stars" : ""} inside.</p>
           ${rowHtml("Now in Stash", now, "")}
           ${rowHtml("After setup", setUp, off ? unchangedNote : `${changedCount} of 10 change`, { muted: off, showChange: !off })}
           ${rowHtml("After lots of battles", later, laterNote, { muted: off })}
@@ -4429,9 +4475,9 @@
       text = "No Stash ratings change now: every scene converts back to its current rating.";
       warn = false;
     } else if (start === "fresh") {
-      text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 5.0 (2.5 stars)</strong>: ${plural2(changes, "rating")} change, unrated scenes included. ${backup}`;
+      text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes ${formatRating(50, true)}</strong>: ${plural2(changes, "rating")} change, unrated scenes included. ${backup}`;
     } else {
-      text = `⚠️ <strong>${plural2(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 10.0 (5 stars) by hand may end up lower. ${backup}`;
+      text = `⚠️ <strong>${plural2(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated ${formatRating(100, true)} by hand may end up lower. ${backup}`;
     }
     return `<p class="sb-setup-message${warn ? " sb-setup-warning" : ""}">${text}</p>`;
   }
@@ -4457,7 +4503,7 @@
       "start",
       "ratings",
       "Use my ratings",
-      `Your ${plural2(rated, "rated scene")} start from their rating: a 5.0 (2.5 stars) starts at 1500 ELO.${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
+      `Your ${plural2(rated, "rated scene")} start from their rating: ${ratingStarts(exampleRating(50))} at ${seed(exampleRating(50))} ELO.${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
       true
     )}
             ${radio(
@@ -4715,14 +4761,14 @@
     });
     updateModeInfo();
     updateClimbPoolWarning();
-    updateLeastTestedNote();
+    updatePoolStatus();
   }
   function statsActions(modal) {
     const toBattle = () => {
       resetRunState();
       state.currentPair = { left: null, right: null };
       state.currentRanks = { left: null, right: null };
-      updateLeastTestedNote();
+      updatePoolStatus();
       showTab(modal, "battle");
       applyPreviewSettings();
     };
@@ -4945,16 +4991,17 @@
       confirmSettingChange
     );
     updateRatingsNote();
-    updateLeastTestedNote();
-    modal.querySelector('[data-action="stop-least-tested"]')?.addEventListener("click", (e) => {
-      e.preventDefault();
-      state.leastTested = false;
-      updateLeastTestedNote();
-    });
+    updatePoolStatus();
     modal.querySelector("#sb-pool-status")?.addEventListener("click", (e) => {
-      if (!e.target.closest('[data-action="stop-explore-pool"]')) return;
-      e.preventDefault();
-      stopExplorePool();
+      const target = e.target;
+      if (target.closest('[data-action="stop-explore-pool"]')) {
+        e.preventDefault();
+        stopExplorePool();
+      } else if (target.closest('[data-action="stop-least-tested"]')) {
+        e.preventDefault();
+        state.leastTested = false;
+        updatePoolStatus();
+      }
     });
     modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));
     modal.querySelector('[data-action="clear-hall-of-fame"]')?.addEventListener("click", () => void confirmClearHallOfFame());

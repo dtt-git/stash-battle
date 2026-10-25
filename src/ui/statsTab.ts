@@ -9,6 +9,7 @@ import { ELO_K_TIERS } from "../constants";
 import { exploreEntries, type ExploreEntry, type ExploreFilters } from "../explore";
 import { navigateToUrl } from "../navigation";
 import { leastTestedSource } from "../pairs";
+import { formatRating, scaleMarks } from "../ratingDisplay";
 import { elo } from "../score";
 import { isEloSetupPending, state } from "../state";
 import {
@@ -102,7 +103,7 @@ function histogramSvg(width: number): string {
   const buckets = eloHistogram(scenes, size);
   if (buckets.length === 0) return "";
   const mode = state.settings.stashRatings;
-  const ticks = ratingScaleTicks(scenes, mode);
+  const ticks = ratingScaleTicks(scenes, mode, scaleMarks());
 
   let lo = buckets[0].from;
   let hi = buckets[buckets.length - 1].from + size;
@@ -132,12 +133,12 @@ function histogramSvg(width: number): string {
     const last = ticks[ticks.length - 1];
     if (lo < first.elo) {
       parts.push(
-        `<rect class="sb-chart-clamp" x="${x(lo)}" y="${m.top}" width="${x(first.elo) - x(lo)}" height="${plotH}" data-tip="Below ${first.elo}, every ELO is a Stash rating of ${first.rating}"/>`,
+        `<rect class="sb-chart-clamp" x="${x(lo)}" y="${m.top}" width="${x(first.elo) - x(lo)}" height="${plotH}" data-tip="Below ${first.elo}, every ELO is a Stash rating of ${formatRating(first.rating, true)}"/>`,
       );
     }
     if (hi > last.elo) {
       parts.push(
-        `<rect class="sb-chart-clamp" x="${x(last.elo)}" y="${m.top}" width="${x(hi) - x(last.elo)}" height="${plotH}" data-tip="Above ${last.elo}, every ELO is a Stash rating of ${last.rating}"/>`,
+        `<rect class="sb-chart-clamp" x="${x(last.elo)}" y="${m.top}" width="${x(hi) - x(last.elo)}" height="${plotH}" data-tip="Above ${last.elo}, every ELO is a Stash rating of ${formatRating(last.rating, true)}"/>`,
       );
     }
   }
@@ -169,7 +170,7 @@ function histogramSvg(width: number): string {
     for (const t of ticks) {
       parts.push(`<line class="sb-chart-scale" x1="${x(t.elo)}" x2="${x(t.elo)}" y1="${lineY - 4}" y2="${lineY + 4}"/>`);
       parts.push(
-        `<text class="sb-chart-label sb-chart-scale-label" x="${x(t.elo)}" y="${lineY + 18}" text-anchor="middle" data-tip="Stash rating ${t.rating} at ELO ${Math.round(t.elo)}">${t.rating}</text>`,
+        `<text class="sb-chart-label sb-chart-scale-label" x="${x(t.elo)}" y="${lineY + 18}" text-anchor="middle" data-tip="Stash rating ${formatRating(t.rating, true)} at ELO ${Math.round(t.elo)}">${formatRating(t.rating)}</text>`,
       );
     }
   }

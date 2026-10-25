@@ -3,6 +3,7 @@
 // from what setup and the Stash ratings options actually do.
 
 import { ELO_FIELD } from "../constants";
+import { getRatingSystem, formatRating, ratingValue } from "../ratingDisplay";
 import { afterSetup, elo, stashRatingTargets } from "../score";
 import type { EloStart, Scene, StashRatingsMode } from "../types";
 
@@ -40,7 +41,7 @@ function squareHtml({ elo: eloValue, rating, changed }: Square, showChange: bool
   return `
             <div class="sb-pv-cell">
               <span class="sb-pv-elo">${eloValue === null ? "" : Math.round(eloValue)}</span>
-              <span class="${classes.join(" ")}"${fill}>${rating ?? "–"}</span>
+              <span class="${classes.join(" ")}"${fill}>${rating === null ? "–" : ratingValue(rating)}</span>
             </div>`;
 }
 
@@ -70,6 +71,8 @@ function tweenText(el: Element, target: string): void {
   }
   const from = Number(el.textContent);
   const to = Number(target);
+  // Count in the target's steps: whole numbers, or tenths for "7.4"
+  const decimals = target.includes(".") ? target.split(".")[1].length : 0;
   if (el.textContent === "" || target === "" || !Number.isFinite(from) || !Number.isFinite(to) || from === to) {
     el.textContent = target;
     return;
@@ -85,7 +88,7 @@ function tweenText(el: Element, target: string): void {
   const step = (now: number): void => {
     const t = Math.min(1, (now - startTime) / TWEEN_MS);
     const eased = 1 - Math.pow(1 - t, 3);
-    el.textContent = String(Math.round(from + (to - from) * eased));
+    el.textContent = (from + (to - from) * eased).toFixed(decimals);
     if (t < 1) tweens.set(el, { frame: requestAnimationFrame(step), timer });
   };
   tweens.set(el, { frame: requestAnimationFrame(step), timer });
@@ -136,11 +139,11 @@ export function renderRatingPreview(start: EloStart, stashRatings: StashRatingsM
     ? unchangedNote
     : stashRatings === "percentile"
       ? "Evenly spaced by rank, whatever the gaps"
-      : "Gaps show, but 2150 is stuck at 100";
+      : `Gaps show, but 2150 is stuck at ${formatRating(100, true)}`;
 
   return `
         <div class="sb-rating-preview">
-          <p class="sb-pv-legend">Each square below is an example scene: its ELO above, its Stash rating inside.</p>
+          <p class="sb-pv-legend">Each square below is an example scene: its ELO above, its Stash rating${getRatingSystem().type === "stars" ? " in stars" : ""} inside.</p>
           ${rowHtml("Now in Stash", now, "")}
           ${rowHtml("After setup", setUp, off ? unchangedNote : `${changedCount} of 10 change`, { muted: off, showChange: !off })}
           ${rowHtml("After lots of battles", later, laterNote, { muted: off })}

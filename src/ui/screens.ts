@@ -1,6 +1,7 @@
 // Victory and placement end-screens for Champion and Placement runs.
 
 import { latestScene } from "../cache";
+import { formatRating } from "../ratingDisplay";
 import { elo, stashRatingTargets } from "../score";
 import { resetRunState, state } from "../state";
 import { saveState } from "../storage";
@@ -76,7 +77,7 @@ function eloLine(scene: Scene, value: number | null): string {
   const scenes = state.memoryCache.allScenes;
   if (mode !== "off" && scenes) {
     const rating = stashRatingTargets(scenes, mode).get(scene.id);
-    if (rating !== undefined) line += ` · Stash Rating: <strong>${rating}</strong>`;
+    if (rating !== undefined) line += ` · Stash Rating: <strong>${formatRating(rating)}</strong>`;
   }
   return line;
 }
