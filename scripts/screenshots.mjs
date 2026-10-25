@@ -6,7 +6,7 @@
 //   npm run screenshots -- battle,gems  only these
 //
 // Shots: battle explore stats gems records settings champion placement setup scene-page
-//        phone-scene-page phone-battle phone-explore phone-stats
+//        phone-battle phone-explore phone-stats (phone-scene-page on request)
 // Stash's scenes and Stash Battle's config are compared before and after; the run fails if
 // anything changed.
 
@@ -15,7 +15,7 @@ import path from "node:path";
 import { launch, openStashBattle, showTab, snapshotDiff, STASH_URL, stashSnapshot } from "./harness.mjs";
 
 const OUT = process.env.SCREENSHOTS_DIR || "docs/screenshots";
-const ALL = ["battle", "explore", "stats", "gems", "records", "settings", "champion", "placement", "setup", "scene-page", "phone-scene-page", "phone-battle", "phone-explore", "phone-stats"];
+const ALL = ["battle", "explore", "stats", "gems", "records", "settings", "champion", "placement", "setup", "scene-page", "phone-battle", "phone-explore", "phone-stats"];
 const only = process.argv[2] ? process.argv[2].split(",") : ALL;
 const want = (name) => only.includes(name);
 fs.mkdirSync(OUT, { recursive: true });

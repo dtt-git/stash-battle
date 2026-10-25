@@ -88,8 +88,6 @@ The same `ELO 1740 · #50` sits next to the play count and O count, with the sce
 
 <img width="455" alt="A scene page's toolbar: the star rating, then a crown emoji with ELO 2114 · #1, then the play count and O count" src="docs/screenshots/scene-page.png" />
 
-<img width="375" alt="On a phone: the line under the scene's title starts with the crown emoji and ELO 2114 · #1" src="docs/screenshots/phone-scene-page.png" />
-
 ### Settings
 
 Most are also under Stash's Settings → Plugins. Everything saves to Stash:
