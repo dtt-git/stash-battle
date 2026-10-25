@@ -132,6 +132,11 @@ export function updateRatingsNote(): void {
   if (note) note.hidden = state.settings.stashRatings !== "off";
 }
 
+/** Who a Scenes page filter's scenes battle, worded as for a battled Explore filter. */
+function filterOpponentsText(): string {
+  return state.settings.filterOpponents ? " · against each other" : " · against your whole library";
+}
+
 /**
  * "Which scenes am I rating?" line above the cards: a battled Explore filter, the least-tested
  * (Stats), the Scenes page filter, or the whole library. One line, whichever applies.
@@ -148,12 +153,11 @@ export function updatePoolStatus(): void {
     const against = explorePoolWithin() ? "against each other" : "against your whole library";
     status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
   } else if (state.leastTested) {
-    const from = readFilters().filterActive ? "your Scenes page filter" : "your whole library";
-    status.innerHTML = `Battling your least-tested scenes first, from ${from}${countHtml} · <a href="#" data-action="stop-least-tested">Stop</a>`;
+    const filtered = readFilters().filterActive;
+    const from = filtered ? `your Scenes page filter${countHtml}${filterOpponentsText()}` : `your whole library${countHtml}`;
+    status.innerHTML = `Battling your least-tested scenes first, from ${from} · <a href="#" data-action="stop-least-tested">Stop</a>`;
   } else if (readFilters().filterActive) {
-    // Who they battle, worded as for a battled Explore filter
-    const opponents = state.settings.filterOpponents ? " · against each other" : " · against your whole library";
-    status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${opponents}`;
+    status.innerHTML = `Rating scenes from your Scenes page filter${countHtml}${filterOpponentsText()}`;
   } else {
     status.innerHTML = `Rating scenes from your whole library${countHtml}<span class="sb-pool-hint"> · filter the Scenes page to narrow it down</span>`;
   }
