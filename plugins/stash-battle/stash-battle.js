@@ -3255,7 +3255,7 @@
     const pool = leastTestedPool(leastTestedScenes);
     if (!pool) return "";
     const rated = pool.count - pool.unrated;
-    const who = pool.battles === 0 ? `${plural(pool.count, "scene")} have no battles yet: ${rated} with an ELO (the “No battles yet” bar) and ${pool.unrated} unrated.` : `The fewest battles any scene has is ${pool.battles}, and ${plural(pool.count, "scene")} have that many.`;
+    const who = pool.battles === 0 ? `${rated} with an ELO (the “No battles yet” bar)${pool.unrated > 0 ? ` and ${pool.unrated} unrated` : ""}.` : `The fewest battles any scene has is ${pool.battles}, and ${plural(pool.count, "scene")} have that many.`;
     return leastTestedFiltered ? `${who} From your Scenes page filter.` : who;
   }
   function settledHtml() {
