@@ -2290,11 +2290,11 @@
             </div>
 
             <div class="sb-scene-meta">
-              <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
-              <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
               <div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>
               <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}<span class="sb-meta-record-inline"> · ${record !== null ? `<strong>Record:</strong> ${record}` : `${battles(scene)} battle${battles(scene) === 1 ? "" : "s"}`}</span></div>
+              <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
+              <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
             </div>
           </div>
@@ -2320,7 +2320,9 @@
         </div>
         <h3 class="sb-end-screen-name">${title}</h3>
         <p class="sb-end-screen-stats">${statsHtml}</p>
-        <button id="sb-new-run" class="btn btn-primary">${buttonLabel}</button>
+        <div class="sb-end-actions">
+          <button id="sb-new-run" class="btn btn-primary">${buttonLabel}</button>
+        </div>
       </div>
     `;
   }
@@ -2334,7 +2336,7 @@
     });
     const newRun = comparisonArea.querySelector("#sb-new-run");
     if (newRun && canUndo()) {
-      newRun.insertAdjacentHTML("afterend", ` <button id="sb-end-undo" class="btn btn-secondary">↶ Undo last pick</button>`);
+      newRun.insertAdjacentHTML("afterend", `<button id="sb-end-undo" class="btn btn-secondary" title="Undo your last pick (Backspace)">↶ Undo</button>`);
       comparisonArea.querySelector("#sb-end-undo")?.addEventListener("click", () => void undoLastPick());
     }
   }
@@ -3190,7 +3192,7 @@
     const notes = [];
     const tie = largestTie(scenes);
     if (tie && tie.count >= TIE_NOTE_MIN) {
-      notes.push(`${tie.count} scenes are still tied at ELO ${Math.round(tie.elo)}. Battles break ties up.`);
+      notes.push(`${tie.count} scenes are still tied at ELO ${Math.round(tie.elo)}.`);
     }
     if (state.settings.stashRatings === "off") {
       notes.push("Stash ratings aren't being updated, so there's no rating scale under the chart.");
@@ -3254,8 +3256,7 @@
     if (!pool) return "";
     const rated = pool.count - pool.unrated;
     const who = pool.battles === 0 ? `${plural(pool.count, "scene")} have no battles yet: ${rated} with an ELO (the “No battles yet” bar) and ${pool.unrated} unrated.` : `The fewest battles any scene has is ${pool.battles}, and ${plural(pool.count, "scene")} have that many.`;
-    const where = leastTestedFiltered ? " (from your Scenes page filter)" : "";
-    return `${who}${where} They go on the left first, in Swiss, until you stop it.`;
+    return leastTestedFiltered ? `${who} From your Scenes page filter.` : who;
   }
   function settledHtml() {
     const buckets = settledBuckets(scenes);

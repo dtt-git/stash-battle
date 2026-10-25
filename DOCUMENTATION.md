@@ -90,7 +90,7 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | `eloSetup.ts` | One-time ELO setup: `fetchSetupScenes`, `setupRatingChanges`, `runEloSetup` |
 | `sceneActions.ts` | `findExistingSceneIds`, `isSceneNotFoundError` (deleted-scene detection) |
 | `ui/sceneCard.ts` | `createSceneCard`, `tierPill`, `formatDuration` |
-| `ui/screens.ts` | `showVictoryScreen`, `showPlacementScreen` (both with "↶ Undo last pick") |
+| `ui/screens.ts` | `showVictoryScreen`, `showPlacementScreen` (both with "↶ Undo") |
 | `ui/exploreTab.ts` | The 🔎 Explore tab: `createExploreTab`, `renderExploreTab`, `setExploreFilters` (Stats opens it at an ELO range) |
 | `ui/statsTab.ts` | The 📊 Stats tab: `createStatsTab`, `renderStatsTab`; the charts are hand-drawn SVG |
 | `ui/recordsTab.ts` | The 🏆 Records tab: `createRecordsTab`, `renderRecordsTab` |
@@ -472,7 +472,7 @@ After each Swiss / Champion pick, an overlay counts the **ELO** change in whole 
 - **Victory** (Champion, or a "Start from the bottom" climb that never lost): crown, "CHAMPION!", "Reached the top: N wins in a row!", final ELO
 - **Placement**: pin, "PLACED!", streak (bottom runs), rank, battles, final ELO
 - With a Stash ratings update mode on, the ELO line also shows `Stash Rating: N`: the scene's target from `stashRatingTargets` over the all-scenes cache (the cache already has the new ELO), so it's what the sync writes, even if that write is still on its way
-- Both show "Start New Run" (`#sb-new-run`), which resets run state, and "↶ Undo last pick" (`#sb-end-undo`) while the pick that ended the run can be undone
+- Both show "Start New Run" (`#sb-new-run`), which resets run state, and "↶ Undo" (`#sb-end-undo`, styled like the action bar's, under it in `.sb-end-actions`) while the pick that ended the run can be undone
 - No glow. They use the cards' entry animation (`fadeIn`, 0.3s); while an end screen shows, the battle area has `overflow: clip` (`.sb-comparison-area:has(> .sb-end-screen)`), because the end screen sits flush with the window's bottom (the action bar is hidden) and the slide-in would otherwise make the content 20px taller for a moment and flash a scrollbar.
 
 ### Keyboard Shortcuts
@@ -543,7 +543,7 @@ The click handler is bound once per panel (`dataset.bound`), not on every render
 
 ## Undo Last Pick
 
-**↶ Undo** in the action bar (and Backspace) takes back the last pick; end screens show "↶ Undo last pick" instead, since the action bar is hidden there. One level.
+**↶ Undo** in the action bar (and Backspace) takes back the last pick; end screens show their own "↶ Undo" next to Start New Run, since the action bar is hidden there. One level.
 
 - `handleSceneChoice` takes a `PickSnapshot` before the pick: the mode, the pair and its ranks, the ELO fields of every scene the pick writes (both in Swiss and Champion; Placement's scene, which is written when it lands), Champion's run (scene, wins, defeated), a copy of the Placement run, and the hall of fame's ids.
 - `undoLastPick` cancels the next-pair timer (`scheduleNextPair`) and bumps `pairLoads`, so a pair load already under way stops before showing anything (each `loadNewPair` checks it's still the newest after every await). It waits for writes still on their way (`eloWritesSettled`), then `restoreElo` writes each scene's fields back exactly: a scene that had no record loses the record fields its pick created, and one that was unrated loses its ELO again. Nothing is written when the fields already match.

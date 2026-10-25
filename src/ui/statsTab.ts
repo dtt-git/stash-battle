@@ -182,7 +182,7 @@ function distributionNote(): string {
   const notes: string[] = [];
   const tie = largestTie(scenes);
   if (tie && tie.count >= TIE_NOTE_MIN) {
-    notes.push(`${tie.count} scenes are still tied at ELO ${Math.round(tie.elo)}. Battles break ties up.`);
+    notes.push(`${tie.count} scenes are still tied at ELO ${Math.round(tie.elo)}.`);
   }
   if (state.settings.stashRatings === "off") {
     notes.push("Stash ratings aren't being updated, so there's no rating scale under the chart.");
@@ -271,8 +271,7 @@ function leastTestedText(): string {
     pool.battles === 0
       ? `${plural(pool.count, "scene")} have no battles yet: ${rated} with an ELO (the “No battles yet” bar) and ${pool.unrated} unrated.`
       : `The fewest battles any scene has is ${pool.battles}, and ${plural(pool.count, "scene")} have that many.`;
-  const where = leastTestedFiltered ? " (from your Scenes page filter)" : "";
-  return `${who}${where} They go on the left first, in Swiss, until you stop it.`;
+  return leastTestedFiltered ? `${who} From your Scenes page filter.` : who;
 }
 
 function settledHtml(): string {

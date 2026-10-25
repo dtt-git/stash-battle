@@ -1884,6 +1884,14 @@ body.sb-battle-open > .modal {
   font-size: 1.1rem;
 }
 
+/* Start New Run, and Undo under it when the pick that ended the run can be taken back */
+.sb-end-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
 /* ---------- Short screens (laptops): compact header and meta ---------- */
 @media (max-height: 900px) and (min-width: 641px) {
   .sb-container {
@@ -2170,6 +2178,11 @@ body.sb-battle-open > .modal {
   .sb-meta-performers {
     flex: 1;
     min-width: 0;
+  }
+
+  /* One line: performers on the left, then the rating and record (they come first elsewhere) */
+  .sb-meta-rating {
+    order: 1;
   }
 
   .sb-meta-performers strong,

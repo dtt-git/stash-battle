@@ -32,7 +32,9 @@ function buildEndScreenHtml(
         </div>
         <h3 class="sb-end-screen-name">${title}</h3>
         <p class="sb-end-screen-stats">${statsHtml}</p>
-        <button id="sb-new-run" class="btn btn-primary">${buttonLabel}</button>
+        <div class="sb-end-actions">
+          <button id="sb-new-run" class="btn btn-primary">${buttonLabel}</button>
+        </div>
       </div>
     `;
 }
@@ -51,7 +53,7 @@ function showEndScreen(html: string): void {
   // The pick that ended the run can be taken back from here too (the Undo bar is hidden)
   const newRun = comparisonArea.querySelector("#sb-new-run");
   if (newRun && canUndo()) {
-    newRun.insertAdjacentHTML("afterend", ` <button id="sb-end-undo" class="btn btn-secondary">↶ Undo last pick</button>`);
+    newRun.insertAdjacentHTML("afterend", `<button id="sb-end-undo" class="btn btn-secondary" title="Undo your last pick (Backspace)">↶ Undo</button>`);
     comparisonArea.querySelector("#sb-end-undo")?.addEventListener("click", () => void undoLastPick());
   }
 }
