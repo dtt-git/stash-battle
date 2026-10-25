@@ -43,6 +43,8 @@ function guard() {
         const L = (card.querySelector(".sb-scene-title")?.textContent || "Scene A").replace("Scene ", "");
         const st = card.querySelector(".sb-meta-studio");
         const pf = card.querySelector(".sb-meta-performers");
+        const cp = card.querySelector(".sb-meta-compact");
+        if (cp && cp.textContent && cp.dataset.guarded !== L) { cp.textContent = `Studio ${L}`; cp.dataset.guarded = L; }
         if (st && st.dataset.guarded !== L) { st.innerHTML = `<strong>Studio:</strong> Studio ${L}`; st.dataset.guarded = L; }
         if (pf && pf.dataset.guarded !== L) { pf.innerHTML = `<strong>Performers:</strong> Performer ${L}`; pf.dataset.guarded = L; }
         card.querySelectorAll(".sb-tag").forEach((el, i) => { if (el.textContent !== `Tag ${i + 1}`) el.textContent = `Tag ${i + 1}`; });

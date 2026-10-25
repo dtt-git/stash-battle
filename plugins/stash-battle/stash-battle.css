@@ -1501,6 +1501,11 @@
 }
 
 /* The record joins the rating line where its own line is hidden (tablets, phones, short screens) */
+/* Phones only (see the 640px block) */
+.sb-meta-compact {
+  display: none;
+}
+
 .sb-meta-record-inline {
   display: none;
 }
@@ -2171,21 +2176,26 @@ body.sb-battle-open > .modal {
     font-size: 0.8rem;
   }
 
-  .sb-meta-studio {
+  .sb-meta-studio,
+  .sb-meta-performers {
     display: none;
   }
 
-  .sb-meta-performers {
+  /* One line: the scene's first detail (studio, performers or tags) on the left, then the rating
+     and record (they come first elsewhere) */
+  .sb-meta-compact {
+    display: block;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  /* One line: performers on the left, then the rating and record (they come first elsewhere) */
   .sb-meta-rating {
     order: 1;
   }
 
-  .sb-meta-performers strong,
   .sb-meta-rating strong {
     display: none;
   }

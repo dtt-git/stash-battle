@@ -453,7 +453,7 @@ Touch screens have no hover, so `(hover: none)` shows an **ⓘ** button at the e
 - Cards sit side by side down to 640px wide; the card row's max width is tied to viewport height (`calc(135vh + 120px)`) so 16:9 thumbnails don't push the choose buttons off short screens.
 - `max-height: 900px` (laptops): compact header (smaller title, no mode descriptions), play count, battles and tags hidden.
 - `≤1000px`: play count, battles and tags hidden, smaller VS.
-- `≤640px` (phones): full-screen modal (`100dvh`), stacked compact cards (2:1 thumbnails, one meta line, short "✓ Choose"), the VS pill (with the win chances) sits centred in an 18px gap between the cards (8px clear of each), mode buttons as a segmented row, compact tab bar; the Stash ratings dropdown and Reset ELO rows stack.
+- `≤640px` (phones): full-screen modal (`100dvh`), stacked compact cards (2:1 thumbnails, one meta line: the scene's first detail among studio, performers and tags (`.sb-meta-compact`, empty when it has none) on the left, the rating and record on the right; short "✓ Choose"), the VS pill (with the win chances) sits centred in an 18px gap between the cards (8px clear of each), mode buttons as a segmented row, compact tab bar; the Stash ratings dropdown and Reset ELO rows stack.
 - Phones: the modal's sideways scroll is pinned to 0 (focus or scroll-into-view could shift an `overflow-x: hidden` box), and charts clip to their own box.
 
 ### Rating Animations

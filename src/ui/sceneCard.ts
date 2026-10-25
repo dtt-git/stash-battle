@@ -44,6 +44,9 @@ export function createSceneCard(
       : "No performers";
   const studio = scene.studio ? scene.studio.name : "No studio";
   const tags = scene.tags ? scene.tags.slice(0, 5).map((t) => t.name) : [];
+  // Phones have room for one detail beside the rating: the first the scene has (studio, then
+  // performers, then tags), or none
+  const compactDetail = scene.studio?.name || (scene.performers?.length ? performers : "") || tags.join(", ");
 
   const title = resolveSceneTitle(scene);
 
@@ -117,6 +120,7 @@ export function createSceneCard(
               <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
               <div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>
               <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}<span class="sb-meta-record-inline"> · ${record !== null ? `<strong>Record:</strong> ${record}` : `${battles(scene)} battle${battles(scene) === 1 ? "" : "s"}`}</span></div>
+              <div class="sb-meta-item sb-meta-compact">${compactDetail}</div>
               <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
               <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
               <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
