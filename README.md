@@ -134,13 +134,13 @@ Recommend saving a backup of your database beforehand (Settings → Tasks → Ba
 ## Usage
 
 1. (Optional) On the **Scenes** page, apply any filters or search to narrow down which scenes you want to rate (the line above the cards confirms what you're rating)
-2. Click the **Battle** button in the navbar
+2. Click the **⚔️ Battle** button in the navbar
 3. The first time, set up ELO: choose how it starts and whether your Stash ratings should be updated
 4. Choose a mode (hover a mode, or tap ⓘ on a phone, for a short explanation)
 5. Click a scene (or press ← / →) to pick the winner; Space skips the pair, and ↶ Undo (Backspace) takes back a pick
 6. Watch your rankings evolve over time in **Explore**, **Stats** and **Records**!
 
-You can also open Stash Battle on a scene page (the **Battle** button, or the ELO next to the play count), which puts that scene into a battle right away.
+You can also open Stash Battle on a scene page (the **⚔️ Battle** button, or the ELO next to the play count), which puts that scene into a battle right away.
 
 ## How It Works
 
