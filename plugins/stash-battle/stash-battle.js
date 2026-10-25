@@ -2343,12 +2343,12 @@
     {
       value: "linear",
       label: "Straight-line",
-      desc: "Rating = ELO converted back (1500 = 50, 10 ELO per point). Very high or low scenes stop at 100 or 1."
+      desc: "Rating = ELO converted back (1500 = 5.0, or 2.5 stars). Very high or low scenes stop at the top or bottom of the scale."
     },
     {
       value: "percentile",
       label: "Percentile",
-      desc: "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1."
+      desc: "Rating = percentile in your library: 9.0 (4.5 stars) means the scene ranks above about 90% of your scenes. The top scene gets the top rating, the bottom scene the lowest."
     }
   ];
   function stashRatingsOption(value) {
@@ -3146,7 +3146,7 @@
     if (state.settings.stashRatings === "off") {
       notes.push("Stash ratings aren't being updated, so there's no rating scale under the chart.");
     } else if (state.settings.stashRatings === "percentile") {
-      notes.push("Percentile spreads ratings 1-100 by rank, so the scale follows your library.");
+      notes.push("Percentile spreads ratings across the whole scale by rank, so the scale follows your library.");
     }
     return notes.length ? `<p class="sb-stats-note">${notes.join(" ")}</p>` : "";
   }
@@ -4429,9 +4429,9 @@
       text = "No Stash ratings change now: every scene converts back to its current rating.";
       warn = false;
     } else if (start === "fresh") {
-      text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 50</strong>: ${plural2(changes, "rating")} change, unrated scenes included. ${backup}`;
+      text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 5.0 (2.5 stars)</strong>: ${plural2(changes, "rating")} change, unrated scenes included. ${backup}`;
     } else {
-      text = `⚠️ <strong>${plural2(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 100 by hand may end up lower. ${backup}`;
+      text = `⚠️ <strong>${plural2(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 10.0 (5 stars) by hand may end up lower. ${backup}`;
     }
     return `<p class="sb-setup-message${warn ? " sb-setup-warning" : ""}">${text}</p>`;
   }
@@ -4457,7 +4457,7 @@
       "start",
       "ratings",
       "Use my ratings",
-      `Your ${plural2(rated, "rated scene")} start from their rating (50 = 1500 ELO, 10 ELO per point).${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
+      `Your ${plural2(rated, "rated scene")} start from their rating: a 5.0 (2.5 stars) starts at 1500 ELO.${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
       true
     )}
             ${radio(

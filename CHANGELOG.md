@@ -14,11 +14,11 @@ A new rating system: Stash Battle now keeps a true ELO score for every scene, se
 
 - **True ELO** 📈: every scene gets an uncapped ELO score (the same idea chess uses), saved in its custom fields (`stash_battle_elo`, `stash_battle_battles`, `stash_battle_seeded`). Scenes are no longer squeezed into 1-100, so your favourites can keep pulling ahead instead of piling up at 100.
 - **One-time ELO setup**: the first time you open Stash Battle, choose how ELO starts:
-  - **Use my ratings**: every rated scene starts from its star rating, so your existing order carries over (50 stars = 1500 ELO, 10 ELO per rating point).
+  - **Use my ratings**: every rated scene starts from its star rating, so your existing order carries over (a 5.0 rating, or 2.5 stars, starts at 1500 ELO).
   - **Start everyone at 1500**: every scene starts equal.
   
   A live 10-scene preview shows what each choice does, and how many of your ratings would change, before anything is written.
-- **Stash ratings update mode** (Settings): Don't update (the default), **Straight-line** (rating = ELO converted back, 1500 = 50), or **Percentile** (rating = percentile in your library: the top scene is 100, the bottom 1). Switching tells you exactly how many ratings will change. While it's on, each battle writes only the ratings that changed, in one go, and Stash's own pages show the new ratings without a refresh.
+- **Stash ratings update mode** (Settings): Don't update (the default), **Straight-line** (rating = ELO converted back, 1500 = 5.0 or 2.5 stars), or **Percentile** (rating = percentile in your library: the top scene gets the top rating, the bottom scene the lowest). Switching tells you exactly how many ratings will change. While it's on, each battle writes only the ratings that changed, in one go, and Stash's own pages show the new ratings without a refresh.
 - The **Placement and Champion end screens** show where the scene's Stash rating ended up, while a Stash ratings update mode is on.
 - **Reset ELO** (Settings): start every scene's ELO over, with the same choices as the setup. Cancel any time before pressing Start.
 - **Placement → Start from the bottom** (a setting): a scene ignores its current ELO and climbs from your lowest scene, jumping further with each win, with a win streak badge and a Champion screen if it never loses. **This replaces Gauntlet**, with much shorter runs (about 8-21 battles in a 600-scene library).

@@ -7,12 +7,12 @@ export const STASH_RATINGS_OPTIONS: readonly { value: StashRatingsMode; label: s
   {
     value: "linear",
     label: "Straight-line",
-    desc: "Rating = ELO converted back (1500 = 50, 10 ELO per point). Very high or low scenes stop at 100 or 1.",
+    desc: "Rating = ELO converted back (1500 = 5.0, or 2.5 stars). Very high or low scenes stop at the top or bottom of the scale.",
   },
   {
     value: "percentile",
     label: "Percentile",
-    desc: "Rating = percentile in your library: 90 means the scene ranks above about 90% of your scenes. Top scene 100, bottom 1.",
+    desc: "Rating = percentile in your library: 9.0 (4.5 stars) means the scene ranks above about 90% of your scenes. The top scene gets the top rating, the bottom scene the lowest.",
   },
 ];
 

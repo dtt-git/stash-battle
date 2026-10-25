@@ -186,7 +186,7 @@ function distributionNote(): string {
   if (state.settings.stashRatings === "off") {
     notes.push("Stash ratings aren't being updated, so there's no rating scale under the chart.");
   } else if (state.settings.stashRatings === "percentile") {
-    notes.push("Percentile spreads ratings 1-100 by rank, so the scale follows your library.");
+    notes.push("Percentile spreads ratings across the whole scale by rank, so the scale follows your library.");
   }
   return notes.length ? `<p class="sb-stats-note">${notes.join(" ")}</p>` : "";
 }

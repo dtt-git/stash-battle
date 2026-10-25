@@ -5,17 +5,17 @@
 //   npm run screenshots                 every shot, into docs/screenshots/
 //   npm run screenshots -- battle,gems  only these
 //
-// Shots: battle explore stats gems records settings champion placement setup
-//        phone-battle phone-explore phone-stats
+// Shots: battle explore stats gems records settings champion placement setup scene-page
+//        phone-scene-page phone-battle phone-explore phone-stats
 // Stash's scenes and Stash Battle's config are compared before and after; the run fails if
 // anything changed.
 
 import fs from "node:fs";
 import path from "node:path";
-import { launch, openStashBattle, showTab, snapshotDiff, stashSnapshot } from "./harness.mjs";
+import { launch, openStashBattle, showTab, snapshotDiff, STASH_URL, stashSnapshot } from "./harness.mjs";
 
 const OUT = process.env.SCREENSHOTS_DIR || "docs/screenshots";
-const ALL = ["battle", "explore", "stats", "gems", "records", "settings", "champion", "placement", "setup", "phone-battle", "phone-explore", "phone-stats"];
+const ALL = ["battle", "explore", "stats", "gems", "records", "settings", "champion", "placement", "setup", "scene-page", "phone-scene-page", "phone-battle", "phone-explore", "phone-stats"];
 const only = process.argv[2] ? process.argv[2].split(",") : ALL;
 const want = (name) => only.includes(name);
 fs.mkdirSync(OUT, { recursive: true });
@@ -217,6 +217,56 @@ if (want("setup")) {
   refused += run.stats.refused;
   errors.push(...run.errors);
   await run.browser.close();
+}
+
+// ---------- a scene page's ELO button (everything else on the page hidden) ----------
+
+/** A scene with a tier (settled: seeded, or 10+ battles) and a record, near the top of the library. */
+async function showcaseSceneId() {
+  const res = await fetch(`${STASH_URL}/graphql`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: `{ findScenes(filter:{per_page:-1}) { scenes { id custom_fields } } }` }),
+  });
+  const { data } = await res.json();
+  const num = (v) => (v === undefined || v === null || v === "" ? null : Number(v));
+  const rated = data.findScenes.scenes.filter((s) => num(s.custom_fields?.stash_battle_elo) !== null);
+  rated.sort((a, b) => num(b.custom_fields.stash_battle_elo) - num(a.custom_fields.stash_battle_elo));
+  const settled = (cf) => [true, 1, "1", "true"].includes(cf.stash_battle_seeded) || num(cf.stash_battle_battles) >= 10;
+  const pick = rated.slice(8, 60).find((s) => settled(s.custom_fields) && num(s.custom_fields.stash_battle_wins) >= 1) ?? rated[0];
+  return pick.id;
+}
+
+/** Show only `selector`'s element (the scene's title, cover and video stay hidden) and screenshot it. */
+async function scenePageShot(page, selector, name, pad) {
+  await page.addStyleTag({
+    content: `#root ${selector}, #root ${selector} * { visibility: visible !important; } #root ${selector} { background: #202b33; }`,
+  });
+  await page.waitForTimeout(400);
+  const r = await page.evaluate((sel) => {
+    const b = document.querySelector(sel).getBoundingClientRect();
+    return { x: b.x, y: b.y, width: b.width, height: b.height };
+  }, selector);
+  await page.screenshot({ path: path.join(OUT, `${name}.png`), clip: { x: Math.max(0, r.x - pad), y: Math.max(0, r.y - pad), width: r.width + pad * 2, height: r.height + pad * 2 } });
+  console.log("saved", name);
+}
+
+if (want("scene-page") || want("phone-scene-page")) {
+  const id = await showcaseSceneId();
+  for (const phone of [false, true]) {
+    const name = phone ? "phone-scene-page" : "scene-page";
+    if (!want(name)) continue;
+    const run = await launch({ mode: "real", phone, viewport: { width: 1280, height: 900 } });
+    const { page } = run;
+    await page.goto(`${STASH_URL}/scenes/${id}`);
+    await page.waitForFunction(() => /ELO \d/.test(document.querySelector(".sb-scene-elo-value")?.textContent || ""), null, { timeout: 30000 });
+    await page.waitForTimeout(800);
+    // Wide screens: the button sits in the toolbar; phones: it leads the line under the title
+    await scenePageShot(page, phone ? ".scene-subheader" : ".scene-toolbar", name, phone ? 6 : 10);
+    refused += run.stats.refused;
+    errors.push(...run.errors);
+    await run.browser.close();
+  }
 }
 
 // ---------- phone (393 x 852, touch, 3x) ----------

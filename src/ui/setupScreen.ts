@@ -101,9 +101,9 @@ function ratingsMessage(start: EloStart, mode: StashRatingsMode, changes: number
     text = "No Stash ratings change now: every scene converts back to its current rating.";
     warn = false;
   } else if (start === "fresh") {
-    text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 50</strong>: ${plural(changes, "rating")} change, unrated scenes included. ${backup}`;
+    text = `⚠️ Every scene starts at 1500 ELO, so <strong>every Stash rating becomes 5.0 (2.5 stars)</strong>: ${plural(changes, "rating")} change, unrated scenes included. ${backup}`;
   } else {
-    text = `⚠️ <strong>${plural(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 100 by hand may end up lower. ${backup}`;
+    text = `⚠️ <strong>${plural(changes, "Stash rating")} change</strong> now, spread evenly by rank. A scene you rated 10.0 (5 stars) by hand may end up lower. ${backup}`;
   }
   return `<p class="sb-setup-message${warn ? " sb-setup-warning" : ""}">${text}</p>`;
 }
@@ -144,7 +144,7 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
               "start",
               "ratings",
               "Use my ratings",
-              `Your ${plural(rated, "rated scene")} start from their rating (50 = 1500 ELO, 10 ELO per point).${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
+              `Your ${plural(rated, "rated scene")} start from their rating: a 5.0 (2.5 stars) starts at 1500 ELO.${unrated > 0 ? ` The ${unrated} unrated ${unrated === 1 ? "one stays" : "ones stay"} unrated.` : ""}`,
               true,
             )}
             ${radio(
