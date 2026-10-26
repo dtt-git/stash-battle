@@ -269,19 +269,7 @@ function getRemainingChampionOpponents(champion: Scene, rightPool: Scene[], cham
   });
 }
 
-/** Lowest scene with an ELO in the pool (excluding one scene), or any other scene if none has one. */
-function findLowestRated(scenes: Scene[], excludeId: string): { scene: Scene | undefined; index: number } {
-  for (let i = scenes.length - 1; i >= 0; i--) {
-    const s = scenes[i];
-    if (s.id !== excludeId && isRated(s)) {
-      return { scene: s, index: i };
-    }
-  }
-  const fallbackIndex = scenes.findIndex((s) => s.id !== excludeId);
-  return { scene: scenes[fallbackIndex], index: fallbackIndex };
-}
-
-// Champion mode: winner stays on, starting against the lowest-rated scene
+// Champion mode: winner stays on, against opponents just above it
 export async function fetchChampionPair(
   forcedLeftScene: Scene | null = null,
 ): Promise<ChampionPairResult> {
@@ -306,15 +294,20 @@ export async function fetchChampionPair(
       throw new Error("No scenes match your filter criteria.");
     }
 
+    // Its first opponent is picked like every later one: among the closest above it (an unrated
+    // challenger counts as the bottom). The top scene has no one above, so it defends against
+    // the one right below it.
     const challengerIndex = rightPool.findIndex((s) => s.id === challenger.id);
-    const { scene: lowestRated, index: lowestIndex } = findLowestRated(rightPool, challenger.id);
-    if (!lowestRated) {
+    const above = getRemainingChampionOpponents(challenger, rightPool, challengerIndex);
+    const opponent =
+      above.length > 0 ? pickClosestChampionOpponent(above) : rightPool.find((s, idx) => idx > challengerIndex && s.id !== challenger.id);
+    if (!opponent) {
       throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
     }
 
     return {
-      scenes: [challenger, lowestRated],
-      ranks: [challengerIndex >= 0 ? challengerIndex + 1 : null, lowestIndex + 1],
+      scenes: [challenger, opponent],
+      ranks: [challengerIndex >= 0 ? challengerIndex + 1 : null, rightPool.indexOf(opponent) + 1],
       isVictory: false,
     };
   }
@@ -391,7 +384,9 @@ export async function fetchPlacementPair(
     console.log(
       `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`,
     );
-    await writeElo(run.scene, newElo, newBattles, run.results ?? []);
+    // Its picks count as wins and losses, but not on the win streak: Placement's opponents are
+    // picked to find its spot (a climb from the bottom starts against the weakest), not matched
+    await writeElo(run.scene, newElo, newBattles, run.results ?? [], false);
     return {
       done: true,
       scene: run.scene,

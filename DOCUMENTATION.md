@@ -235,7 +235,7 @@ Stash Battle keeps its own score in Stash's **scene custom fields** (Stash v0.31
 | `stash_battle_peak` | Highest ELO reached (starts at the ELO before the scene's first recorded pick) |
 | `stash_battle_streak` / `stash_battle_best_streak` | Current and longest win streak |
 
-`EloFields` (`types.ts`) is `{ elo, battles, seeded, record? }`; `eloCustomFields()` turns it into the map Stash stores. Every write sends the first three, plus the five **record** fields once the scene has a record (`sceneRecord`), in the **same** `sceneUpdate`: `writeElo(scene, elo, battles, results)` works the new record out with `recordAfter` (`results` are the picks in order, true = won). Placement runs keep their `results` and add them when the scene lands. Battles from before records began have no win/loss: such a scene shows "Battles: N" until its next pick (`recordText` is null for it). `RECORD_FIELD_KEYS` lists the record fields, `ELO_FIELD_KEYS` all eight, for removal (setup, Reset ELO, `clearElo`). Stash's Custom Fields table is widened (CSS) to fit `stash_battle_best_streak`.
+`EloFields` (`types.ts`) is `{ elo, battles, seeded, record? }`; `eloCustomFields()` turns it into the map Stash stores. Every write sends the first three, plus the five **record** fields once the scene has a record (`sceneRecord`), in the **same** `sceneUpdate`: `writeElo(scene, elo, battles, results)` works the new record out with `recordAfter` (`results` are the picks in order, true = won). Placement runs keep their `results` and add them when the scene lands, as wins and losses only (`recordAfter(..., countStreak = false)`): the streak neither grows nor breaks, since Placement's opponents are picked to find its spot (a climb from the bottom starts against the weakest) rather than matched. Its end screen's 🔥 streak is the run's own. Battles from before records began have no win/loss: such a scene shows "Battles: N" until its next pick (`recordText` is null for it). `RECORD_FIELD_KEYS` lists the record fields, `ELO_FIELD_KEYS` all eight, for removal (setup, Reset ELO, `clearElo`). Stash's Custom Fields table is widened (CSS) to fit `stash_battle_best_streak`.
 
 ### ELO math (`elo.ts`)
 
@@ -390,7 +390,7 @@ Finds a scene's spot with as few battles as possible — a bounded search with m
 
 Winner stays on, with plain two-sided ELO every pick.
 
-- **Start**: the challenger from the left pool against the **lowest-rated** scene of the opponent pool (`findLowestRated`).
+- **Start**: the challenger from the left pool against an opponent picked like every later one: among the closest unbeaten scenes above it (`getRemainingChampionOpponents` + `pickClosestChampionOpponent`; an unrated challenger counts as 1000, so it starts near the bottom). The top scene has none above, so it defends against the scene right below it. (It used to start against the lowest-rated scene, a leftover from the old climb from the bottom: a top scene's first pick was a 99% vs 1% mismatch.)
 - **Each pick**: `resolveComparison` changes both scenes' ELO (`battles + 1` each). If the champion wins, the opponent joins `championDefeated` and the streak grows; if it loses, the **winner becomes the champion** (`championDefeated = [loser]`, streak 1).
 - **Next opponent**: random among up to `CLIMB_OPPONENT_PICK_WINDOW` of the closest unbeaten opponents above the champion (by pool index or ELO).
 - **Victory**: no unbeaten opponents above → victory screen.

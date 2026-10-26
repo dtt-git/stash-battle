@@ -74,10 +74,10 @@ async function saveEloFields(
 /**
  * Save a scene's ELO and battle count, and its record with `results` added (each pick in order,
  * true = won), in one write (custom fields only; `partial` leaves other plugins' fields alone).
- * Whether it was seeded stays as it was.
+ * Whether it was seeded stays as it was. `countStreak` false leaves the win streak as it is.
  */
-export function writeElo(scene: Scene, elo: number, battles: number, results: boolean[]): Promise<void> {
-  const write = saveElo(scene, elo, battles, results);
+export function writeElo(scene: Scene, elo: number, battles: number, results: boolean[], countStreak = true): Promise<void> {
+  const write = saveElo(scene, elo, battles, results, countStreak);
   pendingWrites.add(write);
   void write.finally(() => pendingWrites.delete(write));
   return write;
@@ -91,9 +91,9 @@ export async function eloWritesSettled(): Promise<void> {
   await Promise.allSettled([...pendingWrites]);
 }
 
-async function saveElo(scene: Scene, elo: number, battles: number, results: boolean[]): Promise<void> {
+async function saveElo(scene: Scene, elo: number, battles: number, results: boolean[], countStreak: boolean): Promise<void> {
   const current = latestScene(scene);
-  const record = recordAfter(sceneRecord(current), results, eloOf(current) ?? elo, elo);
+  const record = recordAfter(sceneRecord(current), results, eloOf(current) ?? elo, elo, countStreak);
   const value: EloFields = { elo, battles, seeded: isSeeded(scene), record };
   if (await saveEloFields(scene, value, { partial: eloCustomFields(value) }, "save ELO")) {
     console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo} (${battles} battles)`);

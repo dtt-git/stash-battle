@@ -96,19 +96,24 @@ export function recordText(scene: Scene): string | null {
 
 /**
  * A record after more picks, in order (true = won), with the peak raised to `newElo`. A scene's
- * first record starts from `startElo` (its ELO before these picks) as the peak.
+ * first record starts from `startElo` (its ELO before these picks) as the peak. With
+ * `countStreak` false (Placement) the picks add to wins and losses only: the win streak neither
+ * grows nor breaks.
  */
-export function recordAfter(record: SceneRecord | null, results: boolean[], startElo: number, newElo: number): SceneRecord {
+export function recordAfter(
+  record: SceneRecord | null,
+  results: boolean[],
+  startElo: number,
+  newElo: number,
+  countStreak = true,
+): SceneRecord {
   const next: SceneRecord = record ? { ...record } : { wins: 0, losses: 0, peak: startElo, streak: 0, bestStreak: 0 };
   for (const won of results) {
-    if (won) {
-      next.wins++;
-      next.streak++;
-      next.bestStreak = Math.max(next.bestStreak, next.streak);
-    } else {
-      next.losses++;
-      next.streak = 0;
-    }
+    if (won) next.wins++;
+    else next.losses++;
+    if (!countStreak) continue;
+    next.streak = won ? next.streak + 1 : 0;
+    next.bestStreak = Math.max(next.bestStreak, next.streak);
   }
   next.peak = roundElo(Math.max(next.peak, newElo));
   return next;

@@ -222,8 +222,11 @@ test("recordAfter: wins, losses, streaks and peak", () => {
   const before = { wins: 5, losses: 2, peak: 1700, streak: 3, bestStreak: 4 };
   assert.deepEqual(recordAfter(before, [true, true, false, true], 1650, 1690), { wins: 8, losses: 3, peak: 1700, streak: 1, bestStreak: 5 });
   assert.equal(recordAfter(before, [true], 1690, 1712.34).peak, 1712.3);
-  // Placement's run: several picks added at once, in order
+  // Several picks added at once, in order
   assert.deepEqual(recordAfter(null, [true, true, true], 1400, 1640), { wins: 3, losses: 0, peak: 1640, streak: 3, bestStreak: 3 });
+  // Placement's run counts as wins and losses only: the streak neither grows nor breaks
+  assert.deepEqual(recordAfter(before, [true, true, false, true], 1650, 1690, false), { wins: 8, losses: 3, peak: 1700, streak: 3, bestStreak: 4 });
+  assert.deepEqual(recordAfter(null, [true, true, true], 1400, 1640, false), { wins: 3, losses: 0, peak: 1640, streak: 0, bestStreak: 0 });
   // The record passed in isn't changed
   assert.equal(before.wins, 5);
 });

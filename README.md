@@ -78,7 +78,7 @@ Your whole library as small cards ranked by ELO. Search by title, studio or perf
 
 ### 🏆 Records
 
-The **hall of fame** (every scene that has ever been #1, and when it got there), the **longest win streaks** and the **highest peak ELOs**. The hall of fame is saved in Stash's plugin settings, so restoring a database backup doesn't change it; **Settings → Clear hall of fame** empties it.
+The **hall of fame** (every scene that has ever been #1, and when it got there), the **longest win streaks** (from Swiss and Champion) and the **highest peak ELOs**. The hall of fame is saved in Stash's plugin settings, so restoring a database backup doesn't change it; **Settings → Clear hall of fame** empties it.
 
 <img width="600" alt="Records tab: the hall of fame of scenes that have been #1, the longest win streaks and the highest peak ELOs" src="docs/screenshots/records.png" />
 

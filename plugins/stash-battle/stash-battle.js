@@ -139,17 +139,14 @@
     if (record) return `${record.wins}–${record.losses}`;
     return battles(scene) === 0 ? "0–0" : null;
   }
-  function recordAfter(record, results2, startElo, newElo) {
+  function recordAfter(record, results2, startElo, newElo, countStreak = true) {
     const next = record ? { ...record } : { wins: 0, losses: 0, peak: startElo, streak: 0, bestStreak: 0 };
     for (const won of results2) {
-      if (won) {
-        next.wins++;
-        next.streak++;
-        next.bestStreak = Math.max(next.bestStreak, next.streak);
-      } else {
-        next.losses++;
-        next.streak = 0;
-      }
+      if (won) next.wins++;
+      else next.losses++;
+      if (!countStreak) continue;
+      next.streak = won ? next.streak + 1 : 0;
+      next.bestStreak = Math.max(next.bestStreak, next.streak);
     }
     next.peak = roundElo(Math.max(next.peak, newElo));
     return next;
@@ -1557,8 +1554,8 @@
     scheduleStashRatingSync();
     return true;
   }
-  function writeElo(scene, elo2, battles2, results2) {
-    const write = saveElo(scene, elo2, battles2, results2);
+  function writeElo(scene, elo2, battles2, results2, countStreak = true) {
+    const write = saveElo(scene, elo2, battles2, results2, countStreak);
     pendingWrites.add(write);
     void write.finally(() => pendingWrites.delete(write));
     return write;
@@ -1567,9 +1564,9 @@
   async function eloWritesSettled() {
     await Promise.allSettled([...pendingWrites]);
   }
-  async function saveElo(scene, elo2, battles2, results2) {
+  async function saveElo(scene, elo2, battles2, results2, countStreak) {
     const current2 = latestScene(scene);
-    const record = recordAfter(sceneRecord(current2), results2, elo(current2) ?? elo2, elo2);
+    const record = recordAfter(sceneRecord(current2), results2, elo(current2) ?? elo2, elo2, countStreak);
     const value = { elo: elo2, battles: battles2, seeded: isSeeded(scene), record };
     if (await saveEloFields(scene, value, { partial: eloCustomFields(value) }, "save ELO")) {
       console.log(`[Stash Battle] 📝 Saved scene ${scene.id} ELO ${elo2} (${battles2} battles)`);
@@ -2150,16 +2147,6 @@
       return idx < championIndex || (elo(s) ?? -Infinity) >= championElo;
     });
   }
-  function findLowestRated(scenes2, excludeId) {
-    for (let i = scenes2.length - 1; i >= 0; i--) {
-      const s = scenes2[i];
-      if (s.id !== excludeId && isRated(s)) {
-        return { scene: s, index: i };
-      }
-    }
-    const fallbackIndex = scenes2.findIndex((s) => s.id !== excludeId);
-    return { scene: scenes2[fallbackIndex], index: fallbackIndex };
-  }
   async function fetchChampionPair(forcedLeftScene = null) {
     const filters2 = currentFilters();
     console.log("[Stash Battle] 📋 Fetching scenes for champion...");
@@ -2176,13 +2163,14 @@
         throw new Error("No scenes match your filter criteria.");
       }
       const challengerIndex = rightPool.findIndex((s) => s.id === challenger.id);
-      const { scene: lowestRated, index: lowestIndex } = findLowestRated(rightPool, challenger.id);
-      if (!lowestRated) {
+      const above = getRemainingChampionOpponents(challenger, rightPool, challengerIndex);
+      const opponent = above.length > 0 ? pickClosestChampionOpponent(above) : rightPool.find((s, idx) => idx > challengerIndex && s.id !== challenger.id);
+      if (!opponent) {
         throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
       }
       return {
-        scenes: [challenger, lowestRated],
-        ranks: [challengerIndex >= 0 ? challengerIndex + 1 : null, lowestIndex + 1],
+        scenes: [challenger, opponent],
+        ranks: [challengerIndex >= 0 ? challengerIndex + 1 : null, rightPool.indexOf(opponent) + 1],
         isVictory: false
       };
     }
@@ -2239,7 +2227,7 @@
       console.log(
         `[Stash Battle] 📍 Placement: scene ${run.scene.id} placed at #${step.slot + 1} after ${run.battles} battles, ELO ${newElo}`
       );
-      await writeElo(run.scene, newElo, newBattles, run.results ?? []);
+      await writeElo(run.scene, newElo, newBattles, run.results ?? [], false);
       return {
         done: true,
         scene: run.scene,
