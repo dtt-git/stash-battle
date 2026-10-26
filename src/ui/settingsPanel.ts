@@ -2,7 +2,7 @@
 // preview volume control that sits on the tab bar. Every control carries data-setting="<key>";
 // values persist via updateSettings(). Action rows (Reset ELO) carry data-action instead.
 
-import { updateSettings } from "../settings";
+import { setTestMode, updateSettings } from "../settings";
 import { state } from "../state";
 import type { Settings, StashRatingsMode } from "../types";
 import { STASH_RATINGS_OPTIONS, stashRatingsOption } from "./stashRatingsText";
@@ -51,6 +51,16 @@ const SECTIONS: { title: string; rows: SettingRow[] }[] = [
       { key: "tierBorders", title: "Tier colours on card borders", hint: "Each battle card's border takes the colour of its tier (👑 Legendary down to 🥉 Bronze), as on the Explore cards" },
       { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
       { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" },
+    ],
+  },
+  {
+    title: "Testing",
+    rows: [
+      {
+        key: "testMode",
+        title: "🧪 Test mode",
+        hint: "Try things without saving anything to Stash: ELO, records, Stash ratings, the hall of fame and settings changes only last until you turn it off or reload the page. Clean mode's deletes are still real",
+      },
     ],
   },
 ];
@@ -214,6 +224,16 @@ export function bindSettingsControls(
     const eventName = input.type === "range" ? "input" : "change";
     input.addEventListener(eventName, () => {
       const value = input.type === "checkbox" ? input.checked : Number(input.value);
+      // Saved on its own, even while test mode holds other settings back
+      if (key === "testMode") {
+        input.disabled = true;
+        void setTestMode(input.checked).finally(() => {
+          input.disabled = false;
+          syncSettingsControls(root);
+          onChange(key);
+        });
+        return;
+      }
       apply({ [key]: value } as Partial<Settings>, key);
     });
   });

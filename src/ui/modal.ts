@@ -116,6 +116,14 @@ async function confirmClearHallOfFame(): Promise<void> {
 }
 
 async function startResetElo(modal: HTMLElement): Promise<void> {
+  if (state.settings.testMode) {
+    await confirmDialog({
+      title: "Turn off test mode first",
+      body: "<p>Reset ELO rewrites every scene in your library, which test mode can't hold back. Turn off test mode in Settings, then reset.</p>",
+      confirmLabel: "OK",
+    });
+    return;
+  }
   const ratingsOn = state.settings.stashRatings !== "off";
   const ok = await confirmDialog({
     title: "Reset ELO?",
@@ -232,8 +240,31 @@ function stopExplorePool(): void {
   void loadNewPair();
 }
 
+/**
+ * Test mode ended: the scene cache, the pair on screen and the last pick hold unsaved ELO, so
+ * start again from what Stash has.
+ */
+async function forgetTestChanges(): Promise<void> {
+  clearUndo();
+  resetRunState();
+  resetShuffle();
+  state.currentPair = { left: null, right: null };
+  state.currentRanks = { left: null, right: null };
+  saveState();
+  await clearSceneCache();
+}
+
 function onSettingChanged(key: keyof Settings): void {
   switch (key) {
+    case "testMode": {
+      updateRatingsNote();
+      const modal = document.getElementById("sb-modal");
+      if (modal) syncSettingsControls(modal);
+      // A pick from before it was on can't be undone in Stash while it's on
+      if (state.settings.testMode) clearUndo();
+      else void forgetTestChanges().then(() => loadNewPair());
+      break;
+    }
     case "stashRatings":
       updateRatingsNote();
       // Catch anything a per-battle sync under the old mode changed after the switch was counted
@@ -271,7 +302,10 @@ function onSettingChanged(key: keyof Settings): void {
 export async function openModal(): Promise<void> {
   console.log("[Stash Battle] 🎯 Opening modal...");
 
+  const wasTesting = state.settings.testMode;
   const [settingsOk, customFieldsOk] = await Promise.all([loadSettings(), sceneCustomFieldsSupported()]);
+  // Turned off in another tab meanwhile
+  if (wasTesting && !state.settings.testMode) await forgetTestChanges();
   if (!customFieldsOk) {
     showMessageModal(
       "Stash Battle needs a newer version of Stash: it stores each scene's ELO in scene custom fields, which this Stash doesn't have. Update Stash to use Stash Battle.",
@@ -491,12 +525,14 @@ export async function openModal(): Promise<void> {
 
   modal.querySelector('[data-action="reset-elo"]')?.addEventListener("click", () => void startResetElo(modal));
   modal.querySelector('[data-action="clear-hall-of-fame"]')?.addEventListener("click", () => void confirmClearHallOfFame());
-  // Battle tab note's "change in Settings" link
-  modal.querySelector('[data-action="open-settings"]')?.addEventListener("click", (e) => {
-    e.preventDefault();
-    showTab(modal, "settings");
-    applyPreviewSettings();
-  });
+  // The notes' "change in Settings" / "turn off in Settings" links
+  modal.querySelectorAll('[data-action="open-settings"]').forEach((link) =>
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      showTab(modal, "settings");
+      applyPreviewSettings();
+    }),
+  );
 
   // Skip and Undo buttons
   modal.querySelector("#sb-skip-btn")?.addEventListener("click", skipPair);

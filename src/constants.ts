@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
   filterOpponents: false,
   cleanMode: false,
   pauseMediaOnOpen: true,
+  testMode: false,
 };
 
 // Pre-2.7 localStorage preference keys (migrated into plugin settings).

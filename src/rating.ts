@@ -37,6 +37,8 @@ function sameElo(a: EloFields | null, b: EloFields | null): boolean {
  * Update the scene object, the cache and Stash's page cache straight away (so the next pair
  * already sees the change), then write to Stash. If the write fails, put the old value back,
  * unless a later write has replaced it since. Stash ratings sync only after a successful write.
+ * In test mode only Stash Battle's cache changes: nothing is written, and Stash's own pages keep
+ * showing what's saved.
  */
 async function saveEloFields(
   scene: Scene,
@@ -46,11 +48,13 @@ async function saveEloFields(
   rating100?: number | null,
 ): Promise<boolean> {
   const previous = eloFields(latestScene(scene));
+  const testing = state.settings.testMode;
   setEloInCache(scene, value);
-  refreshStashCache([{ id: scene.id, elo: value }], false);
+  if (!testing) refreshStashCache([{ id: scene.id, elo: value }], false);
   try {
     const input = { id: scene.id, custom_fields: customFields, ...(rating100 !== undefined ? { rating100 } : {}) };
-    await graphqlQuery(SCENE_UPDATE_MUTATION, { input });
+    if (testing) console.log(`[Stash Battle] 🧪 Test mode: not saving scene ${scene.id} (${what})`);
+    else await graphqlQuery(SCENE_UPDATE_MUTATION, { input });
   } catch (e) {
     reportWriteError(scene.id, what, e);
     if (sameElo(eloFields(latestScene(scene)), value)) {
@@ -61,7 +65,7 @@ async function saveEloFields(
   }
   if (rating100 !== undefined) {
     setRatingsInCache(new Map([[scene.id, rating100]]));
-    refreshStashCache([{ id: scene.id, rating100 }], true);
+    if (!testing) refreshStashCache([{ id: scene.id, rating100 }], true);
   }
   scheduleStashRatingSync();
   return true;
@@ -134,9 +138,13 @@ export async function clearElo(scene: Scene): Promise<void> {
 
 /**
  * Write Stash ratings (scene id to 1-100) in one GraphQL request: one aliased bulkSceneUpdate
- * per distinct value. Throws on failure; doesn't touch the cache.
+ * per distinct value. Throws on failure; doesn't touch the cache. Writes nothing in test mode.
  */
 export async function writeStashRatings(ratings: Map<string, number>): Promise<void> {
+  if (state.settings.testMode) {
+    console.log(`[Stash Battle] 🧪 Test mode: not saving ${ratings.size} Stash ratings`);
+    return;
+  }
   const idsByRating = new Map<number, string[]>();
   for (const [id, rating] of ratings) {
     const ids = idsByRating.get(rating) ?? [];
@@ -161,6 +169,8 @@ export async function writeStashRatings(ratings: Map<string, number>): Promise<v
 /** After Stash ratings were written: update the cached scenes and Stash's own page cache. */
 export function applyStashRatings(ratings: Map<string, number>): void {
   setRatingsInCache(ratings);
+  // Test mode wrote nothing: Stash's pages keep what's saved
+  if (state.settings.testMode) return;
   refreshStashCache(
     [...ratings].map(([id, rating100]) => ({ id, rating100 })),
     ratings.size > 0,

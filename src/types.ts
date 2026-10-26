@@ -23,6 +23,7 @@ export interface Settings {
   filterOpponents: boolean; // Right side obeys the list filter too
   cleanMode: boolean; // Show a delete button on each card
   pauseMediaOnOpen: boolean; // Pause Stash's playing video/audio when Battle opens
+  testMode: boolean; // Nothing is written to Stash (see settings.ts setTestMode)
 }
 
 export interface SceneFile {

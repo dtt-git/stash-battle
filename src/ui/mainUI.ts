@@ -72,6 +72,9 @@ export function createMainUI(): string {
           <h1 class="sb-title">⚔️ Stash Battle</h1>
           ${createTabBar()}
         </div>
+        <p id="sb-test-note" class="sb-pool-status sb-test-note" hidden>
+          🧪 <strong>Test mode</strong>: nothing is saved to Stash · <a href="#" data-action="open-settings">turn off in Settings</a>
+        </p>
 
         <div class="sb-tab-panel" data-panel="battle">
           <div id="sb-setup-area" class="sb-setup-area" hidden></div>
@@ -128,10 +131,12 @@ export function updateModeInfo(): void {
   if (info && mode) info.innerHTML = `<strong>${mode.icon} ${mode.title}:</strong> ${mode.tip.replace(/\n/g, "<br>")}`;
 }
 
-/** Battle tab note while the "Stash ratings" setting is "Don't update". */
+/** Battle tab note while the "Stash ratings" setting is "Don't update", and on every tab, test mode's. */
 export function updateRatingsNote(): void {
   const note = document.getElementById("sb-ratings-note");
   if (note) note.hidden = state.settings.stashRatings !== "off";
+  const test = document.getElementById("sb-test-note");
+  if (test) test.hidden = !state.settings.testMode;
 }
 
 /** Who a Scenes page filter's scenes battle, worded as for a battled Explore filter. */

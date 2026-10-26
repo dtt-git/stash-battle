@@ -4,6 +4,7 @@
 //   npm run smoke                   all checks
 //   npm run smoke -- fresh          a first install: setup (both starts), picks, undo, every mode and tab
 //   npm run smoke -- one            battling one scene until Stop (Explore's ⚔️, a scene page)
+//   npm run smoke -- test           test mode: picks, undo, settings and Stash ratings write nothing
 //   npm run smoke -- old            a Stash without scene custom fields shows the "newer Stash" message
 //   npm run smoke -- big [size]     a synthetic library (default 20,000 scenes), with timings
 //
@@ -182,6 +183,56 @@ async function oneScene() {
   await run.browser.close();
 }
 
+// ---------- test mode ----------
+
+async function testMode() {
+  console.log("\ntest mode: nothing saved to Stash");
+  const run = await launch({
+    mode: "big",
+    size: 2000,
+    config: { eloSetupAt: new Date().toISOString(), eloSetupMode: "ratings", stashRatings: "percentile", tierBorders: true },
+  });
+  const { page, writes } = run;
+  const toggle = (key) => page.evaluate((k) => document.querySelector(`#sb-setting-${k}`).click(), key);
+  const noteShown = () => page.evaluate(() => !document.querySelector("#sb-test-note")?.hidden);
+  await openStashBattle(page);
+  await twoCards(page);
+
+  await showTab(page, "Settings");
+  await toggle("testMode");
+  await page.waitForTimeout(1500);
+  check(writes.config?.testMode === true, "turning it on saves the switch");
+  check(await noteShown(), "the test mode note shows");
+  const before = writes.count;
+
+  await toggle("tierBorders");
+  await page.waitForTimeout(1500);
+  await showTab(page, "Battle");
+  for (let i = 0; i < 4; i++) await pick(page, i % 2 ? "left" : "right");
+  await page.click("#sb-undo-btn");
+  await page.waitForTimeout(1500);
+  await pick(page, "left");
+  await page.waitForTimeout(1500);
+  check(writes.count === before, `picks, undo, Stash ratings and a setting wrote nothing (${writes.count - before} writes)`);
+  check((await cards(page)) === 2, "battles go on as usual");
+
+  await showTab(page, "Settings");
+  await toggle("testMode");
+  await page.waitForTimeout(2000);
+  check(writes.config?.testMode === false, "turning it off saves the switch");
+  check(writes.config?.tierBorders === true, "a setting changed in test mode isn't saved");
+  check(await page.evaluate(() => document.querySelector("#sb-setting-tierBorders").checked), "...and goes back to the saved value");
+  check(!(await noteShown()), "the note hides again");
+  await showTab(page, "Battle");
+  await twoCards(page);
+  const off = writes.count;
+  await pick(page, "left");
+  await page.waitForTimeout(1500);
+  check(writes.count > off, "picks save again once it's off");
+  check(run.errors.length === 0, `no page errors${run.errors.length ? ":\n      " + run.errors.join("\n      ") : ""}`);
+  await run.browser.close();
+}
+
 // ---------- a big library ----------
 
 async function timed(page, label, action, done, results) {
@@ -263,6 +314,7 @@ if (which === "all" || which === "fresh") {
 }
 if (which === "all" || which === "old") await old();
 if (which === "all" || which === "one") await oneScene();
+if (which === "all" || which === "test") await testMode();
 if (which === "all" || which === "big") await big(bigSize);
 
 const diff = snapshotDiff(before, await stashSnapshot());

@@ -7,6 +7,7 @@ import { graphqlQuery, refreshStashCache } from "./graphql";
 import { writeStashRatings } from "./rating";
 import { clearHallOfFame } from "./settings";
 import { afterSetup, eloCustomFields, isRated, seed, startingElo, stashRatingChanges } from "./score";
+import { state } from "./state";
 import type { EloStart, Scene, StashRatingsMode } from "./types";
 
 export type SetupPhase = "elo" | "ratings";
@@ -95,6 +96,8 @@ export async function runEloSetup(
   stashRatings: StashRatingsMode,
   onProgress: SetupProgress,
 ): Promise<SetupSummary> {
+  // It rewrites the whole library, which test mode can't keep in this tab only
+  if (state.settings.testMode) throw new Error("Test mode is on: turn it off in Settings to set up ELO.");
   const summary: SetupSummary = { eloWritten: 0, eloCleared: 0, ratingsWritten: 0 };
 
   if (start === "ratings") {

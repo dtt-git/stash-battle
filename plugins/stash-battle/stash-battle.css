@@ -2794,3 +2794,18 @@ body.sb-battle-open > .modal {
     display: none;
   }
 }
+
+/* Test mode: on every tab, under the tab bar */
+.sb-test-note {
+  margin: 8px 0 12px;
+  color: #e0b25a;
+}
+
+.sb-test-note strong {
+  color: inherit;
+}
+
+.sb-test-note a {
+  color: inherit;
+  text-decoration: underline;
+}

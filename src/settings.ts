@@ -58,6 +58,7 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
     pauseMediaOnOpen: bool("pauseMediaOnOpen"),
     placementFromBottom: bool("placementFromBottom"),
     tierBorders: bool("tierBorders"),
+    testMode: bool("testMode"),
     previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
     explorePageSize: EXPLORE_PAGE_SIZES.includes(Number(raw.explorePageSize)) ? Number(raw.explorePageSize) : base.explorePageSize,
   };
@@ -84,6 +85,8 @@ export async function loadSettings(): Promise<boolean> {
     const data = await graphqlQuery<{ configuration: { plugins: Record<string, Record<string, unknown>>; ui: unknown } }>(LOAD_QUERY);
     setRatingSystem(data.configuration.ui);
     const stored = data.configuration.plugins?.[PLUGIN_ID];
+    // Test mode keeps this tab's settings and hall of fame (changed, but not saved) while it's on
+    if (state.settings.testMode && stored?.testMode === true) return true;
     legacyFunMode = stored?.funMode === true;
     hallOfFame = mergeHallOfFame(parseHallOfFame(stored?.[HALL_OF_FAME_KEY]), []);
     state.settings = stored ? normalize(stored, DEFAULT_SETTINGS) : legacyDefaults();
@@ -145,6 +148,8 @@ function saveConfig(
   const run = configWrites.then(async () => {
     const keys = [...unsaved];
     unsaved.clear();
+    // Test mode: settings and the hall of fame change in this tab only (setTestMode saves the switch)
+    if (state.settings.testMode && !keys.includes("testMode")) return true;
     try {
       const stored = await fetchStoredConfig();
       const input = mergeConfig(stored, state.settings, keys, typeof extra === "function" ? extra(stored) : extra);
@@ -162,6 +167,27 @@ function saveConfig(
 
 function persistSettings(): Promise<boolean> {
   return saveConfig();
+}
+
+/**
+ * Turn test mode on or off. While it's on nothing Stash Battle does is written to Stash: ELO,
+ * records and Stash ratings change in this tab's scene cache only (rating.ts), and settings and
+ * the hall of fame in this tab's copies (saveConfig). Only the switch itself is saved, so it
+ * stays on after a reload. Turning it on first saves settings changed before it; turning it off
+ * saves the switch alone and reloads settings and the hall of fame from Stash. (The caller drops
+ * the scene cache, so the made-up ELO goes too.) Resolves false if saving failed.
+ */
+export async function setTestMode(on: boolean): Promise<boolean> {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (!on) unsaved.clear();
+  state.settings = { ...state.settings, testMode: on };
+  unsaved.add("testMode");
+  const saved = await saveConfig();
+  if (!on) await loadSettings();
+  return saved;
 }
 
 // ---------- Hall of fame (Stats → Records) ----------

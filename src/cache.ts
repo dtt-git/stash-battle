@@ -427,6 +427,8 @@ export function setRatingsInCache(ratings: Map<string, number | null>): void {
  * tab, say.
  */
 export function refreshSceneInCache(fresh: Scene): void {
+  // Test mode: the cache holds this tab's unsaved ELO, newer than what Stash has
+  if (state.settings.testMode && state.memoryCache.allScenes?.some((s) => s.id === fresh.id)) return;
   for (const pool of [state.memoryCache.allScenes, state.memoryCache.filteredScenes]) {
     const cached = pool?.find((s) => s.id === fresh.id);
     if (cached) cached.rating100 = fresh.rating100 ?? null;
@@ -444,7 +446,8 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
  * and its Stash rating sync are saved together.
  */
 function persistCacheSoon(): void {
-  if (typeof indexedDB === "undefined") return;
+  // Test mode's ELO is made up: a reload goes back to what's saved
+  if (typeof indexedDB === "undefined" || state.settings.testMode) return;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;

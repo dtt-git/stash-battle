@@ -100,6 +100,7 @@ Most are also under Stash's Settings → Plugins. Everything saves to Stash:
 - **Tier colours on card borders** – on by default
 - **Open scenes in a new tab** when clicking a thumbnail
 - **Clean mode** – a 🗑 button on each card opens Stash's own delete dialog (same options and defaults as deleting in Stash), so you can clean up without leaving the battle
+- **🧪 Test mode** – try things out without saving anything to Stash: ELO, records, Stash ratings and settings changes are forgotten when you turn it off or reload
 
 The **preview volume** slider sits on the tab bar (it follows perceived loudness); click the speaker to mute or unmute.
 
@@ -183,7 +184,7 @@ npm install
 | `npm run dev` | Watch `src/`, rebuild on save, and deploy the bundle + css + yml into your live Stash plugins folder (when `STASH_PLUGINS_DIR` is set in `.env`) |
 | `npm run typecheck` | Strict TypeScript type-check (`tsc --noEmit`) — esbuild does not type-check on its own. |
 | `npm test` | Unit tests (ELO math, Stash rating conversions, Placement search, tiers, stats, Explore, records, settings, rating sync) |
-| `npm run smoke` | Headless checks against your running Stash (a first install, an older Stash, battling one scene, a 20,000-scene library); nothing is written to Stash. Needs Chrome or Edge installed |
+| `npm run smoke` | Headless checks against your running Stash (a first install, an older Stash, battling one scene, test mode, a 20,000-scene library); nothing is written to Stash. Needs Chrome or Edge installed |
 | `npm run screenshots` | Retake the README screenshots (desktop and phone) from your running Stash, with placeholder titles and hidden thumbnails; nothing is written |
 
 ### Live development against Stash
