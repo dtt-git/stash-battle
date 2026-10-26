@@ -162,6 +162,22 @@ async function oneScene() {
   check(/Battling one scene/.test(opened), `opening on a scene page battles that scene${/Battling one scene/.test(opened) ? "" : ` (status: ${opened.replace(/:.*?·/, ": … ·")})`}`);
   await pick(page, "right");
   check((await left()) === id, "the scene page's scene stays after a pick");
+
+  // Looking at the opponent's page mid-battle keeps the pair and the scene being battled
+  const opponent = await page.evaluate(() => document.querySelector('.sb-scene-card[data-side="right"] [data-winner]')?.dataset.winner);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(800);
+  await page.evaluate((sceneId) => history.pushState({}, "", `/scenes/${sceneId}`), opponent);
+  await page.evaluate(() => {
+    const link = [...document.querySelectorAll("nav a, nav button")].find((e) => /Battle/.test(e.textContent));
+    (link || document.querySelector("#plugin_sb_icon button")).click();
+  });
+  await page.waitForFunction(() => !document.querySelector("#sb-modal")?.classList.contains("sb-modal-hidden"), null, { timeout: 30000 });
+  await page.waitForTimeout(1500);
+  const kept = await page.evaluate(() => [...document.querySelectorAll(".sb-scene-card [data-winner]")].map((e) => e.dataset.winner));
+  check(kept[0] === id && kept[1] === opponent, "opening on the opponent's page keeps the pair");
+  await pick(page, "right");
+  check((await left()) === id, "...and keeps battling the same scene");
   check(run.errors.length === 0, `no page errors${run.errors.length ? ":\n      " + run.errors.join("\n      ") : ""}`);
   await run.browser.close();
 }

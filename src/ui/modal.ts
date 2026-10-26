@@ -338,8 +338,9 @@ export async function openModal(): Promise<void> {
     state.currentPair = { left: null, right: null };
     state.currentRanks = { left: null, right: null };
   }
-  // Opened from a scene page: that scene keeps battling until Stop
-  if (scenePageId && state.explorePool?.sceneId !== scenePageId) {
+  // Opened from a scene page: that scene keeps battling until Stop. Not when it's already in the
+  // pair (its opponent's page, say, opened to look at the battle): then the pair and pool stay
+  if (forceSceneBattle && state.explorePool?.sceneId !== scenePageId) {
     state.leastTested = false;
     state.explorePool = oneScenePool(scenePageId);
     resetShuffle();

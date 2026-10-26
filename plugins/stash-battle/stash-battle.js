@@ -4920,7 +4920,7 @@
       state.currentPair = { left: null, right: null };
       state.currentRanks = { left: null, right: null };
     }
-    if (scenePageId && state.explorePool?.sceneId !== scenePageId) {
+    if (forceSceneBattle && state.explorePool?.sceneId !== scenePageId) {
       state.leastTested = false;
       state.explorePool = oneScenePool(scenePageId);
       resetShuffle();
