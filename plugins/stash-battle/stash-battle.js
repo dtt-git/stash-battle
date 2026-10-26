@@ -2511,7 +2511,7 @@
       scene,
       "📍",
       "PLACED!",
-      `${streakText}${from} → <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesText}${eloLine(scene, result.elo, result.startElo)}`,
+      `${streakText}${from} → <strong>#${rank}</strong>${battlesText}${eloLine(scene, result.elo, result.startElo)}`,
       "Start New Run"
     );
     finishRunShowEndScreen(html);

@@ -49,7 +49,7 @@ Key fields:
 | `state.championWins` | Its current win streak |
 | `state.championDefeated` | IDs of scenes it has beaten this run (no rematches) |
 | `state.placement` | The in-progress Placement run (`PlacementRun`), or `null` — see Placement Mode |
-| `state.totalScenesCount` | Size of the opponent pool (used for "Rank #X of Y" display) |
+| `state.totalScenesCount` | Size of the opponent pool (Champion's small-pool warning) |
 | `state.leftPoolSize` | Size of the left ("to rate") pool — filter or whole library — for the status line; `null` until pools load |
 | `state.settings` | User settings (`Settings` in `types.ts`), loaded from Stash's plugin config — see Settings |
 | `state.resettingElo` | Reset ELO's setup screen is showing (battles wait, like a first setup) |
@@ -171,7 +171,7 @@ else → opponentPool = allScenes with an ELO (isRated)
 **Exception**: When `filterOpponents` is true and a filter is active, the filtered pool is used as-is for both sides — unrated scenes may appear on the right if the filter includes them (they sort last). Intentional for filtering on unrated scenes on both sides.
 
 ### `totalScenesCount`
-Set from `opponentPool.length` (not `allScenes.length`), so the "Rank #X of Y" display is consistent with the pool the ranks come from.
+Set from `opponentPool.length` (not `allScenes.length`), for Champion's small-pool warning. (The Placement end screen used to show it as "#45 of 485"; it now shows only where the scene started and landed, since the pool leaves out unrated scenes and didn't match the library count above the cards.)
 
 ---
 
@@ -382,7 +382,7 @@ Finds a scene's spot with as few battles as possible — a bounded search with m
 
 - Ignores the scene's ELO: the first opponent is the bottom rated scene of the pool (`bottomIndex`), then it gallops upward with the same capped doubling.
 - `streak` counts wins before the first loss (it grows only while `streak === battles`); the card shows "🔥 N wins" until then, then the narrowing badge.
-- A climb that never loses lands at slot 0: **victory screen** ("Reached the top from #227: N wins in a row!"). Otherwise the placed screen shows the streak, where the scene was and where it landed ("#120 → **#45** of 600", or "Unrated → **#45**"), battles, and "ELO: 1520 → **1610**". The done result carries `startRank` / `startElo`: the scene's place in the opponent pool (with it) and ELO when it lands, which is where it was before the run, since nothing else moves during one (null when unrated).
+- A climb that never loses lands at slot 0: **victory screen** ("Reached the top from #227: N wins in a row!"). Otherwise the placed screen shows the streak, where the scene was and where it landed ("#120 → **#45**", or "Unrated → **#45**"), battles, and "ELO: 1520 → **1610**". The done result carries `startRank` / `startElo`: the scene's place in the opponent pool (with it) and ELO when it lands, which is where it was before the run, since nothing else moves during one (null when unrated).
 - Changing the setting mid-run restarts that scene's run from the new start (`onSettingChanged` in `modal.ts`); nothing is written before a scene lands.
 - Cost on a 600-scene pool: 8 battles near the bottom, ~17-21 for the middle and top, 21 to beat #1 (average 17.0, worst 21).
 
@@ -688,7 +688,7 @@ All data comes from Stash's GraphQL API:
 
 7. **Placement ties**: scenes inside an ELO tie group are interchangeable as opponents, and a result counts for the opponent's whole group (`placementBounds` snaps to the group's edge). A scene can only get an ELO above or below a group, not inside it, so this keeps the landing ELO strictly between its neighbours and the shown rank true. Right after "Start everyone at 1500" the whole library is one group, so a Placement run takes one battle and lands at 1525 or 1475; it gets useful once Swiss has spread ELO out.
 
-8. **Pool size for rank display**: `totalScenesCount` comes from `opponentPool.length`, not `allScenes.length`.
+8. **Pool size**: `totalScenesCount` comes from `opponentPool.length`, not `allScenes.length`.
 
 9. **Scene page battle with an active run**: opening Stash Battle from a scene page resets the run if the scene isn't already in the pair, so a forced scene can't corrupt a Champion or Placement run.
 

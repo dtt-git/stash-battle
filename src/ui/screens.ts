@@ -111,13 +111,13 @@ export function showPlacementScreen(result: Extract<PlacementPairResult, { done:
   const { scene, rank, battles, streak, fromBottom, startRank } = result;
   const streakText = fromBottom && streak > 0 ? `🔥 ${streak} win streak · ` : "";
   const battlesText = battles ? ` · ${battles} battle${battles === 1 ? "" : "s"}` : "";
-  // "#120 → #45 of 600": where it was before the run, then where it landed
+  // "#120 → #45": where it was before the run, then where it landed
   const from = startRank === null ? "Unrated" : `#${startRank}`;
   const html = buildEndScreenHtml(
     scene,
     "📍",
     "PLACED!",
-    `${streakText}${from} → <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesText}${eloLine(scene, result.elo, result.startElo)}`,
+    `${streakText}${from} → <strong>#${rank}</strong>${battlesText}${eloLine(scene, result.elo, result.startElo)}`,
     "Start New Run",
   );
 
