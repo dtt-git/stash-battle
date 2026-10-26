@@ -18,10 +18,11 @@ const ICON_ID = "plugin_sb_icon";
 const NAV_ITEM_CLASS = "col-4 col-sm-3 col-md-2 col-lg-auto nav-link";
 const LINK_CLASS =
   "minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center btn btn-primary";
-const LINK_HTML = `
-            <svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">${SWORDS_PATHS}</svg>
-            <span>Battle</span>
-        `;
+// No whitespace between the icon and the label: on wide screens the icon is inline, and a space
+// would sit between them that Stash's own links don't have
+const LINK_HTML =
+  `<svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">${SWORDS_PATHS}</svg>` +
+  `<span>Battle</span>`;
 
 function onButtonClick(e: { preventDefault(): void }): void {
   e.preventDefault();
