@@ -18,8 +18,9 @@ import {
 } from "../explore";
 import { updateSettings } from "../settings";
 import { isEloSetupPending, state } from "../state";
-import { tierMap } from "../stats";
+import { tierDescription, tierMap } from "../stats";
 import { handleSceneLinkClick, isTouchDevice } from "./mainUI";
+import { PROVISIONAL_TIP } from "./sceneCard";
 import { escapeHtml, handleMiniMuteTap, handleMiniThumbTap, miniCardHtml, miniPreviewCard, startMiniPreview, stopMiniPreview } from "./miniCard";
 import { resolveSceneTitle } from "../sceneTitle";
 import type { StatsActions } from "./statsTab";
@@ -78,13 +79,14 @@ function pageCount(): number {
 }
 
 function controlsHtml(): string {
-  const groups: { value: string; label: string }[] = [
-    ...TIERS.map((t) => ({ value: t.id, label: `${t.emoji} ${t.name}` })),
-    { value: "provisional", label: "Provisional" },
-    { value: "unrated", label: "Unrated" },
+  // Each chip's tooltip is the one its cards' pills have
+  const groups: { value: string; label: string; tip: string }[] = [
+    ...TIERS.map((t) => ({ value: t.id, label: `${t.emoji} ${t.name}`, tip: tierDescription(t) })),
+    { value: "provisional", label: "Provisional", tip: PROVISIONAL_TIP },
+    { value: "unrated", label: "Unrated", tip: "No ELO yet" },
   ];
-  const chip = (value: string | null, label: string): string =>
-    `<button type="button" class="sb-chip${filters.group === value ? " active" : ""}" data-group="${value ?? ""}">${label}</button>`;
+  const chip = (value: string | null, label: string, tip = ""): string =>
+    `<button type="button" class="sb-chip${filters.group === value ? " active" : ""}" data-group="${value ?? ""}"${tip ? ` title="${tip}"` : ""}>${label}</button>`;
   const number = (value: number | null): string => (value === null ? "" : String(value));
   return `
         <div class="sb-explore-controls">
@@ -95,7 +97,7 @@ function controlsHtml(): string {
             </select>
           </div>
           <div class="sb-explore-row sb-explore-row-wrap">
-            <div class="sb-chips">${chip(null, "All")}${groups.map((g) => chip(g.value, g.label)).join("")}</div>
+            <div class="sb-chips">${chip(null, "All")}${groups.map((g) => chip(g.value, g.label, g.tip)).join("")}</div>
             <div class="sb-explore-range">
               <span>ELO</span>
               <input type="number" class="sb-explore-input sb-explore-elo" data-bound="min" placeholder="from" value="${number(filters.eloMin)}" aria-label="Lowest ELO">
