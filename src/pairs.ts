@@ -112,9 +112,12 @@ async function loadScenePools(
   let allScenes: Scene[];
 
   if (state.explorePool) {
-    // An Explore filter, worked out again each time (scenes join and leave it as ELO changes)
+    // One scene, or an Explore filter worked out again each time (scenes join and leave it as ELO changes)
     allScenes = (await getAllScenesCached()).scenes || [];
-    leftPool = explorePoolScenes(allScenes, state.explorePool.filters, resolveSceneTitle);
+    const { sceneId, filters: poolFilters } = state.explorePool;
+    leftPool = sceneId
+      ? allScenes.filter((s) => s.id === sceneId)
+      : explorePoolScenes(allScenes, poolFilters, resolveSceneTitle);
   } else if (filters.filterActive) {
     // Re-query the filter after each full pass so filters like "unrated" shrink as scenes get rated
     const passComplete = isShuffleCycleComplete(filters.filterKey);
@@ -172,10 +175,13 @@ export async function leastTestedSource(): Promise<{ scenes: Scene[]; filtered: 
   return { scenes: (await getFilteredScenesCached(filters)).scenes || [], filtered: true };
 }
 
-/** The active filter: an Explore filter being battled, or else the Scenes page's (URL) filter. */
+/** The active filter: one scene or an Explore filter being battled, or else the Scenes page's (URL) filter. */
 export function currentFilters(): ListFilters {
   const pool = state.explorePool;
-  if (pool) return { filterKey: `explore:${JSON.stringify(pool.filters)}`, sceneFilter: null, filterActive: true };
+  if (pool) {
+    const filterKey = pool.sceneId ? `scene:${pool.sceneId}` : `explore:${JSON.stringify(pool.filters)}`;
+    return { filterKey, sceneFilter: null, filterActive: true };
+  }
   return readFilters();
 }
 

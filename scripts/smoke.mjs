@@ -3,6 +3,7 @@
 //
 //   npm run smoke                   all checks
 //   npm run smoke -- fresh          a first install: setup (both starts), picks, undo, every mode and tab
+//   npm run smoke -- one            battling one scene until Stop (Explore's ⚔️, a scene page)
 //   npm run smoke -- old            a Stash without scene custom fields shows the "newer Stash" message
 //   npm run smoke -- big [size]     a synthetic library (default 20,000 scenes), with timings
 //
@@ -114,6 +115,57 @@ async function old() {
   await run.browser.close();
 }
 
+// ---------- battling one scene until Stop ----------
+
+async function oneScene() {
+  console.log("\none scene: Explore's ⚔️ and a scene page");
+  const run = await launch({
+    mode: "big",
+    size: 2000,
+    config: { eloSetupAt: new Date().toISOString(), eloSetupMode: "ratings", stashRatings: "off" },
+  });
+  const { page } = run;
+  const left = () => page.evaluate(() => document.querySelector('.sb-scene-card[data-side="left"] [data-winner]')?.dataset.winner);
+  const status = () => page.evaluate(() => document.querySelector("#sb-pool-status")?.innerText || "");
+  await openStashBattle(page);
+  await twoCards(page);
+
+  await showTab(page, "Explore");
+  const id = await page.evaluate(() => document.querySelector(".sb-mini-battle")?.dataset.battle);
+  await page.click(".sb-mini-battle");
+  await twoCards(page);
+  check(/Battling one scene/.test(await status()), "Explore's ⚔️ says it's battling one scene");
+  let stayed = (await left()) === id;
+  for (let i = 0; i < 3; i++) {
+    await pick(page, i % 2 ? "left" : "right");
+    stayed &&= (await left()) === id;
+  }
+  check(stayed, "the scene stays on the left pick after pick");
+  await page.click('#sb-pool-status [data-action="stop-explore-pool"]');
+  await page.waitForTimeout(500);
+  await twoCards(page);
+  check(!/Battling one scene/.test(await status()), "Stop goes back to the whole library");
+
+  // As if opened on that scene's page (Stash's page itself isn't loaded: only the URL matters)
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(800);
+  await page.evaluate((sceneId) => history.pushState({}, "", `/scenes/${sceneId}`), id);
+  await page.evaluate(() => {
+    const link = [...document.querySelectorAll("nav a, nav button")].find((e) => /Battle/.test(e.textContent));
+    (link || document.querySelector("#plugin_sb_icon button")).click();
+  });
+  // The hidden modal still holds the last pair: wait for it to open again
+  await page.waitForFunction(() => !document.querySelector("#sb-modal")?.classList.contains("sb-modal-hidden"), null, { timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await twoCards(page);
+  const opened = await status();
+  check(/Battling one scene/.test(opened), `opening on a scene page battles that scene${/Battling one scene/.test(opened) ? "" : ` (status: ${opened.replace(/:.*?·/, ": … ·")})`}`);
+  await pick(page, "right");
+  check((await left()) === id, "the scene page's scene stays after a pick");
+  check(run.errors.length === 0, `no page errors${run.errors.length ? ":\n      " + run.errors.join("\n      ") : ""}`);
+  await run.browser.close();
+}
+
 // ---------- a big library ----------
 
 async function timed(page, label, action, done, results) {
@@ -194,6 +246,7 @@ if (which === "all" || which === "fresh") {
   await fresh("fresh", "percentile");
 }
 if (which === "all" || which === "old") await old();
+if (which === "all" || which === "one") await oneScene();
 if (which === "all" || which === "big") await big(bigSize);
 
 const diff = snapshotDiff(before, await stashSnapshot());

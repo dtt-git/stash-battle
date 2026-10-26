@@ -7,7 +7,7 @@ import { getSceneIdFromUrl, holdStashListRefresh, sceneCustomFieldsSupported } f
 import { applyStashRatings, queueRatingWrite, SCENE_MISSING_EVENT, scheduleStashRatingSync, writeStashRatings } from "../rating";
 import { stashRatingChanges } from "../score";
 import { clearHallOfFame, getHallOfFame, loadSettings } from "../settings";
-import { isEloSetupPending, resetRunState, resetShuffle, state } from "../state";
+import { isEloSetupPending, oneScenePool, resetRunState, resetShuffle, state } from "../state";
 import { loadState, saveState } from "../storage";
 import type { Mode, Settings, StashRatingsMode } from "../types";
 import { cancelConfirmDialog, confirmDialog, isConfirmDialogOpen } from "./confirmDialog";
@@ -176,9 +176,12 @@ function statsActions(modal: HTMLElement): StatsActions {
     applyPreviewSettings();
   };
   return {
-    // Like opening Stash Battle from the scene's page: a new battle with it, in the current mode
+    // Like opening Stash Battle from the scene's page: the scene battles, in the current mode,
+    // until stopped
     battleScene: (sceneId) => {
       state.leastTested = false;
+      state.explorePool = oneScenePool(sceneId);
+      resetShuffle();
       toBattle();
       void loadNewPair(sceneId);
     },
@@ -220,7 +223,7 @@ function statsActions(modal: HTMLElement): StatsActions {
   };
 }
 
-/** Explore → "Battle these" Stop link: back to the Scenes page filter (or the whole library). */
+/** Stop link for a battled Explore filter or scene: back to the Scenes page filter (or the whole library). */
 function stopExplorePool(): void {
   state.explorePool = null;
   resetShuffle();
@@ -335,6 +338,12 @@ export async function openModal(): Promise<void> {
     state.currentPair = { left: null, right: null };
     state.currentRanks = { left: null, right: null };
   }
+  // Opened from a scene page: that scene keeps battling until Stop
+  if (scenePageId && state.explorePool?.sceneId !== scenePageId) {
+    state.leastTested = false;
+    state.explorePool = oneScenePool(scenePageId);
+    resetShuffle();
+  }
 
   // Check for existing hidden modal - reuse it (unless it's a message modal, see showMessageModal)
   const existingModal = document.getElementById("sb-modal");
@@ -368,6 +377,8 @@ export async function openModal(): Promise<void> {
       return;
     }
     hideSetupScreen(existingModal);
+    // A scene page may have started battling its scene, even if the pair on screen stays
+    updatePoolStatus();
 
     // If filters changed, no pair, or forced scene, load new content
     if (forceSceneBattle) {

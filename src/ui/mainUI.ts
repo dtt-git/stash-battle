@@ -20,9 +20,11 @@ import { battles, effectiveElo, eloFields, kGames } from "../score";
 import { getHallOfFame, keepOnlyHallOfFame } from "../settings";
 import { explorePoolWithin, isEloSetupPending, isRunActive, resetRunState, resetShuffle, state } from "../state";
 import { cachedTierMap } from "../stats";
+import { resolveSceneTitle } from "../sceneTitle";
 import { saveState } from "../storage";
 import type { EloFields, Mode, PlacementRun, Rank, Scene, Tier } from "../types";
 import { confirmDeleteScene } from "./deleteDialog";
+import { escapeHtml } from "./miniCard";
 import { createSceneCard } from "./sceneCard";
 import { showPlacementScreen, showVictoryScreen } from "./screens";
 import { createSettingsTab, createTabBar, getActiveTab } from "./settingsPanel";
@@ -149,7 +151,11 @@ export function updatePoolStatus(): void {
     count === null ? "" : ` · <strong>${count} scene${count === 1 ? "" : "s"}</strong>`;
 
   const pool = state.explorePool;
-  if (pool) {
+  if (pool?.sceneId) {
+    const scene = state.memoryCache.allScenes?.find((s) => s.id === pool.sceneId);
+    const name = scene ? `: <strong>${escapeHtml(resolveSceneTitle(scene))}</strong>` : "";
+    status.innerHTML = `Battling one scene${name} · against your whole library · <a href="#" data-action="stop-explore-pool">Stop</a>`;
+  } else if (pool) {
     const against = explorePoolWithin() ? "against each other" : "against your whole library";
     status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
   } else if (state.leastTested) {

@@ -865,9 +865,12 @@
   }
 
   // src/state.ts
+  function oneScenePool(sceneId) {
+    return { filters: { ...DEFAULT_EXPLORE_FILTERS }, label: "", sceneId };
+  }
   function explorePoolWithin() {
     const pool = state.explorePool;
-    return pool !== null && filterBattlesWithin(pool.filters, state.settings.filterOpponents);
+    return pool !== null && !pool.sceneId && filterBattlesWithin(pool.filters, state.settings.filterOpponents);
   }
   var state = {
     currentPair: { left: null, right: null },
@@ -2017,7 +2020,8 @@
     let allScenes;
     if (state.explorePool) {
       allScenes = (await getAllScenesCached()).scenes || [];
-      leftPool = explorePoolScenes(allScenes, state.explorePool.filters, resolveSceneTitle);
+      const { sceneId, filters: poolFilters } = state.explorePool;
+      leftPool = sceneId ? allScenes.filter((s) => s.id === sceneId) : explorePoolScenes(allScenes, poolFilters, resolveSceneTitle);
     } else if (filters2.filterActive) {
       const passComplete = isShuffleCycleComplete(filters2.filterKey);
       if (passComplete) {
@@ -2061,7 +2065,10 @@
   }
   function currentFilters() {
     const pool = state.explorePool;
-    if (pool) return { filterKey: `explore:${JSON.stringify(pool.filters)}`, sceneFilter: null, filterActive: true };
+    if (pool) {
+      const filterKey = pool.sceneId ? `scene:${pool.sceneId}` : `explore:${JSON.stringify(pool.filters)}`;
+      return { filterKey, sceneFilter: null, filterActive: true };
+    }
     return readFilters();
   }
   async function buildSwissPools() {
@@ -2307,6 +2314,111 @@
         </div>
       </div>
     `;
+  }
+
+  // src/ui/miniCard.ts
+  function escapeHtml(text) {
+    return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  }
+  function plural(n, word) {
+    return `${n} ${word}${n === 1 ? "" : "s"}`;
+  }
+  function sceneUrl(sceneId) {
+    return `/scenes/${sceneId}${scenesListQuery()}`;
+  }
+  function miniCardHtml(entry, link = true) {
+    const { scene, rank, tier } = entry;
+    const title = escapeHtml(resolveSceneTitle(scene) || `Scene ${scene.id}`);
+    const value = elo(scene);
+    const provisional = isProvisional(scene);
+    const eloText = value === null ? "Unrated" : `ELO ${Math.round(value)}${provisional ? "?" : ""}${rank !== null ? ` · #${rank}` : ""}`;
+    const screenshot = scene.paths?.screenshot;
+    const thumb = screenshot ? `<img class="sb-mini-img pwr-scene-image" src="${screenshot}" alt="" loading="lazy" />` : `<div class="sb-mini-img sb-no-image">No Screenshot</div>`;
+    const plays = scene.play_count ?? 0;
+    const body = `
+          <div class="sb-mini-thumb pwr-scene-image-container">${thumb}</div>
+          <div class="sb-mini-body pwr-scene-info">
+            <div class="sb-mini-title" title="${title}">${title}</div>
+            <div class="sb-mini-elo">${tier ? tierPill(tier) : ""}<span class="sb-mini-rank"${provisional ? ` title="${PROVISIONAL_TIP}"` : ""}>${eloText}</span></div>
+            <div class="sb-mini-meta">${plural(plays, "play")} · ${recordText(scene) ?? plural(battles(scene), "battle")}</div>
+          </div>`;
+    const tierAttrs = tier ? ` sb-tier-${tier.id}" data-tier="${tier.id}` : "";
+    const preview = scene.paths?.preview ? ` data-preview="${scene.paths.preview}"` : "";
+    if (!link) return `<div class="sb-mini-card sb-mini-static${tierAttrs}">${body}</div>`;
+    const target = state.settings.openInNewTab ? ` target="_blank" rel="noopener"` : "";
+    return `
+        <div class="sb-mini-card${tierAttrs}" data-scene-id="${scene.id}"${preview}>
+          <a class="sb-mini-link" href="${sceneUrl(scene.id)}"${target}>${body}</a>${scene.paths?.preview ? `<div class="sb-mini-overlay"><button type="button" class="sb-card-mute sb-mini-mute" aria-label="Play this preview with sound">🔇</button></div>` : ""}
+          <button type="button" class="sb-mini-battle" data-battle="${scene.id}" title="Battle this scene">⚔️</button>
+        </div>`;
+  }
+  var previewCard = null;
+  function startMiniPreview(card) {
+    if (card === previewCard) return;
+    stopMiniPreview();
+    const src = card.dataset.preview;
+    const thumb = card.querySelector(".sb-mini-thumb");
+    if (!src || !thumb) return;
+    previewCard = card;
+    const video = document.createElement("video");
+    video.className = "sb-mini-video pwr-hover-preview";
+    video.src = src;
+    video.volume = sliderToVolume(state.settings.previewVolume);
+    video.muted = state.settings.previewVolume === 0;
+    video.loop = true;
+    video.playsInline = true;
+    thumb.appendChild(video);
+    video.play().catch(() => {
+    });
+    updateMiniMuteIcons();
+  }
+  function stopMiniPreview() {
+    previewCard?.querySelector(".sb-mini-video")?.remove();
+    previewCard = null;
+    updateMiniMuteIcons();
+  }
+  function updateMiniMuteIcons() {
+    document.querySelectorAll(".sb-mini-mute").forEach((button) => {
+      const card = button.closest(".sb-mini-card");
+      const video = card && card === previewCard ? card.querySelector(".sb-mini-video") : null;
+      const heard = video !== null && !video.muted;
+      button.textContent = heard ? "🔊" : "🔇";
+      button.setAttribute("aria-label", heard ? "Mute this preview" : "Play this preview with sound");
+    });
+  }
+  function handleMiniMuteTap(e) {
+    const button = e.target.closest(".sb-mini-mute");
+    if (!button) return false;
+    e.preventDefault();
+    const card = button.closest(".sb-mini-card[data-preview]");
+    if (!card) return true;
+    const video = card === previewCard ? card.querySelector(".sb-mini-video") : null;
+    if (video && !video.muted) {
+      video.muted = true;
+    } else {
+      if (state.settings.previewVolume === 0) document.querySelector(".sb-volume-icon")?.click();
+      if (video) {
+        video.volume = sliderToVolume(state.settings.previewVolume);
+        video.muted = false;
+      } else {
+        startMiniPreview(card);
+      }
+    }
+    updateMiniMuteIcons();
+    return true;
+  }
+  function handleMiniThumbTap(e) {
+    if (!isTouchDevice()) return false;
+    const thumb = e.target.closest(".sb-mini-thumb");
+    const card = thumb?.closest(".sb-mini-card[data-preview]");
+    if (!card) return false;
+    e.preventDefault();
+    if (previewCard === card) stopMiniPreview();
+    else startMiniPreview(card);
+    return true;
+  }
+  function miniPreviewCard() {
+    return previewCard;
   }
 
   // src/ui/screens.ts
@@ -2609,111 +2721,6 @@
         onTabChange(tab);
       });
     });
-  }
-
-  // src/ui/miniCard.ts
-  function escapeHtml(text) {
-    return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-  }
-  function plural(n, word) {
-    return `${n} ${word}${n === 1 ? "" : "s"}`;
-  }
-  function sceneUrl(sceneId) {
-    return `/scenes/${sceneId}${scenesListQuery()}`;
-  }
-  function miniCardHtml(entry, link = true) {
-    const { scene, rank, tier } = entry;
-    const title = escapeHtml(resolveSceneTitle(scene) || `Scene ${scene.id}`);
-    const value = elo(scene);
-    const provisional = isProvisional(scene);
-    const eloText = value === null ? "Unrated" : `ELO ${Math.round(value)}${provisional ? "?" : ""}${rank !== null ? ` · #${rank}` : ""}`;
-    const screenshot = scene.paths?.screenshot;
-    const thumb = screenshot ? `<img class="sb-mini-img pwr-scene-image" src="${screenshot}" alt="" loading="lazy" />` : `<div class="sb-mini-img sb-no-image">No Screenshot</div>`;
-    const plays = scene.play_count ?? 0;
-    const body = `
-          <div class="sb-mini-thumb pwr-scene-image-container">${thumb}</div>
-          <div class="sb-mini-body pwr-scene-info">
-            <div class="sb-mini-title" title="${title}">${title}</div>
-            <div class="sb-mini-elo">${tier ? tierPill(tier) : ""}<span class="sb-mini-rank"${provisional ? ` title="${PROVISIONAL_TIP}"` : ""}>${eloText}</span></div>
-            <div class="sb-mini-meta">${plural(plays, "play")} · ${recordText(scene) ?? plural(battles(scene), "battle")}</div>
-          </div>`;
-    const tierAttrs = tier ? ` sb-tier-${tier.id}" data-tier="${tier.id}` : "";
-    const preview = scene.paths?.preview ? ` data-preview="${scene.paths.preview}"` : "";
-    if (!link) return `<div class="sb-mini-card sb-mini-static${tierAttrs}">${body}</div>`;
-    const target = state.settings.openInNewTab ? ` target="_blank" rel="noopener"` : "";
-    return `
-        <div class="sb-mini-card${tierAttrs}" data-scene-id="${scene.id}"${preview}>
-          <a class="sb-mini-link" href="${sceneUrl(scene.id)}"${target}>${body}</a>${scene.paths?.preview ? `<div class="sb-mini-overlay"><button type="button" class="sb-card-mute sb-mini-mute" aria-label="Play this preview with sound">🔇</button></div>` : ""}
-          <button type="button" class="sb-mini-battle" data-battle="${scene.id}" title="Battle this scene">⚔️</button>
-        </div>`;
-  }
-  var previewCard = null;
-  function startMiniPreview(card) {
-    if (card === previewCard) return;
-    stopMiniPreview();
-    const src = card.dataset.preview;
-    const thumb = card.querySelector(".sb-mini-thumb");
-    if (!src || !thumb) return;
-    previewCard = card;
-    const video = document.createElement("video");
-    video.className = "sb-mini-video pwr-hover-preview";
-    video.src = src;
-    video.volume = sliderToVolume(state.settings.previewVolume);
-    video.muted = state.settings.previewVolume === 0;
-    video.loop = true;
-    video.playsInline = true;
-    thumb.appendChild(video);
-    video.play().catch(() => {
-    });
-    updateMiniMuteIcons();
-  }
-  function stopMiniPreview() {
-    previewCard?.querySelector(".sb-mini-video")?.remove();
-    previewCard = null;
-    updateMiniMuteIcons();
-  }
-  function updateMiniMuteIcons() {
-    document.querySelectorAll(".sb-mini-mute").forEach((button) => {
-      const card = button.closest(".sb-mini-card");
-      const video = card && card === previewCard ? card.querySelector(".sb-mini-video") : null;
-      const heard = video !== null && !video.muted;
-      button.textContent = heard ? "🔊" : "🔇";
-      button.setAttribute("aria-label", heard ? "Mute this preview" : "Play this preview with sound");
-    });
-  }
-  function handleMiniMuteTap(e) {
-    const button = e.target.closest(".sb-mini-mute");
-    if (!button) return false;
-    e.preventDefault();
-    const card = button.closest(".sb-mini-card[data-preview]");
-    if (!card) return true;
-    const video = card === previewCard ? card.querySelector(".sb-mini-video") : null;
-    if (video && !video.muted) {
-      video.muted = true;
-    } else {
-      if (state.settings.previewVolume === 0) document.querySelector(".sb-volume-icon")?.click();
-      if (video) {
-        video.volume = sliderToVolume(state.settings.previewVolume);
-        video.muted = false;
-      } else {
-        startMiniPreview(card);
-      }
-    }
-    updateMiniMuteIcons();
-    return true;
-  }
-  function handleMiniThumbTap(e) {
-    if (!isTouchDevice()) return false;
-    const thumb = e.target.closest(".sb-mini-thumb");
-    const card = thumb?.closest(".sb-mini-card[data-preview]");
-    if (!card) return false;
-    e.preventDefault();
-    if (previewCard === card) stopMiniPreview();
-    else startMiniPreview(card);
-    return true;
-  }
-  function miniPreviewCard() {
-    return previewCard;
   }
 
   // src/ui/exploreTab.ts
@@ -3578,7 +3585,11 @@
     const count = state.leftPoolSize;
     const countHtml = count === null ? "" : ` · <strong>${count} scene${count === 1 ? "" : "s"}</strong>`;
     const pool = state.explorePool;
-    if (pool) {
+    if (pool?.sceneId) {
+      const scene = state.memoryCache.allScenes?.find((s) => s.id === pool.sceneId);
+      const name = scene ? `: <strong>${escapeHtml(resolveSceneTitle(scene))}</strong>` : "";
+      status.innerHTML = `Battling one scene${name} · against your whole library · <a href="#" data-action="stop-explore-pool">Stop</a>`;
+    } else if (pool) {
       const against = explorePoolWithin() ? "against each other" : "against your whole library";
       status.innerHTML = `Battling from Explore: <strong>${pool.label}</strong>${countHtml} · ${against} · <a href="#" data-action="stop-explore-pool">Stop</a>`;
     } else if (state.leastTested) {
@@ -4779,9 +4790,12 @@
       applyPreviewSettings();
     };
     return {
-      // Like opening Stash Battle from the scene's page: a new battle with it, in the current mode
+      // Like opening Stash Battle from the scene's page: the scene battles, in the current mode,
+      // until stopped
       battleScene: (sceneId) => {
         state.leastTested = false;
+        state.explorePool = oneScenePool(sceneId);
+        resetShuffle();
         toBattle();
         void loadNewPair(sceneId);
       },
@@ -4906,6 +4920,11 @@
       state.currentPair = { left: null, right: null };
       state.currentRanks = { left: null, right: null };
     }
+    if (scenePageId && state.explorePool?.sceneId !== scenePageId) {
+      state.leastTested = false;
+      state.explorePool = oneScenePool(scenePageId);
+      resetShuffle();
+    }
     const existingModal = document.getElementById("sb-modal");
     if (existingModal && existingModal.classList.contains("sb-modal-hidden") && existingModal.querySelector("#stash-battle-container")) {
       console.log("[Stash Battle] ♻️ Reusing existing modal");
@@ -4925,6 +4944,7 @@
         return;
       }
       hideSetupScreen(existingModal);
+      updatePoolStatus();
       if (forceSceneBattle) {
         loadNewPair(scenePageId);
       } else if (filtersChanged) {
@@ -5170,10 +5190,7 @@
   var ICON_ID = "plugin_sb_icon";
   var NAV_ITEM_CLASS = "col-4 col-sm-3 col-md-2 col-lg-auto nav-link";
   var LINK_CLASS = "minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center btn btn-primary";
-  var LINK_HTML = `
-            <svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">${SWORDS_PATHS}</svg>
-            <span>Battle</span>
-        `;
+  var LINK_HTML = `<svg aria-hidden="true" focusable="false" class="svg-inline--fa fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">${SWORDS_PATHS}</svg><span>Battle</span>`;
   function onButtonClick(e) {
     e.preventDefault();
     void openModal();

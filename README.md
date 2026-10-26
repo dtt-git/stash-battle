@@ -60,7 +60,7 @@ Apply any filters on the Scenes page before opening Stash Battle. What you see o
 
 ### 🔎 Explore
 
-Your whole library as small cards ranked by ELO. Search by title, studio or performer, filter by tier, provisional or unrated, pick an ELO range, and sort by ELO, plays, battles, best record, highest peak or longest win streak. Hover a card for its preview, click it to open the scene, or ⚔️ to battle it. **Battle these N scenes** battles everything the filter shows (unrated scenes go straight to Placement) until you press Stop.
+Your whole library as small cards ranked by ELO. Search by title, studio or performer, filter by tier, provisional or unrated, pick an ELO range, and sort by ELO, plays, battles, best record, highest peak or longest win streak. Hover a card for its preview, click it to open the scene, or ⚔️ to keep battling it until you press Stop. **Battle these N scenes** battles everything the filter shows (unrated scenes go straight to Placement) until you press Stop.
 
 <img width="600" alt="Explore tab: small scene cards with tier pills and ELO, search, tier filters, ELO range, sort and page controls" src="docs/screenshots/explore.png" />
 
@@ -140,7 +140,7 @@ Recommend saving a backup of your database beforehand (Settings → Tasks → Ba
 5. Click a scene (or press ← / →) to pick the winner; Space skips the pair, and ↶ Undo (Backspace) takes back a pick
 6. Watch your rankings evolve over time in **Explore**, **Stats** and **Records**!
 
-You can also open Stash Battle on a scene page (the **⚔️ Battle** button, or the ELO next to the play count), which puts that scene into a battle right away.
+You can also open Stash Battle on a scene page (the **⚔️ Battle** button, or the ELO next to the play count), which keeps battling that scene until you press Stop.
 
 ## How It Works
 
@@ -183,7 +183,7 @@ npm install
 | `npm run dev` | Watch `src/`, rebuild on save, and deploy the bundle + css + yml into your live Stash plugins folder (when `STASH_PLUGINS_DIR` is set in `.env`) |
 | `npm run typecheck` | Strict TypeScript type-check (`tsc --noEmit`) — esbuild does not type-check on its own. |
 | `npm test` | Unit tests (ELO math, Stash rating conversions, Placement search, tiers, stats, Explore, records, settings, rating sync) |
-| `npm run smoke` | Headless checks against your running Stash (a first install, an older Stash, a 20,000-scene library); nothing is written to Stash. Needs Chrome or Edge installed |
+| `npm run smoke` | Headless checks against your running Stash (a first install, an older Stash, battling one scene, a 20,000-scene library); nothing is written to Stash. Needs Chrome or Edge installed |
 | `npm run screenshots` | Retake the README screenshots (desktop and phone) from your running Stash, with placeholder titles and hidden thumbnails; nothing is written |
 
 ### Live development against Stash

@@ -5,20 +5,30 @@
 // mutable values live on this single `state` object that every module imports.
 
 import { DEFAULT_SETTINGS } from "./constants";
-import { filterBattlesWithin, type ExploreFilters } from "./explore";
+import { DEFAULT_EXPLORE_FILTERS, filterBattlesWithin, type ExploreFilters } from "./explore";
 import type { Mode, Pair, PlacementRun, Ranks, Scene, Settings } from "./types";
 
-/** An Explore filter being battled (see filterBattlesWithin for who battles whom). */
+/**
+ * What's battled until Stop in place of the Scenes page filter: an Explore filter (see
+ * filterBattlesWithin for who battles whom), or one scene (its ⚔️, or opened from its page).
+ */
 export interface ExplorePool {
   filters: ExploreFilters;
   /** "👑 Legendary · ELO 1600–1700", for the note above the cards. */
   label: string;
+  /** Set when battling one scene: it's the whole pool, against your whole library (`filters` unused). */
+  sceneId?: string;
+}
+
+/** One scene, battled until Stop (it keeps coming back on the left). */
+export function oneScenePool(sceneId: string): ExplorePool {
+  return { filters: { ...DEFAULT_EXPLORE_FILTERS }, label: "", sceneId };
 }
 
 /** The battled Explore filter's scenes are on both sides (read each pick, so the setting applies at once). */
 export function explorePoolWithin(): boolean {
   const pool = state.explorePool;
-  return pool !== null && filterBattlesWithin(pool.filters, state.settings.filterOpponents);
+  return pool !== null && !pool.sceneId && filterBattlesWithin(pool.filters, state.settings.filterOpponents);
 }
 
 export interface MemoryCache {
@@ -47,7 +57,7 @@ export interface BattleState {
   settings: Settings;
   resettingElo: boolean; // Reset ELO's setup screen is showing (battles wait, like a first setup)
   leastTested: boolean; // Stats → "Battle the least-tested": Swiss takes the fewest-battled scene on the left
-  explorePool: ExplorePool | null; // Explore → "Battle these": the filter's scenes replace the Scenes page filter
+  explorePool: ExplorePool | null; // Explore → "Battle these", or one scene: replaces the Scenes page filter
   // Shuffle state for the left-side pool (prevents repeats when skipping)
   shuffledFilteredScenes: Scene[];
   shuffleIndex: number;
