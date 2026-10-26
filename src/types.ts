@@ -159,7 +159,18 @@ export interface PlacementRun {
 
 export type PlacementPairResult =
   | { done: false; scenes: Scene[]; ranks: Rank[] }
-  | { done: true; scene: Scene; rank: number; elo: number; battles: number; streak: number; fromBottom: boolean };
+  | {
+      done: true;
+      scene: Scene;
+      rank: number;
+      elo: number;
+      battles: number;
+      streak: number;
+      fromBottom: boolean;
+      /** Where it was before the run: its rank (in the same pool) and ELO; null when unrated. */
+      startRank: number | null;
+      startElo: number | null;
+    };
 
 export interface ChampionPairResult {
   scenes: Scene[];

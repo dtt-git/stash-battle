@@ -370,7 +370,8 @@ export async function fetchPlacementPair(
   }
   const run = state.placement;
 
-  const pool = buildOpponentPool(allScenes, leftPool, filters).filter((s) => s.id !== run.scene.id);
+  const opponents = buildOpponentPool(allScenes, leftPool, filters);
+  const pool = opponents.filter((s) => s.id !== run.scene.id);
   if (pool.length === 0) {
     throw new Error("Not enough scenes for comparison. You need at least 2 scenes.");
   }
@@ -381,7 +382,10 @@ export async function fetchPlacementPair(
   run.rangeHi = step.hi;
 
   if (step.done) {
-    // Only the placed scene's ELO changes; it's credited with the battles this run took
+    // Only the placed scene's ELO changes; it's credited with the battles this run took.
+    // Nothing else moved during the run, so its place before it is where it still is now
+    const startElo = elo(latestScene(run.scene));
+    const startIdx = startElo === null ? -1 : opponents.findIndex((s) => s.id === run.scene.id);
     const newElo = landingElo(pool, step.slot);
     const newBattles = battles(latestScene(run.scene)) + run.battles;
     console.log(
@@ -396,6 +400,8 @@ export async function fetchPlacementPair(
       battles: run.battles,
       streak: run.streak,
       fromBottom: run.fromBottom,
+      startRank: startIdx >= 0 ? startIdx + 1 : null,
+      startElo,
     };
   }
 

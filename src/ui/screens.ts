@@ -69,12 +69,14 @@ function finishRunShowEndScreen(html: string): void {
 }
 
 /**
- * "ELO: 1740", plus "· Stash Rating: 74" while an update mode is on. The rating is worked out
- * the way the sync does it (it may still be on its way to Stash), so it's what Stash will show.
+ * "ELO: 1740" ("ELO: 1520 → 1740" given where it started), plus "· Stash Rating: 74" while an
+ * update mode is on. The rating is worked out the way the sync does it (it may still be on its
+ * way to Stash), so it's what Stash will show.
  */
-function eloLine(scene: Scene, value: number | null): string {
+function eloLine(scene: Scene, value: number | null, from: number | null = null): string {
   if (value === null) return "";
-  let line = `<br>ELO: <strong>${Math.round(value)}</strong>`;
+  const start = from === null ? "" : `${Math.round(from)} → `;
+  let line = `<br>ELO: ${start}<strong>${Math.round(value)}</strong>`;
   const mode = state.settings.stashRatings;
   const scenes = state.memoryCache.allScenes;
   if (mode !== "off" && scenes) {
@@ -84,13 +86,21 @@ function eloLine(scene: Scene, value: number | null): string {
   return line;
 }
 
-/** Champion beat every scene above it, or a climb from the bottom never lost: it's #1. */
-export function showVictoryScreen(champion: Scene, winStreak: number): void {
+/**
+ * Champion beat every scene above it, or a climb from the bottom never lost: it's #1. A climb
+ * passes where the scene started (its rank, or null when it was unrated, and its ELO).
+ */
+export function showVictoryScreen(
+  champion: Scene,
+  winStreak: number,
+  start?: { rank: number | null; elo: number | null },
+): void {
+  const from = start ? ` from ${start.rank === null ? "unrated" : `#${start.rank}`}` : "";
   const html = buildEndScreenHtml(
     champion,
     "👑",
     "CHAMPION!",
-    `Reached the top: ${winStreak} win${winStreak === 1 ? "" : "s"} in a row!${eloLine(champion, elo(latestScene(champion)))}`,
+    `Reached the top${from}: ${winStreak} win${winStreak === 1 ? "" : "s"} in a row!${eloLine(champion, elo(latestScene(champion)), start?.elo ?? null)}`,
     "Start New Run",
   );
 
@@ -98,14 +108,16 @@ export function showVictoryScreen(champion: Scene, winStreak: number): void {
 }
 
 export function showPlacementScreen(result: Extract<PlacementPairResult, { done: true }>): void {
-  const { scene, rank, battles, streak, fromBottom } = result;
+  const { scene, rank, battles, streak, fromBottom, startRank } = result;
   const streakText = fromBottom && streak > 0 ? `🔥 ${streak} win streak · ` : "";
   const battlesText = battles ? ` · ${battles} battle${battles === 1 ? "" : "s"}` : "";
+  // "#120 → #45 of 600": where it was before the run, then where it landed
+  const from = startRank === null ? "Unrated" : `#${startRank}`;
   const html = buildEndScreenHtml(
     scene,
     "📍",
     "PLACED!",
-    `${streakText}Rank <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesText}${eloLine(scene, result.elo)}`,
+    `${streakText}${from} → <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesText}${eloLine(scene, result.elo, result.startElo)}`,
     "Start New Run",
   );
 

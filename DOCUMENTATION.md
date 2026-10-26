@@ -382,7 +382,7 @@ Finds a scene's spot with as few battles as possible — a bounded search with m
 
 - Ignores the scene's ELO: the first opponent is the bottom rated scene of the pool (`bottomIndex`), then it gallops upward with the same capped doubling.
 - `streak` counts wins before the first loss (it grows only while `streak === battles`); the card shows "🔥 N wins" until then, then the narrowing badge.
-- A climb that never loses lands at slot 0: **victory screen** ("Reached the top: N wins in a row!"). Otherwise the placed screen shows the streak, rank, battles and ELO.
+- A climb that never loses lands at slot 0: **victory screen** ("Reached the top from #227: N wins in a row!"). Otherwise the placed screen shows the streak, where the scene was and where it landed ("#120 → **#45** of 600", or "Unrated → **#45**"), battles, and "ELO: 1520 → **1610**". The done result carries `startRank` / `startElo`: the scene's place in the opponent pool (with it) and ELO when it lands, which is where it was before the run, since nothing else moves during one (null when unrated).
 - Changing the setting mid-run restarts that scene's run from the new start (`onSettingChanged` in `modal.ts`); nothing is written before a scene lands.
 - Cost on a 600-scene pool: 8 battles near the bottom, ~17-21 for the middle and top, 21 to beat #1 (average 17.0, worst 21).
 
@@ -470,7 +470,7 @@ After each Swiss / Champion pick, an overlay counts the **ELO** change in whole 
 ### Victory / Placement Screens
 
 - **Victory** (Champion, or a "Start from the bottom" climb that never lost): crown, "CHAMPION!", "Reached the top: N wins in a row!", final ELO
-- **Placement**: pin, "PLACED!", streak (bottom runs), rank, battles, final ELO
+- **Placement**: pin, "PLACED!", streak (bottom runs), start → placed rank, battles, start → final ELO
 - With a Stash ratings update mode on, the ELO line also shows `Stash Rating: N`: the scene's target from `stashRatingTargets` over the all-scenes cache (the cache already has the new ELO), so it's what the sync writes, even if that write is still on its way
 - Both show "Start New Run" (`#sb-new-run`), which resets run state, and "↶ Undo" (`#sb-end-undo`, styled like the action bar's, under it in `.sb-end-actions`) while the pick that ended the run can be undone
 - No glow. They use the cards' entry animation (`fadeIn`, 0.3s); while an end screen shows, the battle area has `overflow: clip` (`.sb-comparison-area:has(> .sb-end-screen)`), because the end screen sits flush with the window's bottom (the action bar is hidden) and the slide-in would otherwise make the content 20px taller for a moment and flash a scrollbar.

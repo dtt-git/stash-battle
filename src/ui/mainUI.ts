@@ -486,7 +486,10 @@ export async function loadNewPair(forcedLeftSceneId: string | null = null): Prom
       if (placementResult.done) {
         // A climb from the bottom that never lost has beaten the top scene
         if (placementResult.fromBottom && placementResult.rank === 1) {
-          showVictoryScreen(placementResult.scene, placementResult.streak);
+          showVictoryScreen(placementResult.scene, placementResult.streak, {
+            rank: placementResult.startRank,
+            elo: placementResult.startElo,
+          });
         } else {
           showPlacementScreen(placementResult);
         }
