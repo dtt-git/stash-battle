@@ -18,6 +18,8 @@ const OUT = process.env.SCREENSHOTS_DIR || "docs/screenshots";
 const ALL = ["battle", "explore", "stats", "gems", "records", "settings", "champion", "placement", "setup", "scene-page", "phone-battle", "phone-explore", "phone-stats"];
 const only = process.argv[2] ? process.argv[2].split(",") : ALL;
 const want = (name) => only.includes(name);
+/** Battle cards as a new user sees them: every Card details line on. */
+const DEFAULT_LOOK = { cardDetails: "plays,oCount,record,rating,studio,performers,tags" };
 fs.mkdirSync(OUT, { recursive: true });
 
 const before = await stashSnapshot();
@@ -62,7 +64,7 @@ async function sortExplore(page, sort) {
 
 const desktop = ["battle", "explore", "stats", "gems", "records", "settings", "champion", "placement"].filter(want);
 if (desktop.length) {
-  const run = await launch({ mode: "real" });
+  const run = await launch({ mode: "real", configPatch: DEFAULT_LOOK });
   const { page } = run;
   const wait = (ms) => page.waitForTimeout(ms);
   const away = () => page.mouse.move(1035, 5);
@@ -273,7 +275,7 @@ if (want("scene-page") || want("phone-scene-page")) {
 
 const phone = ["phone-battle", "phone-explore", "phone-stats"].filter(want);
 if (phone.length) {
-  const run = await launch({ mode: "real", phone: true });
+  const run = await launch({ mode: "real", phone: true, configPatch: DEFAULT_LOOK });
   const { page } = run;
   const wait = (ms) => page.waitForTimeout(ms);
   const shot = async (name) => {
