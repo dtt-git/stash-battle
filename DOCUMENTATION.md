@@ -75,7 +75,7 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | `elo.ts` | Pure ELO math: `eloKFactor`, `eloExpected`, `winChances`, `eloResult`, `roundElo` |
 | `score.ts` | Pure: a scene's ELO fields (`elo`, `isRated`, `battles`, `isSeeded`, `kGames`, `isProvisional`, `eloFields`, `eloCustomFields`), records (`sceneRecord`, `recordAfter`, `recordText`), Swiss opponents (`swissOpponentIndexes`), `seed`, `effectiveElo`, ELO ↔ Stash rating (`linearRating`, `percentileRatings`, `stashRatingTargets`, `stashRatingChanges`), setup (`startingElo`, `afterSetup`), ordering (`compareByElo`, `sortByElo`, `eloInsertionIndex`), `placementElo` |
 | `stats.ts` | Pure: tiers (`tierMap`, `cachedTierMap`, `tierDescription`) and the Stats / Records maths (`overview`, `eloHistogram`, `largestTie`, `ratingScaleTicks`, `median`, `gemsSplit`, `gemsQuadrant`, `settledBuckets`, `leastTested`, `leastTestedPool`, `topByRecord`) |
-| `explore.ts` | Pure: Explore's entries, search, filters and sorts (`exploreEntries`, `filterExplore`, `sortExplore`), battling a filter (`filterBattlesWithin`, `explorePoolScenes`) |
+| `explore.ts` | Pure: Explore's entries, search, filters and sorts (`exploreEntries`, `filterExplore`, `sortExplore`), battling a filter (`filterBattlesWithin`, `onlyGroup`, `explorePoolScenes`) |
 | `ratingDisplay.ts` | How this Stash shows ratings (`setRatingSystem`, `getRatingSystem`, `parseRatingSystem`) and formatting to match (`formatRating`, `ratingValue`, `ratingStarts`, `exampleRating`, `scaleMarks`) |
 | `sceneTitle.ts` | `resolveSceneTitle`: the title, or the file name without its extension |
 | `placement.ts` | Pure Placement search: `newPlacementRun`, `placementStep`, `recordPlacementResult`, `landingElo`, `bottomIndex`, `maxPlacementJump` |
@@ -406,11 +406,11 @@ When **`filterOpponents` is on** and a **URL filter is active**, left and right 
 
 ### Scene Cards
 
-Each card shows: screenshot (with preview video), title, duration, the **tier pill** and **ELO badge**, studio, performers, play count, **Record**, **Stash Rating**, tags, and a "Choose This Scene" button.
+Each card shows: screenshot (with preview video), title, duration, the **tier pill** and **ELO badge**, the meta lines **Settings → Card details** picks (play count, O count, **Record**, **Stash Rating**, studio, performers, tags; all on by default), and a "Choose This Scene" button.
 
 - **ELO badge** (`.sb-scene-rank`): `ELO 1740 · #50` (rank when known), `ELO 1540?` while provisional. Unrated: `ELO 1500 · Unrated` in Swiss, `ELO 1000 · Unrated` in Champion, plain `Unrated` in Placement.
 - **Tier pill** (`.sb-tier`) before it: emoji and name (emoji only on phones). With `tierBorders` the card's border takes the tier colour (`data-tier`); untiered cards keep the grey border. Hover never changes the border colour (blue would read as Diamond).
-- Meta lines (the Stash rating as Stash shows it: "7.4" or "3.5★", see `ratingDisplay.ts`): "Record: 12–5" (`.sb-meta-battles`; "Battles: N" for a scene whose battles all came before records; hidden wherever Play Count is) and "Stash Rating: 74/100" (or "None"). Where Play Count and the record line are hidden (tablets, phones, short screens) the record follows the rating instead: "74/100 · 12–5" (`.sb-meta-record-inline`).
+- Meta lines (the Stash rating as Stash shows it: "7.4" or "3.5★", see `ratingDisplay.ts`): "Record: 12–5" (`.sb-meta-battles`; "Battles: N" for a scene whose battles all came before records; hidden wherever Play Count is) and "Stash Rating: 74/100" (or "None"). Where the play count, O count and record lines are hidden (tablets, phones, short screens) those that are on follow the rating instead: "74/100 · 12–5 · ▶ 4 · 💦 1" (`.sb-meta-inline`); with Stash Rating off the line carries just them (`.sb-meta-inline-only`). On phones the one compact detail is the first of studio, performers, tags that's on.
 
 Card media structure: `.sb-scene-media` wraps the thumbnail **link** (`a.sb-scene-image-container`, holding the `img` and `video`) plus sibling overlays (duration, status badge, click hint, ↗ open link, 🗑 delete button). Overlays are siblings, not children, so SFW blur on the link doesn't blur them; non-interactive overlays use `pointer-events: none` so hover still reaches the link.
 
@@ -434,7 +434,7 @@ Card media structure: `.sb-scene-media` wraps the thumbnail **link** (`a.sb-scen
 
 ### Scene Pool Status Line and Notes
 
-- `#sb-pool-status` (above the cards, every mode) says where the left-side scenes come from, as one line: a battled Explore filter, "Battle the least-tested", or "Rating scenes from your Scenes page filter · N scenes" + "· against each other" with "Use filtered scenes for both sides", else "· against your whole library" (the same words as a battled Explore filter), or "Rating scenes from your whole library · N scenes · filter the Scenes page to narrow it down". `restoreCurrentPair` loads the pools in the background via `loadPoolSize()` to fill in the count.
+- `#sb-pool-status` (above the cards, every mode) says where the left-side scenes come from, as one line (on phones it wraps rather than cut off its Stop link): a battled Explore filter, "Battle the least-tested", or "Rating scenes from your Scenes page filter · N scenes" + "· against each other" with "Use filtered scenes for both sides", else "· against your whole library" (the same words as a battled Explore filter), or "Rating scenes from your whole library · N scenes · filter the Scenes page to narrow it down". `restoreCurrentPair` loads the pools in the background via `loadPoolSize()` to fill in the count.
 - `#sb-ratings-note`: see Stash Ratings Update Mode.
 - `#sb-climb-pool-warning`: see Filter opponents + Champion.
 
@@ -451,8 +451,8 @@ Touch screens have no hover, so `(hover: none)` shows an **ⓘ** button at the e
 ### Layout
 
 - Cards sit side by side down to 640px wide; the card row's max width is tied to viewport height (`calc(135vh + 120px)`) so 16:9 thumbnails don't push the choose buttons off short screens.
-- `max-height: 900px` (laptops): compact header (smaller title, no mode descriptions), play count, battles and tags hidden.
-- `≤1000px`: play count, battles and tags hidden, smaller VS.
+- `max-height: 900px` (laptops): compact header (smaller title, no mode descriptions), play count, O count, battles and tags hidden (all but tags join the rating line).
+- `≤1000px`: play count, O count, battles and tags hidden (as above), smaller VS.
 - `≤640px` (phones): full-screen modal (`100dvh`), stacked compact cards (2:1 thumbnails, one meta line: the scene's first detail among studio, performers and tags (`.sb-meta-compact`, empty when it has none) on the left, the rating and record on the right; short "✓ Choose"), the VS pill (with the win chances) sits centred in an 18px gap between the cards (8px clear of each), mode buttons as a segmented row, compact tab bar; the Stash ratings dropdown and Reset ELO rows stack.
 - Phones: the modal's sideways scroll is pinned to 0 (focus or scroll-into-view could shift an `overflow-x: hidden` box), and charts clip to their own box.
 
@@ -499,17 +499,17 @@ All three are built from Stash Battle's all-scenes cache (`getAllScenesCached`, 
 
 The whole library as small cards, a page at a time.
 
-- **Search** (title or file name, studio, performers), **chips** for each tier, Provisional and Unrated (each with its pill's tooltip: `tierDescription`, `PROVISIONAL_TIP`), an **ELO range** (a range leaves unrated scenes out), and **sorts**: ELO high/low, plays most/least, battles most/least, best record (wins − losses, then wins), highest peak ELO, longest win streak. Record sorts put scenes without a record last; ties keep the ELO order. All pure, in `src/explore.ts`.
+- **Search** (title or file name, studio, performers), **chips** for each tier, Provisional and Unrated that toggle (`filters.groups`, any of them matches; **All** clears them; each with its pill's tooltip: `tierDescription`, `PROVISIONAL_TIP`), an **ELO range** (a range leaves unrated scenes out), and **sorts**: ELO high/low, plays most/least, battles most/least, best record (wins − losses, then wins), highest peak ELO, longest win streak. Record sorts put scenes without a record last; ties keep the ELO order. All pure, in `src/explore.ts`.
 - **Pages**: `explorePageSize` cards per page (30 / 60 / 120 / 240 / All; a dropdown in the status line, saved in the plugin config, not in the yml), with ‹ / page dropdown / › at the top and bottom. Only the bottom pager scrolls back up. Card clicks are ignored for 700 ms after a page change (a quick second click on › landed on a card). `scrollbar-gutter: stable` while Explore shows, so the page doesn't shift when the scrollbar comes and goes.
 - The filters survive switching tabs and closing the modal (module state, not saved).
 - Stats opens Explore at a histogram bar's ELO range (`setExploreFilters`), scrolled so the scene-count line sits just above the first row.
 
 #### Battling an Explore filter
 
-The status line offers **"⚔️ Battle these N scenes"** for any filter that has scenes (**"📍 Place these N scenes"** for Unrated, **"🔁 Keep testing these N scenes"** for Provisional). It sets `state.explorePool` (`{ filters, label }`) and switches to the Battle tab:
+The status line offers **"⚔️ Battle these N scenes"** for any filter that has scenes (**"📍 Place these N scenes"** for Unrated alone, **"🔁 Keep testing these N scenes"** for Provisional alone, `onlyGroup`). It sets `state.explorePool` (`{ filters, label }`) and switches to the Battle tab:
 
 - The filter's scenes **replace the Scenes page filter** as the left pool: `currentFilters()` in `pairs.ts` returns a filter keyed `explore:<filters JSON>`, and `loadScenePools` takes the scenes from `explorePoolScenes` (the Explore filtering itself), recomputed on every pick. So placed scenes leave an Unrated pool, and the shuffle skips scenes that have left the pool since it was made.
-- **Who they battle** (`filterBattlesWithin(filters, bothSides)`, read each pick through `explorePoolWithin()` so the setting applies at once): it follows "Use filtered scenes for both sides" like the Scenes page filter. Off: the filter's scenes vs the whole rated library. On: within the filter. **Unrated always battles the library** and switches to Placement: placing a scene among other unrated ones (none has an ELO) would land them all at 1500.
+- **Who they battle** (`filterBattlesWithin(filters, bothSides)`, read each pick through `explorePoolWithin()` so the setting applies at once): it follows "Use filtered scenes for both sides" like the Scenes page filter. Off: the filter's scenes vs the whole rated library. On: within the filter. **A filter with Unrated always battles the library**, and Unrated alone switches to Placement: placing a scene among other unrated ones (none has an ELO) would land them all at 1500.
 - The pool status line names it ("Battling from Explore: **👑 Legendary · ELO 1600–1700** · N scenes · against your whole library") with a **Stop** link (`stopExplorePool` in `modal.ts`). It survives mode changes and closing Stash Battle, and ends on Stop (or "Battle the least-tested", which turns it off).
 
 #### Battling one scene
@@ -571,6 +571,7 @@ Stored in Stash's plugin config (`configuration.plugins["stash-battle"]`, writte
 | `placementFromBottom` | false | Placement's "Start from the bottom" |
 | `filterOpponents` | false | Right side obeys the list filter too |
 | `openInNewTab` | false | Thumbnail opens the scene in a new tab |
+| `cardDetails` | all | The battle card lines that show, comma-separated (`CARD_DETAILS`: `plays,oCount,record,rating,studio,performers,tags`; unknown ids are dropped). Not in the yml |
 | `tierBorders` | **true** | Battle cards' borders take their tier's colour (the pill always shows). Replaces 3.0's earlier `showTiers` |
 | `explorePageSize` | 60 | Explore cards per page (30 / 60 / 120 / 240, or 0 = all). Set from Explore's dropdown; not in the yml or the Settings tab |
 | `statsHallOfFame` | — | The hall of fame (JSON string). Not a setting: kept by `mergeConfig` (see Records) |
@@ -583,7 +584,7 @@ Stored in Stash's plugin config (`configuration.plugins["stash-battle"]`, writte
 - `configurePlugin` **replaces** the whole map, so every save sends every key (`updateSettings` debounced 400ms for the slider; `updateSettingsNow` for setup's flags). Null values are left out. A save re-reads the stored config and builds the map with `mergeConfig`: the stored map (keys that aren't settings, like `statsHallOfFame`, are **kept**), its settings normalized, this tab's unsaved keys on top, then any `extra` keys, minus `REMOVED_KEYS`. So a tab that loaded settings before another tab finished the setup can't undo it. Config writes run one at a time (`saveConfig`'s queue), each starting from what the last one saved.
 - `REMOVED_KEYS` (`funMode`, `unratedRating`, `showTiers`) are dropped on the next save; an unknown `stashRatings` becomes `"off"`.
 - Users with no saved config get defaults overlaid with the pre-2.7 localStorage toggles (`sb_filterOpponents`; `sb_mutePreviews=1` → volume 0).
-- Every control has `data-setting="<key>"`; `bindSettingsControls` wires them generically and `onSettingChanged` in `modal.ts` applies side effects (reload pair for filterOpponents, restart a Placement run for placementFromBottom, re-render cards for openInNewTab/cleanMode, re-apply previews, the ratings note, test mode on or off).
+- Every control has `data-setting="<key>"` (Card details' checkboxes have `data-card-detail` and are wired on their own); `bindSettingsControls` wires them generically and `onSettingChanged` in `modal.ts` applies side effects (reload pair for filterOpponents, restart a Placement run for placementFromBottom, re-render cards for openInNewTab/cleanMode/tierBorders/cardDetails, re-apply previews, the ratings note, test mode on or off).
 
 ## Test Mode
 
@@ -667,7 +668,7 @@ All data comes from Stash's GraphQL API:
 - **`__type(name: "Scene")`** introspection: the custom-fields capability check
 - Clean mode deletes go through Stash's own dialog (its `scenesDestroy` mutation)
 - **`configuration { plugins }`** / **`configurePlugin`**: settings
-- **Fragment fields** (`SCENE_FRAGMENT`): `id`, `title`, `date`, `rating100`, `play_count`, `custom_fields`, `paths` (screenshot, preview), `files` (duration, path), `studio` (name), `performers` (name), `tags` (name). `custom_fields` includes other plugins' fields too.
+- **Fragment fields** (`SCENE_FRAGMENT`): `id`, `title`, `date`, `rating100`, `play_count`, `o_counter`, `custom_fields`, `paths` (screenshot, preview), `files` (duration, path), `studio` (name), `performers` (name), `tags` (name). `custom_fields` includes other plugins' fields too.
 - Stash updates a scene's `updated_at` on any write, even one that changes nothing visible.
 
 ---

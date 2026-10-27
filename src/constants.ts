@@ -7,7 +7,7 @@ export const CACHE_DB_VERSION = 2;
 export const CACHE_STORE_NAME = "scenes";
 export const CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes cache expiry
 
-import type { Settings, Tier } from "./types";
+import type { CardDetail, Settings, Tier } from "./types";
 
 /** Explore's "per page" choices; 0 shows every scene on one page. */
 export const EXPLORE_PAGE_SIZES: readonly number[] = [30, 60, 120, 240, 0];
@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   openInNewTab: false,
   placementFromBottom: false,
   tierBorders: true,
+  cardDetails: "plays,oCount,record,rating,studio,performers,tags",
   previewVolume: 50,
   explorePageSize: 60,
   autoplayPreviews: true,
@@ -30,6 +31,17 @@ export const DEFAULT_SETTINGS: Settings = {
   pauseMediaOnOpen: true,
   testMode: false,
 };
+
+/** Every card detail, in the order the card shows them, with its Settings label. */
+export const CARD_DETAILS: readonly { id: CardDetail; label: string }[] = [
+  { id: "plays", label: "Play Count" },
+  { id: "oCount", label: "O Count" },
+  { id: "record", label: "Record" },
+  { id: "rating", label: "Stash Rating" },
+  { id: "studio", label: "Studio" },
+  { id: "performers", label: "Performers" },
+  { id: "tags", label: "Tags" },
+];
 
 // Pre-2.7 localStorage preference keys (migrated into plugin settings).
 export const LEGACY_FILTER_OPPONENTS_KEY = "sb_filterOpponents";

@@ -12,6 +12,7 @@ import {
   exploreEntries,
   filterBattlesWithin,
   filterExplore,
+  onlyGroup,
   type ExploreEntry,
   type ExploreFilters,
   type ExploreSort,
@@ -66,7 +67,7 @@ export function setExploreFilters(patch: Partial<ExploreFilters>): void {
 }
 
 function isFiltered(): boolean {
-  return filters.query.trim() !== "" || filters.group !== null || filters.eloMin !== null || filters.eloMax !== null;
+  return filters.query.trim() !== "" || filters.groups.length > 0 || filters.eloMin !== null || filters.eloMax !== null;
 }
 
 /** Cards per page ("All" puts every result on one page). */
@@ -78,15 +79,20 @@ function pageCount(): number {
   return Math.max(1, Math.ceil(results.length / pageSize()));
 }
 
+/** The filter chips after All, each with the tooltip its cards' pills have. */
+const GROUPS: { value: string; label: string; tip: string }[] = [
+  ...TIERS.map((t) => ({ value: t.id, label: `${t.emoji} ${t.name}`, tip: tierDescription(t) })),
+  { value: "provisional", label: "Provisional", tip: PROVISIONAL_TIP },
+  { value: "unrated", label: "Unrated", tip: "No ELO yet" },
+];
+
 function controlsHtml(): string {
   // Each chip's tooltip is the one its cards' pills have
-  const groups: { value: string; label: string; tip: string }[] = [
-    ...TIERS.map((t) => ({ value: t.id, label: `${t.emoji} ${t.name}`, tip: tierDescription(t) })),
-    { value: "provisional", label: "Provisional", tip: PROVISIONAL_TIP },
-    { value: "unrated", label: "Unrated", tip: "No ELO yet" },
-  ];
-  const chip = (value: string | null, label: string, tip = ""): string =>
-    `<button type="button" class="sb-chip${filters.group === value ? " active" : ""}" data-group="${value ?? ""}"${tip ? ` title="${tip}"` : ""}>${label}</button>`;
+  // Each chip toggles; All (none on) shows everyone
+  const chip = (value: string, label: string, tip = ""): string => {
+    const on = value ? filters.groups.includes(value) : filters.groups.length === 0;
+    return `<button type="button" class="sb-chip${on ? " active" : ""}" data-group="${value}" aria-pressed="${on}"${tip ? ` title="${tip}"` : ""}>${label}</button>`;
+  };
   const number = (value: number | null): string => (value === null ? "" : String(value));
   return `
         <div class="sb-explore-controls">
@@ -97,7 +103,7 @@ function controlsHtml(): string {
             </select>
           </div>
           <div class="sb-explore-row sb-explore-row-wrap">
-            <div class="sb-chips">${chip(null, "All")}${groups.map((g) => chip(g.value, g.label, g.tip)).join("")}</div>
+            <div class="sb-chips">${chip("", "All")}${GROUPS.map((g) => chip(g.value, g.label, g.tip)).join("")}</div>
             <div class="sb-explore-range">
               <span>ELO</span>
               <input type="number" class="sb-explore-input sb-explore-elo" data-bound="min" placeholder="from" value="${number(filters.eloMin)}" aria-label="Lowest ELO">
@@ -149,10 +155,8 @@ function showPage(content: HTMLElement): void {
 /** The filter in words, for the note above the cards: "👑 Legendary · ELO 1600–1700 · “jane”". */
 function filterLabel(): string {
   const parts: string[] = [];
-  const tier = TIERS.find((t) => t.id === filters.group);
-  if (tier) parts.push(`${tier.emoji} ${tier.name}`);
-  else if (filters.group === "provisional") parts.push("Provisional");
-  else if (filters.group === "unrated") parts.push("Unrated");
+  const groups = GROUPS.filter((g) => filters.groups.includes(g.value));
+  if (groups.length) parts.push(groups.map((g) => g.label).join(", "));
   if (filters.eloMin !== null || filters.eloMax !== null) {
     parts.push(`ELO ${filters.eloMin ?? "…"}–${filters.eloMax ?? "…"}`);
   }
@@ -167,13 +171,13 @@ function battleButtonHtml(): string {
   const n = results.length;
   const scenes = `${n} scene${n === 1 ? "" : "s"}`;
   const label =
-    filters.group === "unrated"
+    onlyGroup(filters, "unrated")
       ? `📍 Place these ${scenes}`
-      : filters.group === "provisional"
+      : onlyGroup(filters, "provisional")
         ? `🔁 Keep testing these ${scenes}`
         : `⚔️ Battle these ${scenes}`;
   const tip =
-    filters.group === "unrated"
+    onlyGroup(filters, "unrated")
       ? "Placement, one scene at a time, against your whole library"
       : within
         ? "Swiss, with both sides from these scenes (“Use filtered scenes for both sides” is on)"
@@ -259,8 +263,18 @@ function onContentClick(e: Event, content: HTMLElement, scrollRoot: HTMLElement 
   const target = e.target as Element;
   const chip = target.closest<HTMLElement>(".sb-chip");
   if (chip) {
-    filters.group = chip.dataset.group || null;
-    content.querySelectorAll(".sb-chip").forEach((c) => c.classList.toggle("active", c === chip));
+    const group = chip.dataset.group || "";
+    const on = new Set(filters.groups);
+    if (!group) on.clear();
+    else if (on.has(group)) on.delete(group);
+    else on.add(group);
+    // In the chips' order, so the same chips make the same filter
+    filters.groups = GROUPS.map((g) => g.value).filter((value) => on.has(value));
+    content.querySelectorAll<HTMLElement>(".sb-chip").forEach((c) => {
+      const active = c.dataset.group ? on.has(c.dataset.group) : on.size === 0;
+      c.classList.toggle("active", active);
+      c.setAttribute("aria-pressed", String(active));
+    });
     applyFilters(content);
     return;
   }

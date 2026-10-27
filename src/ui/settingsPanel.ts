@@ -2,9 +2,10 @@
 // preview volume control that sits on the tab bar. Every control carries data-setting="<key>";
 // values persist via updateSettings(). Action rows (Reset ELO) carry data-action instead.
 
-import { setTestMode, updateSettings } from "../settings";
+import { CARD_DETAILS } from "../constants";
+import { setTestMode, showsCardDetail, updateSettings } from "../settings";
 import { state } from "../state";
-import type { Settings, StashRatingsMode } from "../types";
+import type { CardDetail, Settings, StashRatingsMode } from "../types";
 import { STASH_RATINGS_OPTIONS, stashRatingsOption } from "./stashRatingsText";
 
 type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
@@ -48,6 +49,7 @@ const SECTIONS: { title: string; rows: SettingRow[] }[] = [
       { key: "previewVolume", title: "Preview volume", hint: "How loud the hovered or tapped card's preview plays. 0 mutes it", className: "sb-setting-phone-only" },
       { key: "autoplayPreviews", title: "Autoplay previews", hint: "Loop both previews silently; hover a card to hear it" },
       { key: "pauseMediaOnOpen", title: "Pause playing video when Stash Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
+      { key: "cardDetails", title: "Card details", hint: "What battle cards show under the title. Phones and tablets show fewer" },
       { key: "tierBorders", title: "Tier colours on card borders", hint: "Each battle card's border takes the colour of its tier (👑 Legendary down to 🥉 Bronze), as on the Explore cards" },
       { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
       { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" },
@@ -91,6 +93,13 @@ function settingControl(key: keyof Settings): string {
         `<option value="${value}" ${value === state.settings.stashRatings ? "selected" : ""}>${label}</option>`,
     ).join("");
     return `<select data-setting="${key}" class="form-control form-control-sm sb-setting-select" aria-label="Stash ratings update mode">${options}</select>`;
+  }
+  if (key === "cardDetails") {
+    const boxes = CARD_DETAILS.map(({ id, label }) => {
+      const inputId = `sb-card-detail-${id}`;
+      return `<div class="custom-control custom-checkbox custom-control-inline"><input type="checkbox" class="custom-control-input" id="${inputId}" data-card-detail="${id}" ${showsCardDetail(id) ? "checked" : ""}><label class="custom-control-label" for="${inputId}">${label}</label></div>`;
+    }).join("");
+    return `<div class="sb-card-details">${boxes}</div>`;
   }
   const id = `sb-setting-${key}`;
   return `
@@ -177,6 +186,9 @@ export function syncSettingsControls(root: ParentNode): void {
   root.querySelectorAll<HTMLSelectElement>("select[data-setting]").forEach((select) => {
     select.value = String(state.settings[select.dataset.setting as keyof Settings]);
   });
+  root.querySelectorAll<HTMLInputElement>("input[data-card-detail]").forEach((input) => {
+    input.checked = showsCardDetail(input.dataset.cardDetail as CardDetail);
+  });
   root.querySelectorAll<HTMLElement>('[data-hint-for="stashRatings"]').forEach((hint) => {
     hint.textContent = stashRatingsOption(state.settings.stashRatings).desc;
   });
@@ -249,6 +261,14 @@ export function bindSettingsControls(
       } finally {
         select.disabled = false;
       }
+    });
+  });
+
+  // Card details: the ticked boxes, in the card's order
+  root.querySelectorAll<HTMLInputElement>("input[data-card-detail]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const on = [...root.querySelectorAll<HTMLInputElement>("input[data-card-detail]")].filter((box) => box.checked);
+      apply({ cardDetails: on.map((box) => box.dataset.cardDetail).join(",") }, "cardDetails");
     });
   });
 

@@ -9,6 +9,9 @@ export type EloStart = "ratings" | "fresh";
 /** Whether and how Battle writes Stash ratings from ELO. */
 export type StashRatingsMode = "off" | "percentile" | "linear";
 
+/** A line battle cards can show under the title (Settings → Card details). */
+export type CardDetail = "plays" | "oCount" | "record" | "rating" | "studio" | "performers" | "tags";
+
 /** User settings, persisted in Stash's plugin configuration (see settings.ts). */
 export interface Settings {
   stashRatings: StashRatingsMode; // Stash ratings written from ELO ("off" never writes them)
@@ -17,6 +20,7 @@ export interface Settings {
   openInNewTab: boolean; // Thumbnail click opens the scene in a new tab
   placementFromBottom: boolean; // Placement runs start at the bottom scene and climb (replaces Gauntlet)
   tierBorders: boolean; // Battle cards' borders take their tier's colour (the tier pill always shows)
+  cardDetails: string; // The CardDetail lines battle cards show, comma-separated
   previewVolume: number; // 0-100, 0 = muted
   explorePageSize: number; // Explore cards per page (EXPLORE_PAGE_SIZES); 0 = all on one page
   autoplayPreviews: boolean; // Loop both previews (muted) without hovering
@@ -47,6 +51,7 @@ export interface Scene {
   date?: string | null;
   rating100?: number | null;
   play_count?: number | null;
+  o_counter?: number | null;
   /** Stash's scene custom fields map (ours: stash_battle_elo / _battles / _seeded). */
   custom_fields?: Record<string, unknown> | null;
   paths?: ScenePaths | null;

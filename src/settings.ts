@@ -2,6 +2,7 @@
 // so they follow the user across browsers. Also editable in Stash → Settings → Plugins.
 
 import {
+  CARD_DETAILS,
   DEFAULT_SETTINGS,
   EXPLORE_PAGE_SIZES,
   LEGACY_FILTER_OPPONENTS_KEY,
@@ -11,7 +12,7 @@ import {
 import { graphqlQuery } from "./graphql";
 import { setRatingSystem } from "./ratingDisplay";
 import { state } from "./state";
-import type { EloStart, Settings, StashRatingsMode } from "./types";
+import type { CardDetail, EloStart, Settings, StashRatingsMode } from "./types";
 
 const CONFIG_QUERY = `{ configuration { plugins } }`;
 /** On load, also Stash's interface settings: how it shows ratings (stars or decimal). */
@@ -41,6 +42,19 @@ function clampPercent(value: unknown, fallback: number): number {
   return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : fallback;
 }
 
+/** Known card details only, in the card's order ("" when none are on). */
+function cardDetailsList(value: string): string {
+  const on = new Set(value.split(",").map((s) => s.trim()));
+  return CARD_DETAILS.filter(({ id }) => on.has(id))
+    .map(({ id }) => id)
+    .join(",");
+}
+
+/** Whether battle cards show this detail. */
+export function showsCardDetail(id: CardDetail): boolean {
+  return state.settings.cardDetails.split(",").includes(id);
+}
+
 /** Coerce a stored config map into Settings (Stash may omit keys or store numbers as strings). */
 function normalize(raw: Record<string, unknown>, base: Settings): Settings {
   const bool = (key: keyof Settings): boolean =>
@@ -58,6 +72,7 @@ function normalize(raw: Record<string, unknown>, base: Settings): Settings {
     pauseMediaOnOpen: bool("pauseMediaOnOpen"),
     placementFromBottom: bool("placementFromBottom"),
     tierBorders: bool("tierBorders"),
+    cardDetails: typeof raw.cardDetails === "string" ? cardDetailsList(raw.cardDetails) : base.cardDetails,
     testMode: bool("testMode"),
     previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
     explorePageSize: EXPLORE_PAGE_SIZES.includes(Number(raw.explorePageSize)) ? Number(raw.explorePageSize) : base.explorePageSize,

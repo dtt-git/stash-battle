@@ -3,6 +3,7 @@
 import { CHAMPION_UNRATED_ELO, ELO_K_TIERS, ELO_START } from "../constants";
 import { scenesListQuery } from "../filters";
 import { formatRating } from "../ratingDisplay";
+import { showsCardDetail } from "../settings";
 import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
 import { tierDescription } from "../stats";
@@ -45,8 +46,11 @@ export function createSceneCard(
   const studio = scene.studio ? scene.studio.name : "No studio";
   const tags = scene.tags ? scene.tags.slice(0, 5).map((t) => t.name) : [];
   // Phones have room for one detail beside the rating: the first the scene has (studio, then
-  // performers, then tags), or none
-  const compactDetail = scene.studio?.name || (scene.performers?.length ? performers : "") || tags.join(", ");
+  // performers, then tags) of those Card details shows, or none
+  const compactDetail =
+    (showsCardDetail("studio") && scene.studio?.name) ||
+    (showsCardDetail("performers") && scene.performers?.length ? performers : "") ||
+    (showsCardDetail("tags") ? tags.join(", ") : "");
 
   const title = resolveSceneTitle(scene);
 
@@ -74,6 +78,37 @@ export function createSceneCard(
   // "Record: 12–5"; battles from before records began show as "Battles: N"
   const record = recordText(scene);
   const rankDisplay = `${tier ? tierPill(tier) : ""}<span class="sb-scene-rank"${rankTitle}>${eloLabel}</span>`;
+
+  // The lines Settings → Card details picked. Where the record, play count and O count lines are
+  // hidden (tablets, phones, short screens) they join the rating line, which then shows even with
+  // the rating off.
+  const showRecord = showsCardDetail("record");
+  const inline = [
+    showRecord ? (record !== null ? `<strong>Record:</strong> ${record}` : `${battles(scene)} battle${battles(scene) === 1 ? "" : "s"}`) : "",
+    showsCardDetail("plays") ? `<span title="Play Count">▶︎ ${scene.play_count || 0}</span>` : "",
+    showsCardDetail("oCount") ? `<span title="O Count">💦 ${scene.o_counter || 0}</span>` : "",
+  ].filter(Boolean);
+  let ratingLine = "";
+  if (showsCardDetail("rating")) {
+    ratingLine = `<div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}${inline.map((part) => `<span class="sb-meta-inline"> · ${part}</span>`).join("")}</div>`;
+  } else if (inline.length) {
+    const parts = inline.map((part, i) => `<span class="sb-meta-inline">${i ? " · " : ""}${part}</span>`).join("");
+    ratingLine = `<div class="sb-meta-item sb-meta-rating sb-meta-inline-only">${parts}</div>`;
+  }
+  const metaHtml = [
+    showsCardDetail("plays") ? `<div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>` : "",
+    showsCardDetail("oCount") ? `<div class="sb-meta-item sb-meta-ocount"><strong>O Count:</strong> ${scene.o_counter || 0}</div>` : "",
+    showRecord ? `<div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>` : "",
+    ratingLine,
+    compactDetail ? `<div class="sb-meta-item sb-meta-compact">${compactDetail}</div>` : "",
+    showsCardDetail("studio") ? `<div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>` : "",
+    showsCardDetail("performers") ? `<div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>` : "",
+    showsCardDetail("tags")
+      ? `<div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n              ");
 
   // Status badge: win-streak count (formatted) or custom label (e.g. falling mode)
   let statusBadgeHtml = "";
@@ -117,13 +152,7 @@ export function createSceneCard(
             </div>
 
             <div class="sb-scene-meta">
-              <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>
-              <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}<span class="sb-meta-record-inline"> · ${record !== null ? `<strong>Record:</strong> ${record}` : `${battles(scene)} battle${battles(scene) === 1 ? "" : "s"}`}</span></div>
-              <div class="sb-meta-item sb-meta-compact">${compactDetail}</div>
-              <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
-              <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
-              <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
+              ${metaHtml}
             </div>
           </div>
 

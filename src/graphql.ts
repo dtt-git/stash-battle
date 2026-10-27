@@ -29,6 +29,7 @@ export const SCENE_FRAGMENT = `
     date
     rating100
     play_count
+    o_counter
     custom_fields
     paths {
       screenshot

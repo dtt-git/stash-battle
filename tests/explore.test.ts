@@ -54,10 +54,12 @@ test("search matches title, studio and performers; every word must match", () =>
   assert.deepEqual(ids({ query: "  " }), ["a", "b", "c", "d", "e", "u"]);
 });
 
-test("groups: a tier, provisional or unrated", () => {
-  assert.deepEqual(ids({ group: "legendary" }), ["a"]);
-  assert.deepEqual(ids({ group: "provisional" }), ["c"]);
-  assert.deepEqual(ids({ group: "unrated" }), ["u"]);
+test("groups: a tier, provisional or unrated; several match any of them", () => {
+  assert.deepEqual(ids({ groups: ["legendary"] }), ["a"]);
+  assert.deepEqual(ids({ groups: ["provisional"] }), ["c"]);
+  assert.deepEqual(ids({ groups: ["unrated"] }), ["u"]);
+  assert.deepEqual(ids({ groups: ["legendary", "unrated"] }), ["a", "u"]);
+  assert.deepEqual(ids({ groups: [] }), ["a", "b", "c", "d", "e", "u"]);
 });
 
 test("ELO range is inclusive and leaves unrated scenes out", () => {
@@ -74,13 +76,14 @@ test("sorting: ELO either way keeps unrated last; ties keep ELO order", () => {
   assert.deepEqual(ids({ sort: "battles-asc" }), ["c", "u", "e", "b", "a", "d"]);
 });
 
-test("battling a filter: within itself only with both sides on, never for unrated", () => {
-  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, group: "legendary" }, true), true);
+test("battling a filter: within itself only with both sides on, never with unrated", () => {
+  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, groups: ["legendary"] }, true), true);
   assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, eloMin: 1600 }, true), true);
-  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, group: "legendary" }, false), false);
-  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, group: "unrated" }, true), false);
-  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, group: "provisional" }, true), true);
-  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, group: "provisional" }, false), false);
+  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, groups: ["legendary"] }, false), false);
+  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, groups: ["unrated"] }, true), false);
+  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, groups: ["provisional"] }, true), true);
+  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, groups: ["provisional"] }, false), false);
+  assert.equal(filterBattlesWithin({ ...DEFAULT_EXPLORE_FILTERS, groups: ["legendary", "unrated"] }, true), false);
 });
 
 test("explorePoolScenes: the filter's scenes in ELO order, whatever the Explore sort", () => {
@@ -91,7 +94,7 @@ test("explorePoolScenes: the filter's scenes in ELO order, whatever the Explore 
     ["a", "b", "c", "d"],
   );
   assert.deepEqual(
-    explorePoolScenes(library, { ...DEFAULT_EXPLORE_FILTERS, group: "unrated" }, title).map((s) => s.id),
+    explorePoolScenes(library, { ...DEFAULT_EXPLORE_FILTERS, groups: ["unrated"] }, title).map((s) => s.id),
     ["u"],
   );
 });

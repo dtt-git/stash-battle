@@ -15,6 +15,7 @@
     openInNewTab: false,
     placementFromBottom: false,
     tierBorders: true,
+    cardDetails: "plays,oCount,record,rating,studio,performers,tags",
     previewVolume: 50,
     explorePageSize: 60,
     autoplayPreviews: true,
@@ -23,6 +24,15 @@
     pauseMediaOnOpen: true,
     testMode: false
   };
+  var CARD_DETAILS = [
+    { id: "plays", label: "Play Count" },
+    { id: "oCount", label: "O Count" },
+    { id: "record", label: "Record" },
+    { id: "rating", label: "Stash Rating" },
+    { id: "studio", label: "Studio" },
+    { id: "performers", label: "Performers" },
+    { id: "tags", label: "Tags" }
+  ];
   var LEGACY_FILTER_OPPONENTS_KEY = "sb_filterOpponents";
   var LEGACY_MUTE_PREVIEWS_KEY = "sb_mutePreviews";
   var SWISS_OPPONENT_ELO_WINDOW = 100;
@@ -286,6 +296,7 @@
     date
     rating100
     play_count
+    o_counter
     custom_fields
     paths {
       screenshot
@@ -792,7 +803,7 @@
   // src/explore.ts
   var DEFAULT_EXPLORE_FILTERS = {
     query: "",
-    group: null,
+    groups: [],
     eloMin: null,
     eloMax: null,
     sort: "elo-desc"
@@ -806,7 +817,6 @@
     }));
   }
   function inGroup(entry, group) {
-    if (group === null) return true;
     if (group === "unrated") return elo(entry.scene) === null;
     if (group === "provisional") return isProvisional(entry.scene);
     return entry.tier?.id === group;
@@ -815,7 +825,7 @@
     const words = filters2.query.toLowerCase().split(/\s+/).filter(Boolean);
     const ranged = filters2.eloMin !== null || filters2.eloMax !== null;
     const matches = entries2.filter((entry) => {
-      if (!inGroup(entry, filters2.group)) return false;
+      if (filters2.groups.length && !filters2.groups.some((group) => inGroup(entry, group))) return false;
       if (words.some((word) => !entry.text.includes(word))) return false;
       if (ranged) {
         const value = elo(entry.scene);
@@ -854,8 +864,11 @@
     };
     return [...entries2].sort(compare[sort]);
   }
+  function onlyGroup(filters2, group) {
+    return filters2.groups.length === 1 && filters2.groups[0] === group;
+  }
   function filterBattlesWithin(filters2, bothSides) {
-    return bothSides && filters2.group !== "unrated";
+    return bothSides && !filters2.groups.includes("unrated");
   }
   function explorePoolScenes(scenes2, filters2, title) {
     const text = filters2.query.trim() ? title : () => "";
@@ -1348,6 +1361,13 @@
     const n = Number(value);
     return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : fallback;
   }
+  function cardDetailsList(value) {
+    const on = new Set(value.split(",").map((s) => s.trim()));
+    return CARD_DETAILS.filter(({ id }) => on.has(id)).map(({ id }) => id).join(",");
+  }
+  function showsCardDetail(id) {
+    return state.settings.cardDetails.split(",").includes(id);
+  }
   function normalize(raw, base) {
     const bool = (key) => typeof raw[key] === "boolean" ? raw[key] : base[key];
     return {
@@ -1363,6 +1383,7 @@
       pauseMediaOnOpen: bool("pauseMediaOnOpen"),
       placementFromBottom: bool("placementFromBottom"),
       tierBorders: bool("tierBorders"),
+      cardDetails: typeof raw.cardDetails === "string" ? cardDetailsList(raw.cardDetails) : base.cardDetails,
       testMode: bool("testMode"),
       previewVolume: clampPercent(raw.previewVolume ?? base.previewVolume, base.previewVolume),
       explorePageSize: EXPLORE_PAGE_SIZES.includes(Number(raw.explorePageSize)) ? Number(raw.explorePageSize) : base.explorePageSize
@@ -2265,7 +2286,7 @@
     const performers = scene.performers && scene.performers.length > 0 ? scene.performers.map((p) => p.name).join(", ") : "No performers";
     const studio = scene.studio ? scene.studio.name : "No studio";
     const tags = scene.tags ? scene.tags.slice(0, 5).map((t) => t.name) : [];
-    const compactDetail = scene.studio?.name || (scene.performers?.length ? performers : "") || tags.join(", ");
+    const compactDetail = showsCardDetail("studio") && scene.studio?.name || (showsCardDetail("performers") && scene.performers?.length ? performers : "") || (showsCardDetail("tags") ? tags.join(", ") : "");
     const title = resolveSceneTitle(scene);
     const screenshotPath = scene.paths ? scene.paths.screenshot : null;
     const previewPath = scene.paths ? scene.paths.preview : null;
@@ -2284,6 +2305,29 @@
     const rankTitle = provisional ? ` title="${PROVISIONAL_TIP}"` : "";
     const record = recordText(scene);
     const rankDisplay = `${tier ? tierPill(tier) : ""}<span class="sb-scene-rank"${rankTitle}>${eloLabel}</span>`;
+    const showRecord = showsCardDetail("record");
+    const inline = [
+      showRecord ? record !== null ? `<strong>Record:</strong> ${record}` : `${battles(scene)} battle${battles(scene) === 1 ? "" : "s"}` : "",
+      showsCardDetail("plays") ? `<span title="Play Count">▶︎ ${scene.play_count || 0}</span>` : "",
+      showsCardDetail("oCount") ? `<span title="O Count">💦 ${scene.o_counter || 0}</span>` : ""
+    ].filter(Boolean);
+    let ratingLine = "";
+    if (showsCardDetail("rating")) {
+      ratingLine = `<div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}${inline.map((part) => `<span class="sb-meta-inline"> · ${part}</span>`).join("")}</div>`;
+    } else if (inline.length) {
+      const parts = inline.map((part, i) => `<span class="sb-meta-inline">${i ? " · " : ""}${part}</span>`).join("");
+      ratingLine = `<div class="sb-meta-item sb-meta-rating sb-meta-inline-only">${parts}</div>`;
+    }
+    const metaHtml = [
+      showsCardDetail("plays") ? `<div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>` : "",
+      showsCardDetail("oCount") ? `<div class="sb-meta-item sb-meta-ocount"><strong>O Count:</strong> ${scene.o_counter || 0}</div>` : "",
+      showRecord ? `<div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>` : "",
+      ratingLine,
+      compactDetail ? `<div class="sb-meta-item sb-meta-compact">${compactDetail}</div>` : "",
+      showsCardDetail("studio") ? `<div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>` : "",
+      showsCardDetail("performers") ? `<div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>` : "",
+      showsCardDetail("tags") ? `<div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>` : ""
+    ].filter(Boolean).join("\n              ");
     let statusBadgeHtml = "";
     if (typeof statusBadge === "string") {
       statusBadgeHtml = `<div class="sb-streak-badge">${statusBadge}</div>`;
@@ -2316,13 +2360,7 @@
             </div>
 
             <div class="sb-scene-meta">
-              <div class="sb-meta-item sb-meta-plays"><strong>Play Count:</strong> ${scene.play_count || 0}</div>
-              <div class="sb-meta-item sb-meta-battles">${record !== null ? `<strong>Record:</strong> ${record}` : `<strong>Battles:</strong> ${battles(scene)}`}</div>
-              <div class="sb-meta-item sb-meta-rating"><strong>Stash Rating:</strong> ${stashRating}<span class="sb-meta-record-inline"> · ${record !== null ? `<strong>Record:</strong> ${record}` : `${battles(scene)} battle${battles(scene) === 1 ? "" : "s"}`}</span></div>
-              <div class="sb-meta-item sb-meta-compact">${compactDetail}</div>
-              <div class="sb-meta-item sb-meta-studio"><strong>Studio:</strong> ${studio}</div>
-              <div class="sb-meta-item sb-meta-performers"><strong>Performers:</strong> ${performers}</div>
-              <div class="sb-meta-item sb-tags-row"><strong>Tags:</strong> ${tags.length > 0 ? tags.map((tag) => `<span class="sb-tag">${tag}</span>`).join("") : '<span class="sb-none">None</span>'}</div>
+              ${metaHtml}
             </div>
           </div>
 
@@ -2576,6 +2614,7 @@
         { key: "previewVolume", title: "Preview volume", hint: "How loud the hovered or tapped card's preview plays. 0 mutes it", className: "sb-setting-phone-only" },
         { key: "autoplayPreviews", title: "Autoplay previews", hint: "Loop both previews silently; hover a card to hear it" },
         { key: "pauseMediaOnOpen", title: "Pause playing video when Stash Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
+        { key: "cardDetails", title: "Card details", hint: "What battle cards show under the title. Phones and tablets show fewer" },
         { key: "tierBorders", title: "Tier colours on card borders", hint: "Each battle card's border takes the colour of its tier (👑 Legendary down to 🥉 Bronze), as on the Explore cards" },
         { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
         { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" }
@@ -2612,6 +2651,13 @@
         ({ value, label }) => `<option value="${value}" ${value === state.settings.stashRatings ? "selected" : ""}>${label}</option>`
       ).join("");
       return `<select data-setting="${key}" class="form-control form-control-sm sb-setting-select" aria-label="Stash ratings update mode">${options2}</select>`;
+    }
+    if (key === "cardDetails") {
+      const boxes = CARD_DETAILS.map(({ id: id2, label }) => {
+        const inputId = `sb-card-detail-${id2}`;
+        return `<div class="custom-control custom-checkbox custom-control-inline"><input type="checkbox" class="custom-control-input" id="${inputId}" data-card-detail="${id2}" ${showsCardDetail(id2) ? "checked" : ""}><label class="custom-control-label" for="${inputId}">${label}</label></div>`;
+      }).join("");
+      return `<div class="sb-card-details">${boxes}</div>`;
     }
     const id = `sb-setting-${key}`;
     return `
@@ -2685,6 +2731,9 @@
     root.querySelectorAll("select[data-setting]").forEach((select) => {
       select.value = String(state.settings[select.dataset.setting]);
     });
+    root.querySelectorAll("input[data-card-detail]").forEach((input) => {
+      input.checked = showsCardDetail(input.dataset.cardDetail);
+    });
     root.querySelectorAll('[data-hint-for="stashRatings"]').forEach((hint) => {
       hint.textContent = stashRatingsOption(state.settings.stashRatings).desc;
     });
@@ -2742,6 +2791,12 @@
         }
       });
     });
+    root.querySelectorAll("input[data-card-detail]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const on = [...root.querySelectorAll("input[data-card-detail]")].filter((box) => box.checked);
+        apply({ cardDetails: on.map((box) => box.dataset.cardDetail).join(",") }, "cardDetails");
+      });
+    });
     root.querySelectorAll(".sb-volume-icon").forEach((btn) => {
       btn.addEventListener("click", () => {
         const current2 = state.settings.previewVolume;
@@ -2795,7 +2850,7 @@
     page = 0;
   }
   function isFiltered() {
-    return filters.query.trim() !== "" || filters.group !== null || filters.eloMin !== null || filters.eloMax !== null;
+    return filters.query.trim() !== "" || filters.groups.length > 0 || filters.eloMin !== null || filters.eloMax !== null;
   }
   function pageSize() {
     return state.settings.explorePageSize || Math.max(1, results.length);
@@ -2803,13 +2858,16 @@
   function pageCount() {
     return Math.max(1, Math.ceil(results.length / pageSize()));
   }
+  var GROUPS = [
+    ...TIERS.map((t) => ({ value: t.id, label: `${t.emoji} ${t.name}`, tip: tierDescription(t) })),
+    { value: "provisional", label: "Provisional", tip: PROVISIONAL_TIP },
+    { value: "unrated", label: "Unrated", tip: "No ELO yet" }
+  ];
   function controlsHtml() {
-    const groups = [
-      ...TIERS.map((t) => ({ value: t.id, label: `${t.emoji} ${t.name}`, tip: tierDescription(t) })),
-      { value: "provisional", label: "Provisional", tip: PROVISIONAL_TIP },
-      { value: "unrated", label: "Unrated", tip: "No ELO yet" }
-    ];
-    const chip = (value, label, tip = "") => `<button type="button" class="sb-chip${filters.group === value ? " active" : ""}" data-group="${value ?? ""}"${tip ? ` title="${tip}"` : ""}>${label}</button>`;
+    const chip = (value, label, tip = "") => {
+      const on = value ? filters.groups.includes(value) : filters.groups.length === 0;
+      return `<button type="button" class="sb-chip${on ? " active" : ""}" data-group="${value}" aria-pressed="${on}"${tip ? ` title="${tip}"` : ""}>${label}</button>`;
+    };
     const number = (value) => value === null ? "" : String(value);
     return `
         <div class="sb-explore-controls">
@@ -2820,7 +2878,7 @@
             </select>
           </div>
           <div class="sb-explore-row sb-explore-row-wrap">
-            <div class="sb-chips">${chip(null, "All")}${groups.map((g) => chip(g.value, g.label, g.tip)).join("")}</div>
+            <div class="sb-chips">${chip("", "All")}${GROUPS.map((g) => chip(g.value, g.label, g.tip)).join("")}</div>
             <div class="sb-explore-range">
               <span>ELO</span>
               <input type="number" class="sb-explore-input sb-explore-elo" data-bound="min" placeholder="from" value="${number(filters.eloMin)}" aria-label="Lowest ELO">
@@ -2864,10 +2922,8 @@
   }
   function filterLabel() {
     const parts = [];
-    const tier = TIERS.find((t) => t.id === filters.group);
-    if (tier) parts.push(`${tier.emoji} ${tier.name}`);
-    else if (filters.group === "provisional") parts.push("Provisional");
-    else if (filters.group === "unrated") parts.push("Unrated");
+    const groups = GROUPS.filter((g) => filters.groups.includes(g.value));
+    if (groups.length) parts.push(groups.map((g) => g.label).join(", "));
     if (filters.eloMin !== null || filters.eloMax !== null) {
       parts.push(`ELO ${filters.eloMin ?? "…"}–${filters.eloMax ?? "…"}`);
     }
@@ -2879,8 +2935,8 @@
     const within = filterBattlesWithin(filters, state.settings.filterOpponents);
     const n = results.length;
     const scenes2 = `${n} scene${n === 1 ? "" : "s"}`;
-    const label = filters.group === "unrated" ? `📍 Place these ${scenes2}` : filters.group === "provisional" ? `🔁 Keep testing these ${scenes2}` : `⚔️ Battle these ${scenes2}`;
-    const tip = filters.group === "unrated" ? "Placement, one scene at a time, against your whole library" : within ? "Swiss, with both sides from these scenes (“Use filtered scenes for both sides” is on)" : "Swiss, these scenes against your whole library (turn on “Use filtered scenes for both sides” in Settings to keep both sides in the filter)";
+    const label = onlyGroup(filters, "unrated") ? `📍 Place these ${scenes2}` : onlyGroup(filters, "provisional") ? `🔁 Keep testing these ${scenes2}` : `⚔️ Battle these ${scenes2}`;
+    const tip = onlyGroup(filters, "unrated") ? "Placement, one scene at a time, against your whole library" : within ? "Swiss, with both sides from these scenes (“Use filtered scenes for both sides” is on)" : "Swiss, these scenes against your whole library (turn on “Use filtered scenes for both sides” in Settings to keep both sides in the filter)";
     const disabled = within && n < 2 ? " disabled" : "";
     return `<button type="button" class="btn btn-primary btn-sm sb-explore-battle" data-explore-battle title="${tip}"${disabled}>${label}</button>`;
   }
@@ -2948,8 +3004,17 @@
     const target = e.target;
     const chip = target.closest(".sb-chip");
     if (chip) {
-      filters.group = chip.dataset.group || null;
-      content.querySelectorAll(".sb-chip").forEach((c) => c.classList.toggle("active", c === chip));
+      const group = chip.dataset.group || "";
+      const on = new Set(filters.groups);
+      if (!group) on.clear();
+      else if (on.has(group)) on.delete(group);
+      else on.add(group);
+      filters.groups = GROUPS.map((g) => g.value).filter((value) => on.has(value));
+      content.querySelectorAll(".sb-chip").forEach((c) => {
+        const active = c.dataset.group ? on.has(c.dataset.group) : on.size === 0;
+        c.classList.toggle("active", active);
+        c.setAttribute("aria-pressed", String(active));
+      });
       applyFilters(content);
       return;
     }
@@ -4882,7 +4947,7 @@
         state.leastTested = false;
         state.explorePool = { filters: { ...filters2 }, label };
         resetShuffle();
-        const mode = filters2.group === "unrated" ? "placement" : "swiss";
+        const mode = onlyGroup(filters2, "unrated") ? "placement" : "swiss";
         if (state.currentMode !== mode) switchMode(modal, mode);
         toBattle();
         void loadNewPair();
@@ -4942,6 +5007,7 @@
       case "openInNewTab":
       case "cleanMode":
       case "tierBorders":
+      case "cardDetails":
         rerenderCurrentPair();
         break;
     }

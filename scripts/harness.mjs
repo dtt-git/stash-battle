@@ -177,6 +177,7 @@ export function syntheticLibrary(size, seed = 7) {
       date: "2024-01-01",
       rating100,
       play_count: Math.floor(-Math.log(1 - r()) * 4),
+      o_counter: Math.floor(-Math.log(1 - r()) * 1.5),
       custom_fields,
       paths: { screenshot: null, preview: null },
       files: [{ duration: 60 + Math.floor(r() * 3000), path: `/library/synthetic-${i + 1}.mp4` }],

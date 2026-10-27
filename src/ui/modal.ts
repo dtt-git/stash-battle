@@ -2,6 +2,7 @@
 
 import { clearSceneCache } from "../cache";
 import { fetchSetupScenes } from "../eloSetup";
+import { onlyGroup } from "../explore";
 import { scenesListQuery } from "../filters";
 import { getSceneIdFromUrl, holdStashListRefresh, sceneCustomFieldsSupported } from "../graphql";
 import { applyStashRatings, queueRatingWrite, SCENE_MISSING_EVENT, scheduleStashRatingSync, writeStashRatings } from "../rating";
@@ -222,7 +223,7 @@ function statsActions(modal: HTMLElement): StatsActions {
       state.leastTested = false;
       state.explorePool = { filters: { ...filters }, label };
       resetShuffle();
-      const mode: Mode = filters.group === "unrated" ? "placement" : "swiss";
+      const mode: Mode = onlyGroup(filters, "unrated") ? "placement" : "swiss";
       if (state.currentMode !== mode) switchMode(modal, mode);
       toBattle();
       void loadNewPair();
@@ -294,6 +295,7 @@ function onSettingChanged(key: keyof Settings): void {
     case "openInNewTab":
     case "cleanMode":
     case "tierBorders":
+    case "cardDetails":
       rerenderCurrentPair();
       break;
   }

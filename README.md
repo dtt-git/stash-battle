@@ -31,7 +31,7 @@ ELO is saved in each scene's custom fields, so **Stash Battle doesn't touch your
 
 ### Scene cards
 
-As in the screenshot at the top, each card shows the scene's tier, ELO and rank (`ELO 1740 · #50`), its record (`Record: 12–5`) and its Stash rating.
+As in the screenshot at the top, each card shows the scene's tier, ELO and rank (`ELO 1740 · #50`), its record (`Record: 12–5`) and its Stash rating. Pick what else shows in **Settings → Card details**.
 
 - **Win chances** at the VS, like a chess broadcast: `68%` VS `32%`. Win with 40% or less and the result says **Upset!**
 - **Tiers** 👑 Legendary · 💎 Diamond · 🔷 Platinum · 🥇 Gold · 🥈 Silver · 🥉 Bronze, by where a scene ranks among your settled scenes (top 1%, 5%, 15%, 35%, 65%, the rest), so every tier always has scenes in it. The card's border takes the tier's colour (a setting).
@@ -60,7 +60,7 @@ Apply any filters on the Scenes page before opening Stash Battle. What you see o
 
 ### 🔎 Explore
 
-Your whole library as small cards ranked by ELO. Search by title, studio or performer, filter by tier, provisional or unrated, pick an ELO range, and sort by ELO, plays, battles, best record, highest peak or longest win streak. Hover a card for its preview, click it to open the scene, or ⚔️ to keep battling it until you press Stop. **Battle these N scenes** battles everything the filter shows (unrated scenes go straight to Placement) until you press Stop.
+Your whole library as small cards ranked by ELO. Search by title, studio or performer, filter by one or more tiers, provisional or unrated, pick an ELO range, and sort by ELO, plays, battles, best record, highest peak or longest win streak. Hover a card for its preview, click it to open the scene, or ⚔️ to keep battling it until you press Stop. **Battle these N scenes** battles everything the filter shows (unrated scenes go straight to Placement) until you press Stop.
 
 <img width="600" alt="Explore tab: small scene cards with tier pills and ELO, search, tier filters, ELO range, sort and page controls" src="docs/screenshots/explore.png" />
 
@@ -97,6 +97,7 @@ Most are also under Stash's Settings → Plugins. Everything saves to Stash:
 - **Placement: start from the bottom**
 - **Autoplay previews** – both loop silently; hover a card to hear it (on by default)
 - **Pause playing video when Stash Battle opens** – on by default; turn it off to keep a scene playing behind the battle
+- **Card details** – which lines battle cards show (play count, O count, record, Stash rating, studio, performers, tags)
 - **Tier colours on card borders** – on by default
 - **Open scenes in a new tab** when clicking a thumbnail
 - **Clean mode** – a 🗑 button on each card opens Stash's own delete dialog (same options and defaults as deleting in Stash), so you can clean up without leaving the battle

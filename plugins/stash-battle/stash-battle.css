@@ -1500,13 +1500,19 @@
   color: #888;
 }
 
-/* The record joins the rating line where its own line is hidden (tablets, phones, short screens) */
 /* Phones only (see the 640px block) */
 .sb-meta-compact {
   display: none;
 }
 
-.sb-meta-record-inline {
+/* The record, play count and O count join the rating line where their own lines are hidden
+   (tablets, phones, short screens) */
+.sb-meta-inline {
+  display: none;
+}
+
+/* With Stash Rating off, the rating line only carries those there */
+.sb-meta-inline-only {
   display: none;
 }
 
@@ -1928,13 +1934,18 @@ body.sb-battle-open > .modal {
   }
 
   .sb-meta-plays,
+  .sb-meta-ocount,
   .sb-meta-battles,
   .sb-tags-row {
     display: none;
   }
 
-  .sb-meta-record-inline {
+  .sb-meta-inline {
     display: inline;
+  }
+
+  .sb-meta-inline-only {
+    display: block;
   }
 
   .sb-choose-btn {
@@ -1969,13 +1980,18 @@ body.sb-battle-open > .modal {
   }
 
   .sb-meta-plays,
+  .sb-meta-ocount,
   .sb-meta-battles,
   .sb-tags-row {
     display: none;
   }
 
-  .sb-meta-record-inline {
+  .sb-meta-inline {
     display: inline;
+  }
+
+  .sb-meta-inline-only {
+    display: block;
   }
 
   .sb-mode-btn {
@@ -2030,6 +2046,12 @@ body.sb-battle-open > .modal {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* What's being battled (and its Stop link) wraps instead of being cut off */
+  #sb-pool-status {
+    white-space: normal;
+    text-wrap: balance;
   }
 
   .sb-pool-hint {
@@ -2550,6 +2572,7 @@ body.sb-battle-open > .modal {
   }
 
   .sb-settings-tab .setting:has(.sb-setting-select),
+  .sb-settings-tab .setting:has(.sb-card-details),
   .sb-settings-tab .setting:has([data-action]) {
     flex-direction: column;
     align-items: stretch;
@@ -2709,6 +2732,30 @@ body.sb-battle-open > .modal {
 @media (max-width: 480px) {
   .sb-settings-tab .setting.sb-setting-phone-only {
     display: flex;
+  }
+}
+
+/* Settings → Card details: the checkboxes wrap under the title where they don't fit beside it */
+.sb-card-details {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 4px;
+}
+
+.sb-card-details .custom-control-inline {
+  margin-right: 0;
+  margin-left: 1rem;
+}
+
+@media (max-width: 640px) {
+  .sb-card-details {
+    justify-content: flex-start;
+  }
+
+  .sb-card-details .custom-control-inline {
+    margin-left: 0;
+    margin-right: 1rem;
   }
 }
 

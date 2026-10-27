@@ -14,8 +14,8 @@ export interface ExploreEntry {
   text: string;
 }
 
-/** A tier id, or "provisional" / "unrated"; null shows everyone. */
-export type ExploreGroup = string | null;
+/** A tier id, or "provisional" / "unrated". */
+export type ExploreGroup = string;
 
 export type ExploreSort =
   | "elo-desc"
@@ -30,7 +30,8 @@ export type ExploreSort =
 
 export interface ExploreFilters {
   query: string;
-  group: ExploreGroup;
+  /** Scenes in any of these groups; none shows everyone. */
+  groups: ExploreGroup[];
   /** Inclusive ELO range; null for no limit. A range leaves unrated scenes out. */
   eloMin: number | null;
   eloMax: number | null;
@@ -39,7 +40,7 @@ export interface ExploreFilters {
 
 export const DEFAULT_EXPLORE_FILTERS: ExploreFilters = {
   query: "",
-  group: null,
+  groups: [],
   eloMin: null,
   eloMax: null,
   sort: "elo-desc",
@@ -63,7 +64,6 @@ export function exploreEntries(
 }
 
 function inGroup(entry: ExploreEntry, group: ExploreGroup): boolean {
-  if (group === null) return true;
   if (group === "unrated") return elo(entry.scene) === null;
   if (group === "provisional") return isProvisional(entry.scene);
   return entry.tier?.id === group;
@@ -74,7 +74,7 @@ export function filterExplore(entries: ExploreEntry[], filters: ExploreFilters):
   const words = filters.query.toLowerCase().split(/\s+/).filter(Boolean);
   const ranged = filters.eloMin !== null || filters.eloMax !== null;
   const matches = entries.filter((entry) => {
-    if (!inGroup(entry, filters.group)) return false;
+    if (filters.groups.length && !filters.groups.some((group) => inGroup(entry, group))) return false;
     if (words.some((word) => !entry.text.includes(word))) return false;
     if (ranged) {
       const value = elo(entry.scene);
@@ -121,14 +121,19 @@ export function sortExplore(entries: ExploreEntry[], sort: ExploreSort): Explore
   return [...entries].sort(compare[sort]);
 }
 
+/** The filter picks just this group (unrated scenes only, say). */
+export function onlyGroup(filters: ExploreFilters, group: ExploreGroup): boolean {
+  return filters.groups.length === 1 && filters.groups[0] === group;
+}
+
 /**
  * Battling an Explore filter: do both sides come from the filter? Like the Scenes page filter,
- * only with "Use filtered scenes for both sides" (`bothSides`). Never for unrated scenes: they're
+ * only with "Use filtered scenes for both sides" (`bothSides`). Never with unrated scenes: they're
  * placed, and placing a scene among other unrated ones (none has an ELO) would land them all at
  * 1500.
  */
 export function filterBattlesWithin(filters: ExploreFilters, bothSides: boolean): boolean {
-  return bothSides && filters.group !== "unrated";
+  return bothSides && !filters.groups.includes("unrated");
 }
 
 /** The scenes an Explore filter picks from an ELO-sorted library, in ELO order. */
