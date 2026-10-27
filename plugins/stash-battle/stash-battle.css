@@ -7,7 +7,7 @@
 .sb-container {
   max-width: 1600px;
   margin: 0 auto;
-  padding: 20px 24px 0;
+  padding: 14px 24px 0;
   font-family: inherit;
 }
 
@@ -19,36 +19,18 @@
 
 /* Header */
 .sb-header {
-  text-align: center;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
+/* Left-aligned with the tab bar; the right margin keeps it clear of the close button */
 .sb-title {
-  font-size: 2.2rem;
+  font-size: 1.8rem;
   font-weight: bold;
-  margin-bottom: 6px;
+  margin: 0 40px 10px 4px;
   color: #fff;
 }
 
-.sb-subtitle {
-  font-size: 1.05rem;
-  color: #888;
-  margin-bottom: 16px;
-}
-
 /* Lives in the Battle tab (not the header) so toggling it never moves the tab bar */
-.sb-fun-badge {
-  display: block;
-  width: fit-content;
-  margin: 0 auto 12px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 0.85rem;
-  color: #ffd27a;
-  background: rgba(255, 193, 7, 0.12);
-  border: 1px solid rgba(255, 193, 7, 0.4);
-}
-
 .sb-climb-warning {
   margin: 12px 0 0;
   padding: 8px 12px;
@@ -73,7 +55,7 @@
   display: flex;
   align-items: stretch;
   gap: 4px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .sb-mode-row .sb-mode-toggle {
@@ -124,7 +106,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding: 10px 16px;
+  padding: 7px 16px;
   min-width: 0;
   flex: 1;
   max-width: 160px;
@@ -159,7 +141,7 @@
   position: absolute;
   top: calc(100% + 8px);
   left: 50%;
-  z-index: 40;
+  z-index: 200; /* above the cards' border layer (101) */
   width: min(280px, 80vw);
   padding: 8px 12px;
   border: 1px solid #444;
@@ -170,7 +152,8 @@
   font-weight: normal;
   line-height: 1.45;
   text-align: left;
-  white-space: normal;
+  /* pre-line: a line break in a tip starts a new line */
+  white-space: pre-line;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
   opacity: 0;
   visibility: hidden;
@@ -224,7 +207,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 8px;
   border-bottom: 1px solid #333;
   text-align: left;
 }
@@ -351,15 +334,672 @@
   font-size: 0.82rem;
 }
 
-.sb-setting-number {
-  width: 80px;
-  text-align: right;
+.sb-setting-select {
+  width: auto;
+  min-width: 140px;
+  margin-left: auto;
+}
+
+/* Stash turns off the native select arrow (appearance: none): draw a chevron so it reads as a dropdown */
+:is(.sb-settings-tab, .sb-explore-tab) .sb-setting-select,
+:is(.sb-settings-tab, .sb-explore-tab) .sb-setting-select:focus {
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23bbb' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 8px;
+}
+
+/* Action buttons (Reset ELO) line up with the other controls' right edge */
+.sb-settings-tab .setting > div:last-child .btn[data-action] {
+  display: block;
+  margin-left: auto;
+  margin-right: 0; /* Stash's own settings rows give buttons a 0.25rem right margin */
+}
+
+/* The modal's own dark palette instead of Stash's default blue-grey inputs */
+:is(.sb-settings-tab, .sb-explore-tab) .sb-setting-select,
+.sb-explore-input {
+  background-color: #121212;
+  border: 1px solid #444;
+  color: #ddd;
+  box-shadow: none;
+}
+
+:is(.sb-settings-tab, .sb-explore-tab) .sb-setting-select:focus,
+.sb-explore-input:focus {
+  background-color: #121212;
+  border-color: var(--primary, #137cbd);
+  color: #fff;
+  box-shadow: none;
 }
 
 .sb-settings-note {
   margin: 16px 0 0;
   color: #666;
   font-size: 0.8rem;
+}
+
+/* ---------- Stats tab ---------- */
+.sb-stats-tab,
+.sb-records-tab {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+  text-align: left;
+}
+
+:is(.sb-stats-tab, .sb-records-tab) .setting-section h1 {
+  font-size: 1.1rem;
+  margin: 0 0 8px;
+  color: #fff;
+}
+
+:is(.sb-stats-tab, .sb-records-tab) .setting-section:not(:first-child) {
+  margin-top: 20px;
+}
+
+:is(.sb-stats-tab, .sb-records-tab) .card {
+  overflow: visible;
+  padding: 14px 16px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 10px;
+}
+
+.sb-stats-empty {
+  margin: 40px 0;
+  color: #888;
+  text-align: center;
+}
+
+.sb-stats-note {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  color: #aaa;
+}
+
+.sb-stats-note.sb-stats-intro {
+  margin: 0 0 10px;
+}
+
+.sb-stats-muted {
+  font-size: 0.85rem;
+  color: #888;
+}
+
+.sb-stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sb-stat-tile {
+  cursor: default;
+}
+
+.sb-stat-value {
+  font-size: 1.8rem;
+  font-weight: bold;
+  line-height: 1.2;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-stat-label {
+  font-size: 0.85rem;
+  color: #888;
+}
+
+/* Charts: hand-drawn SVG, sized to the card by statsTab.ts */
+/* Charts clip to their own box (tooltips are kept inside it), so nothing widens the modal */
+.sb-chart {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.sb-chart-svg {
+  display: block;
+  overflow: visible;
+}
+
+.sb-chart-grid {
+  stroke: #2a2a2a;
+  stroke-width: 1;
+}
+
+.sb-chart-axis,
+.sb-chart-scale {
+  stroke: #555;
+  stroke-width: 1;
+}
+
+.sb-chart-label {
+  fill: #888;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-chart-scale-label {
+  fill: #ccc;
+  cursor: default;
+}
+
+.sb-chart-caption {
+  fill: #888;
+  font-size: 11px;
+}
+
+.sb-chart-bar {
+  fill: #0d6efd;
+}
+
+.sb-chart-hit:hover .sb-chart-bar {
+  fill: #5a9bff;
+}
+
+.sb-chart-hit:hover > rect {
+  fill: rgba(255, 255, 255, 0.04);
+}
+
+.sb-chart-clamp {
+  fill: rgba(255, 255, 255, 0.05);
+}
+
+.sb-chart-split {
+  stroke: #555;
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+/* Dark outline keeps the label readable over dots */
+.sb-chart-quadrant {
+  fill: #aaa;
+  font-size: 12px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #1a1a1a;
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.sb-dot {
+  fill: #0d6efd;
+  fill-opacity: 0.75;
+  stroke: #1a1a1a;
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+
+.sb-dot:hover {
+  fill: #5a9bff;
+  fill-opacity: 1;
+}
+
+.sb-chart-tip {
+  position: absolute;
+  z-index: 5;
+  padding: 4px 8px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #0b0b0b;
+  font-size: 0.8rem;
+  color: #ddd;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* How settled: one bar per battle range */
+.sb-settled {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sb-settled-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  cursor: default;
+}
+
+.sb-settled-label {
+  color: #aaa;
+}
+
+.sb-settled-track {
+  height: 14px;
+}
+
+.sb-settled-bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: #0d6efd;
+}
+
+.sb-settled-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+
+.sb-stats-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+}
+
+.sb-chart-hit:has(.sb-chart-bar) {
+  cursor: pointer;
+}
+
+/* Hover card on the hidden gems chart: the small card itself, no tooltip box */
+/* Touch: a tapped dot's card stays and can be tapped */
+.sb-chart-tip.sb-chart-tip-pinned {
+  pointer-events: auto;
+}
+
+/* A tapped histogram bar (touch): what it holds, and a button to explore it */
+.sb-chart-tip.sb-chart-tip-pinned:not(.sb-chart-tip-card) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.sb-chart-tip.sb-chart-tip-card {
+  width: 210px;
+  padding: 0;
+  border: none;
+  background: none;
+  white-space: normal;
+}
+
+/* Stats → Records: rows of small cards, each with a caption */
+.sb-record-more {
+  margin-left: 10px;
+  font-size: 0.8rem;
+  font-weight: normal;
+}
+
+.sb-record-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.sb-record-caption {
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Explore tab ---------- */
+.sb-explore-tab {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+  text-align: left;
+}
+
+.sb-explore-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sb-explore-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sb-explore-row-wrap {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.sb-explore-input {
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.sb-explore-input::placeholder {
+  color: #777;
+}
+
+.sb-explore-select {
+  padding-right: 32px;
+  appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23bbb' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 8px;
+}
+
+/* While Explore shows, the scroll bar keeps its space, so filtering (which can add or remove the
+   scroll bar) doesn't shift the layout sideways */
+.sb-modal-content:has(.sb-explore-tab:not([hidden])) {
+  scrollbar-gutter: stable;
+}
+
+.sb-explore-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sb-explore-paging {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sb-explore-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sb-explore-pager-bottom {
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.sb-pager-select {
+  height: 32px;
+}
+
+.sb-pager-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #1a1a1a;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: #ddd;
+  cursor: pointer;
+}
+
+.sb-pager-btn:hover:not(:disabled) {
+  border-color: #0d6efd;
+  color: #fff;
+}
+
+.sb-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sb-explore-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sb-explore-sort {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.sb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sb-chip {
+  padding: 5px 12px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1a1a1a;
+  font-size: 0.85rem;
+  color: #ccc;
+  cursor: pointer;
+}
+
+.sb-chip:hover {
+  border-color: #555;
+  color: #fff;
+}
+
+.sb-chip.active {
+  border-color: #0d6efd;
+  background: #0d6efd;
+  color: #fff;
+}
+
+.sb-explore-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #888;
+}
+
+.sb-explore-elo {
+  width: 92px;
+}
+
+.sb-explore-status {
+  font-size: 0.85rem;
+  color: #888;
+}
+
+/* The count (and Clear filters), then the battle button; on a narrow screen the button wraps
+   onto its own line, at the left */
+.sb-explore-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.sb-explore-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+/* Small scene card (Explore, and the hidden gems hover card) */
+.sb-mini-card {
+  --sb-mini-border: #333;
+  position: relative;
+  min-width: 0;
+  border-radius: 10px;
+  background: #1a1a1a;
+  overflow: hidden;
+  transition: transform 0.2s ease;
+}
+
+/* Border drawn on top of the thumbnail, as on the battle cards (no seam at the corners) */
+.sb-mini-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--sb-mini-border);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.sb-mini-card[data-tier] {
+  --sb-mini-border: var(--sb-tier-color);
+}
+
+@media (hover: hover) {
+  .sb-mini-card:not(.sb-mini-static):hover {
+    transform: translateY(-2px);
+  }
+}
+
+.sb-mini-link,
+.sb-mini-link:hover {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+/*
+ * The thumbnail starts 1px inside the card, under the 2px border, and carries its own top corners
+ * (see the battle card). The card's edge is anti-aliased by both its clip and its border, which
+ * let a faint line of a cropped (edge-to-edge) picture through; a bright tier border hid it, the
+ * dark grey one of unrated and provisional cards didn't. Inset, the picture's edge is always
+ * under the opaque part of the border.
+ */
+.sb-mini-thumb {
+  position: relative;
+  margin: 1px 1px 0;
+  aspect-ratio: 16 / 9;
+  border-radius: 9px 9px 0 0;
+  background: #000;
+  overflow: hidden;
+}
+
+.sb-mini-img,
+.sb-mini-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 9px 9px 0 0;
+  object-fit: cover;
+}
+
+.sb-mini-video {
+  position: absolute;
+  inset: 0;
+}
+
+/* While the preview plays, the thumbnail under it is hidden: a sub-pixel gap at the video's edge
+   (its bottom, say) would otherwise show a line of the picture */
+.sb-mini-thumb:has(.sb-mini-video) .sb-mini-img {
+  visibility: hidden;
+}
+
+.sb-mini-img.sb-no-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.sb-mini-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px 9px;
+}
+
+.sb-mini-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.sb-mini-elo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sb-mini-card .sb-tier {
+  margin: 0;
+  padding: 0 5px;
+  font-size: 0.72rem;
+}
+
+.sb-mini-rank {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #ffc107;
+}
+
+.sb-mini-meta {
+  font-size: 0.78rem;
+  color: #888;
+}
+
+/* Covers the thumbnail (1px inside the card, as it is) so the mute button can sit at its bottom
+   left; only the button takes taps */
+.sb-mini-overlay {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  right: 1px;
+  z-index: 1;
+  aspect-ratio: 16 / 9;
+  pointer-events: none;
+}
+
+.sb-mini-overlay .sb-mini-mute {
+  bottom: 6px;
+  left: 6px;
+  width: 30px;
+  height: 30px;
+  font-size: 0.85rem;
+  pointer-events: auto;
+}
+
+.sb-mini-battle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  padding: 1px 7px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.sb-mini-card:hover .sb-mini-battle,
+.sb-mini-battle:focus-visible {
+  opacity: 1;
+}
+
+.sb-mini-battle:hover {
+  border-color: #0d6efd;
+  background: #0d6efd;
+}
+
+/* Touch screens have no hover: the battle button always shows */
+@media (hover: none) {
+  .sb-mini-battle {
+    opacity: 1;
+  }
 }
 
 /* Which scenes are being rated (filter vs whole library) */
@@ -404,14 +1044,65 @@
   font-size: 2.6rem;
   font-weight: bold;
   color: #dc3545;
-  text-shadow: 0 0 20px rgba(220, 53, 69, 0.5);
+}
+
+/* Win chances under the VS: left %, right %, then a thin bar filled to the left side's share */
+.sb-vs-stack {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-areas:
+    "vs vs"
+    "left right"
+    "bar bar";
+  justify-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+  cursor: default;
+}
+
+.sb-vs-stack .sb-vs-text {
+  grid-area: vs;
+}
+
+.sb-win-chance {
+  font-size: 0.85rem;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-win-chance-left {
+  grid-area: left;
+}
+
+.sb-win-chance-right {
+  grid-area: right;
+}
+
+.sb-win-chance.sb-favoured {
+  color: #fff;
+  font-weight: bold;
+}
+
+.sb-win-bar {
+  grid-area: bar;
+  justify-self: stretch;
+  display: flex;
+  height: 4px;
+  min-width: 64px;
+  border-radius: 2px;
+  background: #444;
+  overflow: hidden;
+}
+
+.sb-win-bar > span {
+  background: #ccc;
 }
 
 /* Scene Card */
 .sb-scene-card {
+  --sb-card-border: #333;
   position: relative;
   background: #1a1a1a;
-  border: 2px solid #333;
   border-radius: 12px;
   overflow: hidden;
   transition: all 0.3s ease;
@@ -420,21 +1111,44 @@
   min-width: 0;
 }
 
+/* With tiers on, the border takes the tier's colour (set by its .sb-tier-* class, below) */
+.sb-scene-card[data-tier] {
+  --sb-card-border: var(--sb-tier-color);
+}
+
+/*
+ * The card's border is drawn on top of its content, not around it. With a normal border, the
+ * border's inner edge and the clip of the content (thumbnail, rating overlay) are two curved
+ * edges in the same place, each anti-aliased against the dark card background, which leaves a
+ * dark seam at the rounded corners. Now the content is clipped once, at the outer edge, and the
+ * border covers that edge. (A box-shadow ring outside the edge was tried in 3.0 and brought the
+ * inner-corner aliasing back; see DOCUMENTATION Pitfalls.)
+ */
+.sb-scene-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 101; /* above the rating overlay (100) */
+  border: 2px solid var(--sb-card-border);
+  border-radius: inherit;
+  pointer-events: none;
+  transition: border-color 0.3s ease;
+}
+
+/* Hover lifts the card; the border keeps its colour (a tier's colour means something) */
 @media (hover: hover) {
   .sb-scene-card:hover {
-    border-color: #0d6efd;
     transform: translateY(-4px);
-    box-shadow: 0 10px 30px rgba(13, 110, 253, 0.2);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   }
 }
 
 .sb-scene-card.sb-winner {
-  border-color: #28a745 !important;
-  box-shadow: 0 0 30px rgba(40, 167, 69, 0.5);
+  --sb-card-border: #28a745 !important;
 }
 
 .sb-scene-card.sb-loser {
-  border-color: #dc3545 !important;
+  --sb-card-border: #dc3545 !important;
   opacity: 0.7;
 }
 
@@ -446,7 +1160,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
+  /* No radius of its own: the card (overflow: hidden) clips it to its inner corners, which are
+     the card's 12px minus its 2px border. A 12px radius here left a sliver at each corner. */
   z-index: 100;
   animation: fadeInOverlay 0.3s ease-out;
   pointer-events: none;
@@ -472,6 +1187,15 @@
   font-weight: bold;
   margin-top: 8px;
   animation: bounceIn 0.4s ease-out 0.2s both;
+}
+
+.sb-rating-upset {
+  margin-top: 6px;
+  font-size: 1.35rem;
+  font-weight: bold;
+  color: #fff;
+  opacity: 0.9;
+  animation: bounceIn 0.4s ease-out 0.35s both;
 }
 
 .sb-rating-winner .sb-rating-change {
@@ -505,12 +1229,19 @@
   overflow: hidden;
   background: #000;
   cursor: pointer;
+  /*
+   * Same top corners as the card (the thumbnail starts at its very edge), set here and on the
+   * image and video themselves: Chrome can hand a playing video to the graphics hardware,
+   * which ignores the card's rounded clipping but respects the video's own rounded corners.
+   */
+  border-radius: 12px 12px 0 0;
 }
 
 .sb-scene-image {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  border-radius: inherit;
   transition: opacity 0.3s ease;
 }
 
@@ -530,6 +1261,7 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+  border-radius: inherit;
   opacity: 0;
   transition: opacity 0.3s ease;
   z-index: 1;
@@ -543,6 +1275,32 @@
 @media (hover: hover) {
   .sb-scene-card:hover .sb-hover-preview {
     opacity: 1;
+  }
+}
+
+/* Touch screens: mute / unmute previews from the card (bottom left of the preview) */
+.sb-card-mute {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 6;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (hover: none) {
+  .sb-card-mute {
+    display: flex;
   }
 }
 
@@ -697,6 +1455,33 @@
   white-space: nowrap;
 }
 
+.sb-scene-rank[title] {
+  cursor: help;
+}
+
+/* Tier pill ("Show tiers on cards"), just before the ELO badge */
+.sb-tier {
+  --sb-tier-color: #555;
+  margin: 1px 2px 0 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--sb-tier-color);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.6;
+  color: #ddd;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Checked with the dataviz palette validator: every pair stays apart for colour-blind viewers */
+.sb-tier-legendary { --sb-tier-color: #ff5277; }
+.sb-tier-diamond { --sb-tier-color: #3d9bff; }
+.sb-tier-platinum { --sb-tier-color: #2ee0c0; }
+.sb-tier-gold { --sb-tier-color: #ffd23f; }
+.sb-tier-silver { --sb-tier-color: #8f99a5; }
+.sb-tier-bronze { --sb-tier-color: #c46a2b; }
+
 .sb-scene-meta {
   display: flex;
   flex-direction: column;
@@ -713,6 +1498,22 @@
 
 .sb-meta-item strong {
   color: #888;
+}
+
+/* Phones only (see the 640px block) */
+.sb-meta-compact {
+  display: none;
+}
+
+/* The record, play count and O count join the rating line where their own lines are hidden
+   (tablets, phones, short screens) */
+.sb-meta-inline {
+  display: none;
+}
+
+/* With Stash Rating off, the rating line only carries those there */
+.sb-meta-inline-only {
+  display: none;
 }
 
 /* Scene Tags */
@@ -1029,7 +1830,17 @@ body.sb-battle-open > .modal {
   padding: 20px;
   width: 100%;
   text-align: center;
-  animation: fadeIn 0.5s ease-out;
+  /* Same entry as the battle cards */
+  animation: fadeIn 0.3s ease-out;
+}
+
+/*
+ * The end screen sits flush with the window's bottom (the Skip bar is hidden), so the slide-in
+ * would make the content 20px taller for a moment and flash a scrollbar. Clip it instead
+ * (overflow: clip doesn't make the area scrollable itself).
+ */
+.sb-comparison-area:has(> .sb-end-screen) {
+  overflow: clip;
 }
 
 .sb-end-screen-icon {
@@ -1047,7 +1858,6 @@ body.sb-battle-open > .modal {
   font-weight: bold;
   color: #ffc107;
   margin: 10px 0;
-  text-shadow: 0 0 20px rgba(255, 193, 7, 0.5);
 }
 
 .sb-end-screen-scene {
@@ -1056,7 +1866,6 @@ body.sb-battle-open > .modal {
   border-radius: 12px;
   overflow: hidden;
   border: 4px solid #ffc107;
-  box-shadow: 0 0 40px rgba(255, 193, 7, 0.3);
   margin: 15px 0;
 }
 
@@ -1081,9 +1890,17 @@ body.sb-battle-open > .modal {
   margin-bottom: 20px;
 }
 
-#sb-new-gauntlet {
+#sb-new-run {
   padding: 12px 30px;
   font-size: 1.1rem;
+}
+
+/* Start New Run, and Undo under it when the pick that ended the run can be taken back */
+.sb-end-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
 /* ---------- Short screens (laptops): compact header and meta ---------- */
@@ -1101,7 +1918,6 @@ body.sb-battle-open > .modal {
     margin-bottom: 8px;
   }
 
-  .sb-subtitle,
   .sb-mode-desc {
     display: none;
   }
@@ -1118,8 +1934,18 @@ body.sb-battle-open > .modal {
   }
 
   .sb-meta-plays,
+  .sb-meta-ocount,
+  .sb-meta-battles,
   .sb-tags-row {
     display: none;
+  }
+
+  .sb-meta-inline {
+    display: inline;
+  }
+
+  .sb-meta-inline-only {
+    display: block;
   }
 
   .sb-choose-btn {
@@ -1133,10 +1959,6 @@ body.sb-battle-open > .modal {
     padding: 16px 16px 0;
   }
 
-  .sb-subtitle {
-    display: none;
-  }
-
   .sb-vs-container {
     gap: 10px;
   }
@@ -1145,9 +1967,31 @@ body.sb-battle-open > .modal {
     font-size: 1.6rem;
   }
 
+  .sb-vs-stack {
+    column-gap: 8px;
+  }
+
+  .sb-win-chance {
+    font-size: 0.75rem;
+  }
+
+  .sb-win-bar {
+    min-width: 48px;
+  }
+
   .sb-meta-plays,
+  .sb-meta-ocount,
+  .sb-meta-battles,
   .sb-tags-row {
     display: none;
+  }
+
+  .sb-meta-inline {
+    display: inline;
+  }
+
+  .sb-meta-inline-only {
+    display: block;
   }
 
   .sb-mode-btn {
@@ -1184,12 +2028,7 @@ body.sb-battle-open > .modal {
 
   .sb-title {
     font-size: 1.4rem;
-    margin: 2px 40px 10px;
-  }
-
-  .sb-fun-badge {
-    margin-bottom: 10px;
-    font-size: 0.8rem;
+    margin-top: 2px;
   }
 
   /* Modes as a compact segmented row */
@@ -1207,6 +2046,12 @@ body.sb-battle-open > .modal {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* What's being battled (and its Stop link) wraps instead of being cut off */
+  #sb-pool-status {
+    white-space: normal;
+    text-wrap: balance;
   }
 
   .sb-pool-hint {
@@ -1264,17 +2109,19 @@ body.sb-battle-open > .modal {
 
   .sb-vs-container {
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    /* Two gaps around the zero-height divider leave the ~21px VS badge ~7px clear of each card */
+    gap: 18px;
   }
 
-  /* VS badge overlaps the gap between the stacked cards instead of taking a row */
+  /* VS badge sits in the gap between the stacked cards instead of taking a row */
   .sb-vs-divider {
     position: relative;
     height: 0;
     z-index: 8;
   }
 
-  .sb-vs-text {
+  .sb-vs-text,
+  .sb-vs-stack {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
@@ -1284,8 +2131,49 @@ body.sb-battle-open > .modal {
     font-size: 1rem;
   }
 
+  /* Win chances join the VS pill on one line: "68% VS 32%" */
+  .sb-vs-stack {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  .sb-vs-stack > * {
+    line-height: 1;
+  }
+
+  .sb-vs-stack .sb-vs-text {
+    position: static;
+    transform: none;
+    padding: 0;
+    background: none;
+  }
+
+  .sb-win-bar {
+    display: none;
+  }
+
+  .sb-tier {
+    margin: 0 0 0 2px;
+    padding: 0 6px;
+    font-size: 0.75rem;
+  }
+
+  .sb-tier-name {
+    display: none;
+  }
+
   .sb-scene-image-container {
     aspect-ratio: 2 / 1;
+  }
+
+  /* The 2:1 box is wider than a 16:9 thumbnail: fill it (a little off the top and bottom) rather
+     than show black bars at the sides */
+  .sb-scene-image,
+  .sb-hover-preview {
+    object-fit: cover;
   }
 
   .sb-scene-info {
@@ -1310,16 +2198,26 @@ body.sb-battle-open > .modal {
     font-size: 0.8rem;
   }
 
-  .sb-meta-studio {
+  .sb-meta-studio,
+  .sb-meta-performers {
     display: none;
   }
 
-  .sb-meta-performers {
+  /* One line: the scene's first detail (studio, performers or tags) on the left, then the rating
+     and record (they come first elsewhere) */
+  .sb-meta-compact {
+    display: block;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .sb-meta-performers strong,
+  .sb-meta-rating {
+    order: 1;
+  }
+
   .sb-meta-rating strong {
     display: none;
   }
@@ -1360,9 +2258,601 @@ body.sb-battle-open > .modal {
   }
 }
 
-/* Narrow phones: mode names only, so four modes + ⓘ fit on one row */
-@media (max-width: 400px) {
-  .sb-mode-icon {
+/* ---------- One-time ELO setup (Battle tab, in place of the battle) ---------- */
+
+.sb-setup-active > :not(#sb-setup-area) {
+  display: none !important;
+}
+
+.sb-setup {
+  max-width: 960px;
+  margin: 0 auto;
+  /* The container has no bottom padding; match its 24px sides */
+  padding-bottom: 24px;
+  text-align: left;
+  line-height: 1.45;
+}
+
+.sb-setup-title {
+  margin: 4px 0 8px;
+  font-size: 1.4rem;
+  text-align: center;
+}
+
+.sb-setup-subtitle {
+  margin: 18px 0 6px;
+  font-size: 1rem;
+}
+
+.sb-setup-intro {
+  margin: 0 auto 14px;
+  max-width: 720px;
+  color: #ccc;
+  text-align: center;
+}
+
+.sb-setup-questions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.sb-setup-question {
+  margin: 0;
+  padding: 10px 14px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.sb-setup-question legend {
+  width: auto;
+  margin: 0;
+  padding: 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.sb-setup-option {
+  margin: 8px 0;
+}
+
+.sb-setup-option .custom-control-label {
+  cursor: pointer;
+}
+
+.sb-setup-desc {
+  display: block;
+  color: #aaa;
+  font-size: 0.85rem;
+}
+
+.sb-setup-note {
+  margin: 10px 0 0;
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.sb-setup-warning {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  color: #ddd;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  border-radius: 6px;
+}
+
+/* The Stash ratings message: every variant stacked in one grid cell, so the slot keeps the
+   height of the longest and switching answers doesn't shift the preview below */
+.sb-setup-message-slot {
+  display: grid;
+  margin-top: 12px;
+}
+
+.sb-setup-message-slot > .sb-setup-message {
+  grid-area: 1 / 1;
+  /* Each box fits its own text; the slot alone keeps the reserved height */
+  align-self: start;
+  justify-self: start;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #aaa;
+  font-size: 0.9rem;
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    visibility 0.2s ease;
+}
+
+.sb-setup-message-slot > .sb-setup-warning {
+  color: #ddd;
+  border-color: rgba(255, 193, 7, 0.35);
+}
+
+.sb-setup-message-slot > .sb-shown {
+  visibility: visible;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-setup-message-slot > .sb-setup-message {
+    transition: none;
+  }
+}
+
+.sb-setup-actions {
+  margin-top: 18px;
+  text-align: center;
+}
+
+.sb-setup-progress,
+.sb-setup-done {
+  max-width: 560px;
+  padding: 30px 0;
+}
+
+.sb-setup-progress .progress {
+  height: 10px;
+  margin: 16px 0 8px;
+}
+
+.sb-setup-progress-label {
+  text-align: center;
+}
+
+.sb-setup-summary {
+  margin: 12px 0 0;
+  padding-left: 20px;
+}
+
+/* Setup preview: 10 example squares per row; squares shrink rather than wrap */
+
+.sb-rating-preview {
+  --sb-pv-accent: var(--primary, #137cbd);
+}
+
+.sb-pv-legend {
+  margin: 0 0 8px;
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.sb-pv-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 190px;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sb-pv-label {
+  padding-bottom: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sb-pv-note {
+  padding-bottom: 8px;
+  color: #aaa;
+  font-size: 0.8rem;
+}
+
+.sb-pv-squares {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sb-pv-cell {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.sb-pv-elo {
+  height: 1.4em;
+  line-height: 1.4em;
+  margin-bottom: 2px;
+  color: #aaa;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-pv-square {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 44px;
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--sb-pv-accent) 60%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sb-pv-accent) var(--sb-pv-fill, 0%), transparent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  /* Always present but transparent, so "changed" can fade in */
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  transition:
+    background-color 0.4s ease,
+    border-color 0.4s ease,
+    color 0.4s ease,
+    text-shadow 0.4s ease,
+    outline-color 0.4s ease,
+    opacity 0.4s ease,
+    filter 0.4s ease;
+}
+
+.sb-pv-strong {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.sb-pv-unrated {
+  border-style: dashed;
+  border-color: rgba(128, 128, 128, 0.7);
+  background: none;
+  color: #888;
+}
+
+.sb-pv-changed {
+  outline-color: #ffc107;
+}
+
+.sb-pv-muted .sb-pv-square {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-pv-square {
+    transition: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .sb-setup-questions {
+    grid-template-columns: 1fr;
+  }
+
+  .sb-pv-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    margin-bottom: 12px;
+  }
+
+  .sb-pv-label,
+  .sb-pv-note {
+    padding-bottom: 0;
+  }
+
+  .sb-pv-note:empty {
     display: none;
   }
+}
+
+/* Narrow screens: the dropdown and Reset ELO rows stack (text, then the control) instead of squeezing */
+@media (max-width: 640px) {
+  .sb-explore-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .sb-explore-row:first-child {
+    flex-wrap: wrap;
+  }
+
+  .sb-explore-search {
+    flex-basis: 100%;
+  }
+
+  .sb-stat-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sb-stat-value {
+    font-size: 1.4rem;
+  }
+
+  :is(.sb-stats-tab, .sb-records-tab) .card {
+    padding: 12px;
+  }
+
+  .sb-settled-row {
+    grid-template-columns: 92px minmax(0, 1fr) 40px;
+    gap: 8px;
+    font-size: 0.8rem;
+  }
+
+  .sb-settings-tab .setting:has(.sb-setting-select),
+  .sb-settings-tab .setting:has(.sb-card-details),
+  .sb-settings-tab .setting:has([data-action]) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .sb-settings-tab .setting:has(.sb-setting-select) .sb-setting-select {
+    width: 100%;
+  }
+
+  .sb-settings-tab .setting > div:last-child .btn[data-action] {
+    margin-left: 0;
+  }
+}
+
+/* Two buttons on Reset ELO's screen (Cancel, Start) */
+.sb-setup-actions .btn + .btn {
+  margin-left: 8px;
+}
+
+/* Battle tab: "Stash ratings aren't being changed" */
+.sb-ratings-note {
+  margin-top: -6px;
+}
+
+.sb-ratings-note a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* ---------- Confirmation dialog (inside the Stash Battle modal) ---------- */
+
+.sb-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.sb-dialog {
+  width: min(480px, 100%);
+  padding: 18px 20px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: #ddd;
+  line-height: 1.45;
+}
+
+.sb-dialog-title {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+  color: #fff;
+}
+
+.sb-dialog-body p {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+}
+
+.sb-dialog-error {
+  margin: 0 0 10px;
+  color: #ff8a8a;
+  font-size: 0.9rem;
+}
+
+.sb-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* ---- Stash's own pages ---- */
+
+/* Scene page: "ELO 1740 · #50" next to Play Count and O Count. One Stash "minimal" button, so
+   the icon and text highlight together; padding and gap match the count buttons' icon + value.
+   Opens Stash Battle. */
+.scene-toolbar .sb-scene-elo-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.375rem 0.5rem;
+  white-space: nowrap;
+}
+
+/* Stash gives .fa-icon side margins; its count buttons drop them, so this does too */
+.scene-toolbar .sb-scene-elo-button .fa-icon {
+  margin: 0;
+}
+
+/* Phones: the item leads the subheader line ("💎 ELO 1990 · #25   January 7, 2024   60 fps | 4K")
+   instead of crowding the toolbar; the line may wrap rather than widen the page */
+.scene-subheader:has(.sb-scene-elo-sub) {
+  flex-wrap: wrap;
+  column-gap: 8px;
+}
+
+.scene-subheader .sb-scene-elo-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  font-size: inherit;
+  white-space: nowrap;
+}
+
+.scene-subheader .sb-scene-elo-button .fa-icon {
+  margin: 0;
+}
+
+.scene-subheader .sb-scene-elo-icon,
+.scene-toolbar .sb-scene-elo-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* A tier's emoji in place of the swords: a fixed square box, centred both ways, so every emoji
+   (they have different side bearings and baselines) lines up with the text like the swords do */
+.scene-toolbar .sb-scene-elo-emoji,
+.scene-subheader .sb-scene-elo-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  font-size: 1em;
+  line-height: 1;
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+}
+
+/* Scene page Custom Fields: Stash cuts names at 130px, which hides the end of ours
+   (stash_battle_battles). Widened for the whole list so the values still line up. */
+.custom-fields:has(.detail-item[class*="custom-field-stash_battle_"]) .detail-item-title {
+  width: 25ch;
+  max-width: 25ch;
+}
+
+/* Narrow phones: four tabs and the volume slider don't fit on one line, so only the
+   speaker (mute / unmute) stays; phones have their own volume buttons */
+@media (max-width: 480px) {
+  .sb-volume input[type="range"],
+  .sb-volume .sb-volume-value {
+    display: none;
+  }
+}
+
+/* The Settings tab's volume row stands in for the hidden slider on narrow phones only */
+.sb-settings-tab .setting.sb-setting-phone-only {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .sb-settings-tab .setting.sb-setting-phone-only {
+    display: flex;
+  }
+}
+
+/* Settings → Card details: the checkboxes wrap under the title where they don't fit beside it */
+.sb-card-details {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 4px;
+}
+
+.sb-card-details .custom-control-inline {
+  margin-right: 0;
+  margin-left: 1rem;
+}
+
+@media (max-width: 640px) {
+  .sb-card-details {
+    justify-content: flex-start;
+  }
+
+  .sb-card-details .custom-control-inline {
+    margin-left: 0;
+    margin-right: 1rem;
+  }
+}
+
+.sb-setting-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sb-setting-volume input[type="range"] {
+  width: 120px;
+}
+
+.sb-setting-volume .sb-volume-value {
+  min-width: 2ch;
+  text-align: right;
+  color: #ccc;
+}
+
+/* Top-bar Battle icon: only while Stash folds its links into the ☰ menu (its navbar-expand-xl) */
+.sb-nav-icon {
+  display: none;
+}
+
+/* (navButton.ts also hides it when it would wrap the bar onto a second row) */
+@media (max-width: 1199.98px) {
+  .sb-nav-icon {
+    display: block;
+  }
+}
+
+/* Never let the tab bar widen the modal (that cut off the cards' right edge on an iPhone):
+   the tabs shrink, and scroll sideways if they still don't fit */
+.sb-tab-bar {
+  min-width: 0;
+}
+
+.sb-tabs.nav-tabs {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.sb-tabs.nav-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.sb-tabs .nav-link {
+  flex: 0 0 auto;
+}
+
+/*
+ * Narrow phones: five tabs don't fit with their names, so the tabs you're not on show only their
+ * emoji (the name stays as the tab's label and tooltip). Every tab is at least 44 × 44 px, the
+ * usual minimum for something you tap.
+ */
+@media (max-width: 480px) {
+  .sb-tabs .nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 10px;
+  }
+
+  .sb-tabs .nav-link:not(.active) .sb-tab-name {
+    display: none;
+  }
+
+  .sb-tab-emoji {
+    font-size: 1.05rem;
+    line-height: 1;
+  }
+}
+
+/* The narrowest phones (320 px): even the current tab's name doesn't fit, so every tab is its
+   emoji (the current one still has the tab outline, and each keeps its name as label and tooltip) */
+@media (max-width: 360px) {
+  .sb-tabs .nav-link .sb-tab-name {
+    display: none;
+  }
+}
+
+/* Test mode: on every tab, under the tab bar */
+.sb-test-note {
+  margin: 8px 0 12px;
+  color: #e0b25a;
+}
+
+.sb-test-note strong {
+  color: inherit;
+}
+
+.sb-test-note a {
+  color: inherit;
+  text-decoration: underline;
 }

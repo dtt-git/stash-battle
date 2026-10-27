@@ -1,36 +1,68 @@
 // Battle / Settings tabs (Stash's own nav-tabs + .setting rows, like Stash-TCode), plus the
 // preview volume control that sits on the tab bar. Every control carries data-setting="<key>";
-// values persist via updateSettings().
+// values persist via updateSettings(). Action rows (Reset ELO) carry data-action instead.
 
-import { updateSettings } from "../settings";
+import { CARD_DETAILS } from "../constants";
+import { setTestMode, showsCardDetail, updateSettings } from "../settings";
 import { state } from "../state";
-import type { Settings } from "../types";
+import type { CardDetail, Settings, StashRatingsMode } from "../types";
+import { STASH_RATINGS_OPTIONS, stashRatingsOption } from "./stashRatingsText";
 
 type BoolKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
-export type TabId = "battle" | "settings";
+export type TabId = "battle" | "explore" | "stats" | "records" | "settings";
 
-interface SettingRow {
-  key: keyof Settings;
-  title: string;
-  hint: string;
-}
+type SettingRow =
+  | { key: keyof Settings; title: string; hint: string; className?: string }
+  | { action: "reset-elo" | "clear-hall-of-fame"; title: string; hint: string; button: string };
 
 const SECTIONS: { title: string; rows: SettingRow[] }[] = [
+  {
+    title: "ELO",
+    rows: [
+      // The hint is the selected option's description (kept current by syncSettingsControls)
+      { key: "stashRatings", title: "Stash ratings update mode", hint: "" },
+      {
+        action: "reset-elo",
+        title: "Reset ELO",
+        hint: "Start every scene's ELO over, from its Stash rating or at 1500",
+        button: "Reset ELO…",
+      },
+      {
+        action: "clear-hall-of-fame",
+        title: "Clear hall of fame",
+        hint: "Empty the Records tab's list of scenes that have been #1. It's kept in Stash's plugin settings, so restoring Stash's database doesn't change it",
+        button: "Clear…",
+      },
+    ],
+  },
   {
     title: "Battles",
     rows: [
       { key: "filterOpponents", title: "Use filtered scenes for both sides", hint: "Opponents also come from the current scene list filter instead of your whole rated library" },
-      { key: "unratedRating", title: "Unrated scene rating", hint: "What unrated scenes count as in Swiss. 0 starts them at the bottom; 50 is closer to a classic ELO start" },
-      { key: "funMode", title: "Fun mode", hint: "Battle without changing any ratings" },
+      { key: "placementFromBottom", title: "Placement: start from the bottom", hint: "Placement ignores the scene's current ELO: it starts against the bottom scene and climbs, jumping further with each win (this replaces Gauntlet)" },
     ],
   },
   {
     title: "Scenes",
     rows: [
+      // Narrow phones hide the tab bar's slider (only its mute button fits), so it's here instead
+      { key: "previewVolume", title: "Preview volume", hint: "How loud the hovered or tapped card's preview plays. 0 mutes it", className: "sb-setting-phone-only" },
       { key: "autoplayPreviews", title: "Autoplay previews", hint: "Loop both previews silently; hover a card to hear it" },
-      { key: "pauseMediaOnOpen", title: "Pause playing video when Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
+      { key: "pauseMediaOnOpen", title: "Pause playing video when Stash Battle opens", hint: "Stops the scene you're watching so its audio doesn't overlap the battle previews" },
+      { key: "cardDetails", title: "Card details", hint: "What battle cards show under the title. Phones and tablets show fewer" },
+      { key: "tierBorders", title: "Tier colours on card borders", hint: "Each battle card's border takes the colour of its tier (👑 Legendary down to 🥉 Bronze), as on the Explore cards" },
       { key: "openInNewTab", title: "Open scenes in a new tab", hint: "Clicking a thumbnail opens the scene in a new browser tab" },
       { key: "cleanMode", title: "Clean mode", hint: "Show a 🗑 button on each card to delete the scene from Stash" },
+    ],
+  },
+  {
+    title: "Testing",
+    rows: [
+      {
+        key: "testMode",
+        title: "🧪 Test mode",
+        hint: "Try things without saving anything to Stash: ELO, records, Stash ratings, the hall of fame and settings changes only last until you turn it off or reload the page. Clean mode's deletes are still real",
+      },
     ],
   },
 ];
@@ -51,8 +83,23 @@ function volumeIcon(volume: number): string {
 }
 
 function settingControl(key: keyof Settings): string {
-  if (key === "unratedRating") {
-    return `<input type="number" min="0" max="100" step="1" data-setting="${key}" value="${state.settings[key]}" class="form-control form-control-sm input-control sb-setting-number">`;
+  if (key === "previewVolume") {
+    const volume = state.settings.previewVolume;
+    return `<div class="sb-setting-volume"><input type="range" min="0" max="100" step="1" data-setting="previewVolume" value="${volume}" aria-label="Preview volume"><span class="sb-volume-value">${volume}</span></div>`;
+  }
+  if (key === "stashRatings") {
+    const options = STASH_RATINGS_OPTIONS.map(
+      ({ value, label }) =>
+        `<option value="${value}" ${value === state.settings.stashRatings ? "selected" : ""}>${label}</option>`,
+    ).join("");
+    return `<select data-setting="${key}" class="form-control form-control-sm sb-setting-select" aria-label="Stash ratings update mode">${options}</select>`;
+  }
+  if (key === "cardDetails") {
+    const boxes = CARD_DETAILS.map(({ id, label }) => {
+      const inputId = `sb-card-detail-${id}`;
+      return `<div class="custom-control custom-checkbox custom-control-inline"><input type="checkbox" class="custom-control-input" id="${inputId}" data-card-detail="${id}" ${showsCardDetail(id) ? "checked" : ""}><label class="custom-control-label" for="${inputId}">${label}</label></div>`;
+    }).join("");
+    return `<div class="sb-card-details">${boxes}</div>`;
   }
   const id = `sb-setting-${key}`;
   return `
@@ -62,14 +109,25 @@ function settingControl(key: keyof Settings): string {
           </div>`;
 }
 
-/** Tab bar: Battle / Settings on the left, preview volume on the right. */
+/** The tabs, in order. On narrow phones the tabs you're not on show only their emoji. */
+const TABS: { id: TabId; emoji: string; name: string }[] = [
+  { id: "battle", emoji: "⚔️", name: "Battle" },
+  { id: "explore", emoji: "🔎", name: "Explore" },
+  { id: "stats", emoji: "📊", name: "Stats" },
+  { id: "records", emoji: "🏆", name: "Records" },
+  { id: "settings", emoji: "⚙", name: "Settings" },
+];
+
+/** Tab bar: the tabs on the left, preview volume on the right. */
 export function createTabBar(): string {
   const { previewVolume } = state.settings;
   return `
       <div class="sb-tab-bar">
         <nav class="nav nav-tabs sb-tabs" role="tablist">
-          <a class="nav-item nav-link active" role="tab" data-tab="battle" aria-selected="true">⚔️ Battle</a>
-          <a class="nav-item nav-link" role="tab" data-tab="settings" aria-selected="false">⚙ Settings</a>
+          ${TABS.map(
+            ({ id, emoji, name }) =>
+              `<a class="nav-item nav-link${id === "battle" ? " active" : ""}" role="tab" data-tab="${id}" aria-selected="${id === "battle"}" aria-label="${name}" title="${name}"><span class="sb-tab-emoji" aria-hidden="true">${emoji}</span><span class="sb-tab-name"> ${name}</span></a>`,
+          ).join("")}
         </nav>
         <div class="sb-volume" title="Preview volume">
           <button type="button" class="sb-volume-icon" aria-label="Mute previews">${volumeIcon(previewVolume)}</button>
@@ -80,24 +138,31 @@ export function createTabBar(): string {
     `;
 }
 
+function settingRowHtml(row: SettingRow): string {
+  const hint = "key" in row && row.key === "stashRatings" ? stashRatingsOption(state.settings.stashRatings).desc : row.hint;
+  const hintFor = "key" in row ? ` data-hint-for="${row.key}"` : "";
+  const control =
+    "key" in row
+      ? settingControl(row.key)
+      : `<button type="button" class="btn btn-secondary btn-sm" data-action="${row.action}">${row.button}</button>`;
+  const rowClass = "key" in row && row.className ? ` ${row.className}` : "";
+  return `
+            <div class="setting${rowClass}">
+              <div>
+                <h3>${row.title}</h3>
+                <div class="sub-heading"${hintFor}>${hint}</div>
+              </div>
+              <div>${control}</div>
+            </div>`;
+}
+
 export function createSettingsTab(): string {
   const sections = SECTIONS.map(
     ({ title, rows }) => `
         <div class="setting-section">
           <h1>${title}</h1>
           <div class="card">
-            ${rows
-              .map(
-                ({ key, title: rowTitle, hint }) => `
-            <div class="setting">
-              <div>
-                <h3>${rowTitle}</h3>
-                <div class="sub-heading">${hint}</div>
-              </div>
-              <div>${settingControl(key)}</div>
-            </div>`,
-              )
-              .join("")}
+            ${rows.map(settingRowHtml).join("")}
           </div>
         </div>`,
   ).join("");
@@ -117,6 +182,15 @@ export function syncSettingsControls(root: ParentNode): void {
     const value = state.settings[key];
     if (input.type === "checkbox") input.checked = Boolean(value);
     else input.value = String(value);
+  });
+  root.querySelectorAll<HTMLSelectElement>("select[data-setting]").forEach((select) => {
+    select.value = String(state.settings[select.dataset.setting as keyof Settings]);
+  });
+  root.querySelectorAll<HTMLInputElement>("input[data-card-detail]").forEach((input) => {
+    input.checked = showsCardDetail(input.dataset.cardDetail as CardDetail);
+  });
+  root.querySelectorAll<HTMLElement>('[data-hint-for="stashRatings"]').forEach((hint) => {
+    hint.textContent = stashRatingsOption(state.settings.stashRatings).desc;
   });
   const volume = state.settings.previewVolume;
   root.querySelectorAll(".sb-volume-icon").forEach((el) => {
@@ -141,12 +215,14 @@ export function showTab(root: ParentNode, tab: TabId): void {
 
 /**
  * Wire every data-setting control, the tabs and the mute button.
- * onChange runs after a value is stored; onTabChange after a tab switch.
+ * onChange runs after a value is stored; onTabChange after a tab switch. A dropdown change
+ * first awaits beforeChange (a warning, say): false puts the dropdown back and stores nothing.
  */
 export function bindSettingsControls(
   root: ParentNode,
   onChange: (key: keyof Settings) => void,
   onTabChange: (tab: TabId) => void,
+  beforeChange: (key: keyof Settings, value: string) => Promise<boolean> = async () => true,
 ): void {
   const apply = (patch: Partial<Settings>, key: keyof Settings): void => {
     updateSettings(patch);
@@ -160,7 +236,39 @@ export function bindSettingsControls(
     const eventName = input.type === "range" ? "input" : "change";
     input.addEventListener(eventName, () => {
       const value = input.type === "checkbox" ? input.checked : Number(input.value);
+      // Saved on its own, even while test mode holds other settings back
+      if (key === "testMode") {
+        input.disabled = true;
+        void setTestMode(input.checked).finally(() => {
+          input.disabled = false;
+          syncSettingsControls(root);
+          onChange(key);
+        });
+        return;
+      }
       apply({ [key]: value } as Partial<Settings>, key);
+    });
+  });
+
+  root.querySelectorAll<HTMLSelectElement>("select[data-setting]").forEach((select) => {
+    const key = select.dataset.setting as keyof Settings;
+    select.addEventListener("change", async () => {
+      const value = select.value;
+      select.disabled = true;
+      try {
+        if (await beforeChange(key, value)) apply({ [key]: value as StashRatingsMode } as Partial<Settings>, key);
+        else syncSettingsControls(root);
+      } finally {
+        select.disabled = false;
+      }
+    });
+  });
+
+  // Card details: the ticked boxes, in the card's order
+  root.querySelectorAll<HTMLInputElement>("input[data-card-detail]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const on = [...root.querySelectorAll<HTMLInputElement>("input[data-card-detail]")].filter((box) => box.checked);
+      apply({ cardDetails: on.map((box) => box.dataset.cardDetail).join(",") }, "cardDetails");
     });
   });
 

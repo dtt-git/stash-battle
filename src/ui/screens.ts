@@ -1,11 +1,13 @@
-// Victory and placement end-screens for gauntlet/champion runs.
+// Victory and placement end-screens for Champion and Placement runs.
 
-import { ratingsEnabled } from "../rating";
+import { latestScene } from "../cache";
+import { formatRating } from "../ratingDisplay";
+import { elo, stashRatingTargets } from "../score";
 import { resetRunState, state } from "../state";
 import { saveState } from "../storage";
-import type { Scene } from "../types";
-import { loadNewPair, setActionsVisible } from "./mainUI";
-import { resolveSceneTitle } from "./sceneTitle";
+import type { PlacementPairResult, Scene } from "../types";
+import { canUndo, loadNewPair, setActionsVisible, undoLastPick } from "./mainUI";
+import { resolveSceneTitle } from "../sceneTitle";
 
 function buildEndScreenHtml(
   scene: Scene,
@@ -29,8 +31,10 @@ function buildEndScreenHtml(
           }
         </div>
         <h3 class="sb-end-screen-name">${title}</h3>
-        <p class="sb-end-screen-stats">${statsHtml}${ratingsEnabled() ? "" : "<br><em>🎈 Fun mode: rating not saved</em>"}</p>
-        <button id="sb-new-gauntlet" class="btn btn-primary">${buttonLabel}</button>
+        <p class="sb-end-screen-stats">${statsHtml}</p>
+        <div class="sb-end-actions">
+          <button id="sb-new-run" class="btn btn-primary">${buttonLabel}</button>
+        </div>
       </div>
     `;
 }
@@ -43,45 +47,77 @@ function showEndScreen(html: string): void {
   comparisonArea.innerHTML = html;
   setActionsVisible(false);
 
-  comparisonArea.querySelector("#sb-new-gauntlet")?.addEventListener("click", () => {
+  comparisonArea.querySelector("#sb-new-run")?.addEventListener("click", () => {
     loadNewPair();
   });
+  // The pick that ended the run can be taken back from here too (the Undo bar is hidden)
+  const newRun = comparisonArea.querySelector("#sb-new-run");
+  if (newRun && canUndo()) {
+    newRun.insertAdjacentHTML("afterend", `<button id="sb-end-undo" class="btn btn-secondary" title="Undo your last pick (Backspace)">↶ Undo</button>`);
+    comparisonArea.querySelector("#sb-end-undo")?.addEventListener("click", () => void undoLastPick());
+  }
 }
 
 /** Capture display values, clear run state, then show the end screen. */
 function finishRunShowEndScreen(html: string): void {
   resetRunState();
+  // The last pair belongs to the finished run: a reload mustn't restore it without its run
+  state.currentPair = { left: null, right: null };
+  state.currentRanks = { left: null, right: null };
   saveState();
   showEndScreen(html);
 }
 
-export function showVictoryScreen(champion: Scene): void {
-  const totalScenes = state.totalScenesCount;
-  const winStreak = state.gauntletWins;
-  const ratingLine =
-    champion.rating100 != null
-      ? `<br>Rating: <strong>${champion.rating100}/100</strong>`
-      : "";
+/**
+ * "ELO: 1740" ("ELO: 1520 → 1740" given where it started), plus "· Stash Rating: 74" while an
+ * update mode is on. The rating is worked out the way the sync does it (it may still be on its
+ * way to Stash), so it's what Stash will show.
+ */
+function eloLine(scene: Scene, value: number | null, from: number | null = null): string {
+  if (value === null) return "";
+  const start = from === null ? "" : `${Math.round(from)} → `;
+  let line = `<br>ELO: ${start}<strong>${Math.round(value)}</strong>`;
+  const mode = state.settings.stashRatings;
+  const scenes = state.memoryCache.allScenes;
+  if (mode !== "off" && scenes) {
+    const rating = stashRatingTargets(scenes, mode).get(scene.id);
+    if (rating !== undefined) line += ` · Stash Rating: <strong>${formatRating(rating)}</strong>`;
+  }
+  return line;
+}
 
+/**
+ * Champion beat every scene above it, or a climb from the bottom never lost: it's #1. A climb
+ * passes where the scene started (its rank, or null when it was unrated, and its ELO).
+ */
+export function showVictoryScreen(
+  champion: Scene,
+  winStreak: number,
+  start?: { rank: number | null; elo: number | null },
+): void {
+  const from = start ? ` from ${start.rank === null ? "unrated" : `#${start.rank}`}` : "";
   const html = buildEndScreenHtml(
     champion,
     "👑",
     "CHAMPION!",
-    `Conquered all ${totalScenes} scenes with a ${winStreak} win streak!${ratingLine}`,
-    "Start New Gauntlet",
+    `Reached the top${from}: ${winStreak} win${winStreak === 1 ? "" : "s"} in a row!${eloLine(champion, elo(latestScene(champion)), start?.elo ?? null)}`,
+    "Start New Run",
   );
 
   finishRunShowEndScreen(html);
 }
 
-export function showPlacementScreen(scene: Scene, rank: number, finalRating: number): void {
-  const battles = state.placement?.battles;
-  const battlesLine = battles ? ` · ${battles} battle${battles === 1 ? "" : "s"}` : "";
+export function showPlacementScreen(result: Extract<PlacementPairResult, { done: true }>): void {
+  const { scene, rank, battles, streak, fromBottom, startRank } = result;
+  const streakText = fromBottom && streak > 0 ? `🔥 ${streak} win streak · ` : "";
+  const battlesText = battles ? ` · ${battles} battle${battles === 1 ? "" : "s"}` : "";
+  // "#120 → #45": where it was before the run, then where it landed
+  const from = startRank === null ? "Unrated" : `#${startRank}`;
   const html = buildEndScreenHtml(
     scene,
     "📍",
     "PLACED!",
-    `Rank <strong>#${rank}</strong> of ${state.totalScenesCount}${battlesLine}<br>Rating: <strong>${finalRating}/100</strong>`,
+    `${streakText}${from} → <strong>#${rank}</strong>${battlesText}${eloLine(scene, result.elo, result.startElo)}`,
     "Start New Run",
   );
 

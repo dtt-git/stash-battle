@@ -2,9 +2,19 @@
 
 import type { FindFilterType, SceneFilterType } from "./types";
 
-// Get current URL search params
+/**
+ * The Scenes page's filter query ("?c=...&q=..."), or "" anywhere else: Stash Battle opens from
+ * every page, and other pages' queries filter their own lists (a performer search, say). Scene
+ * pages keep the list's query, so they count.
+ */
+export function scenesListQuery(): string {
+  const path = window.location.pathname;
+  return path === "/scenes" || path.startsWith("/scenes/") ? window.location.search : "";
+}
+
+// Get the Scenes page's URL search params (empty on other pages)
 export function getSearchParams(): URLSearchParams {
-  return new URLSearchParams(window.location.search);
+  return new URLSearchParams(scenesListQuery());
 }
 
 // Build FindFilterType from current URL search params (or an explicit params object).
