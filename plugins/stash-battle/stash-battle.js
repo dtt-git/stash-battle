@@ -274,9 +274,27 @@
     return mid > belowElo ? mid : aboveElo;
   }
 
+  // src/stashUrl.ts
+  function basePath() {
+    const href = typeof document === "undefined" ? null : document.querySelector("base")?.getAttribute("href");
+    if (!href) return "/";
+    const path = href.startsWith("/") ? href : new URL(href, window.location.href).pathname;
+    return path.endsWith("/") ? path : `${path}/`;
+  }
+  function stashUrl(path) {
+    return basePath() + path.replace(/^\//, "");
+  }
+  function stashRoute() {
+    const path = window.location.pathname;
+    const base = basePath();
+    if (base === "/") return path;
+    if (path.startsWith(base)) return `/${path.slice(base.length)}`;
+    return `${path}/` === base ? "/" : path;
+  }
+
   // src/graphql.ts
   async function graphqlQuery(query, variables = {}) {
-    const response = await fetch("/graphql", {
+    const response = await fetch(stashUrl("graphql"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -289,6 +307,47 @@
       throw new Error(result.errors[0].message);
     }
     return result.data;
+  }
+  var BULK_CHUNK_SIZE = 200;
+  async function bulkUpdateScenes(groups, onProgress, chunkSize = BULK_CHUNK_SIZE) {
+    const total = groups.reduce((n, group) => n + group.ids.length, 0);
+    let done = 0;
+    let request = [];
+    let size = 0;
+    const send = async () => {
+      if (request.length === 0) return;
+      const mutation = `
+      mutation BulkSceneUpdates(${request.map((_, i) => `$u${i}: BulkSceneUpdateInput!`).join(", ")}) {
+        ${request.map((_, i) => `u${i}: bulkSceneUpdate(input: $u${i}) { id }`).join("\n        ")}
+      }
+    `;
+      const variables = Object.fromEntries(request.map((group, i) => [`u${i}`, { ...group.changes, ids: group.ids }]));
+      await graphqlQuery(mutation, variables);
+      done += size;
+      request = [];
+      size = 0;
+      onProgress?.(done, total);
+    };
+    for (const group of groups) {
+      for (let start = 0; start < group.ids.length; ) {
+        const ids = group.ids.slice(start, start + chunkSize - size);
+        request.push({ ids, changes: group.changes });
+        size += ids.length;
+        start += ids.length;
+        if (size >= chunkSize) await send();
+      }
+    }
+    await send();
+  }
+  var SCENE_UPDATE_HOOK = "Scene.Update.Post";
+  async function sceneUpdateHookPlugins() {
+    try {
+      const data = await graphqlQuery(`query { plugins { name enabled hooks { hooks } } }`);
+      return (data.plugins ?? []).filter((p) => p.enabled && p.hooks?.some((h) => h.hooks?.includes(SCENE_UPDATE_HOOK))).map((p) => p.name);
+    } catch (e) {
+      console.warn("[Stash Battle] Could not check other plugins' hooks:", e);
+      return [];
+    }
   }
   var SCENE_FRAGMENT = `
     id
@@ -383,7 +442,7 @@
     }
   }
   function getSceneIdFromUrl() {
-    const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
+    const match = stashRoute().match(/^\/scenes\/(\d+)$/);
     return match ? match[1] : null;
   }
   async function fetchSceneById(sceneId) {
@@ -496,7 +555,7 @@
 
   // src/filters.ts
   function scenesListQuery() {
-    const path = window.location.pathname;
+    const path = stashRoute();
     return path === "/scenes" || path.startsWith("/scenes/") ? window.location.search : "";
   }
   function getSearchParams() {
@@ -1607,7 +1666,7 @@
       console.log(`[Stash Battle] ↶ Restored scene ${scene.id} ELO ${value ? value.elo : "(unrated)"}`);
     }
   }
-  async function writeStashRatings(ratings) {
+  async function writeStashRatings(ratings, onProgress) {
     if (state.settings.testMode) {
       console.log(`[Stash Battle] 🧪 Test mode: not saving ${ratings.size} Stash ratings`);
       return;
@@ -1619,17 +1678,11 @@
       idsByRating.set(rating, ids);
     }
     if (idsByRating.size === 0) return;
-    const values = [...idsByRating.keys()];
-    const mutation = `
-      mutation SyncStashRatings(${values.map((r) => `$r${r}: BulkSceneUpdateInput!`).join(", ")}) {
-        ${values.map((r) => `r${r}: bulkSceneUpdate(input: $r${r}) { id }`).join("\n        ")}
-      }
-    `;
-    const variables = Object.fromEntries(
-      values.map((r) => [`r${r}`, { ids: idsByRating.get(r), rating100: r }])
+    await bulkUpdateScenes(
+      [...idsByRating].map(([rating100, ids]) => ({ ids, changes: { rating100 } })),
+      onProgress
     );
-    await graphqlQuery(mutation, variables);
-    console.log(`[Stash Battle] 📝 Wrote ${ratings.size} Stash ratings (${values.length} distinct values)`);
+    console.log(`[Stash Battle] 📝 Wrote ${ratings.size} Stash ratings (${idsByRating.size} distinct values)`);
   }
   function applyStashRatings(ratings) {
     setRatingsInCache(ratings);
@@ -1695,14 +1748,7 @@
       stashRatings
     );
   }
-  var BULK_UPDATE_MUTATION = `
-      mutation BulkSceneUpdate($input: BulkSceneUpdateInput!) {
-        bulkSceneUpdate(input: $input) {
-          id
-        }
-      }
-    `;
-  async function seedFromRatings(rated) {
+  function seedGroups(rated) {
     const idsByRating = /* @__PURE__ */ new Map();
     for (const scene of rated) {
       const rating = scene.rating100;
@@ -1710,51 +1756,38 @@
       ids.push(scene.id);
       idsByRating.set(rating, ids);
     }
-    if (idsByRating.size === 0) return;
-    const values = [...idsByRating.keys()];
-    const mutation = `
-      mutation SeedElo(${values.map((r) => `$s${r}: BulkSceneUpdateInput!`).join(", ")}) {
-        ${values.map((r) => `s${r}: bulkSceneUpdate(input: $s${r}) { id }`).join("\n        ")}
+    return [...idsByRating].map(([rating, ids]) => ({
+      ids,
+      // Records start over too (setup and Reset ELO)
+      changes: {
+        custom_fields: { partial: eloCustomFields({ elo: seed(rating), battles: 0, seeded: true }), remove: RECORD_FIELD_KEYS }
       }
-    `;
-    const variables = Object.fromEntries(
-      values.map((r) => {
-        const partial = eloCustomFields({ elo: seed(r), battles: 0, seeded: true });
-        return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial, remove: RECORD_FIELD_KEYS } }];
-      })
-    );
-    await graphqlQuery(mutation, variables);
+    }));
   }
   async function runEloSetup(scenes2, start, stashRatings, onProgress) {
     if (state.settings.testMode) throw new Error("Test mode is on: turn it off in Settings to set up ELO.");
     const summary = { eloWritten: 0, eloCleared: 0, ratingsWritten: 0 };
+    const groups = [];
     if (start === "ratings") {
       const rated = scenes2.filter((scene) => scene.rating100 != null);
-      onProgress("elo", 0, rated.length);
-      await seedFromRatings(rated);
-      onProgress("elo", rated.length, rated.length);
+      groups.push(...seedGroups(rated));
       summary.eloWritten = rated.length;
       const stale = scenes2.filter((scene) => scene.rating100 == null && isRated(scene)).map((scene) => scene.id);
-      if (stale.length > 0) {
-        await graphqlQuery(BULK_UPDATE_MUTATION, {
-          input: { ids: stale, custom_fields: { remove: ELO_FIELD_KEYS } }
-        });
-        summary.eloCleared = stale.length;
-      }
+      if (stale.length > 0) groups.push({ ids: stale, changes: { custom_fields: { remove: ELO_FIELD_KEYS } } });
+      summary.eloCleared = stale.length;
     } else {
-      const ids = scenes2.map((scene) => scene.id);
-      onProgress("elo", 0, ids.length);
-      if (ids.length > 0) {
-        await graphqlQuery(BULK_UPDATE_MUTATION, {
-          input: {
-            ids,
-            custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }), remove: RECORD_FIELD_KEYS }
-          }
-        });
-      }
-      onProgress("elo", ids.length, ids.length);
-      summary.eloWritten = ids.length;
+      groups.push({
+        ids: scenes2.map((scene) => scene.id),
+        changes: {
+          custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }), remove: RECORD_FIELD_KEYS }
+        }
+      });
+      summary.eloWritten = scenes2.length;
     }
+    const eloTotal = summary.eloWritten + summary.eloCleared;
+    onProgress("elo", 0, eloTotal);
+    await bulkUpdateScenes(groups, (done) => onProgress("elo", done, eloTotal));
+    onProgress("elo", eloTotal, eloTotal);
     try {
       await clearHallOfFame();
     } catch (e) {
@@ -1763,8 +1796,7 @@
     const changes = setupRatingChanges(scenes2, start, stashRatings);
     if (changes.size > 0) {
       onProgress("ratings", 0, changes.size);
-      await writeStashRatings(changes);
-      onProgress("ratings", changes.size, changes.size);
+      await writeStashRatings(changes, (done) => onProgress("ratings", done, changes.size));
       summary.ratingsWritten = changes.size;
     }
     refreshStashCache(
@@ -2335,7 +2367,7 @@
       statusBadgeHtml = `<div class="sb-streak-badge">🔥 ${statusBadge} win${statusBadge > 1 ? "s" : ""}</div>`;
     }
     const currentParams = scenesListQuery();
-    const sceneUrl2 = `/scenes/${scene.id}${currentParams}`;
+    const sceneUrl2 = stashUrl(`scenes/${scene.id}${currentParams}`);
     const linkTarget = openInNewTab ? ` target="_blank" rel="noopener"` : "";
     return `
       <div class="sb-scene-card${border ? ` sb-tier-${tier?.id}` : ""}" data-side="${side}"${border ? ` data-tier="${tier?.id}"` : ""}>
@@ -2380,7 +2412,7 @@
     return `${n} ${word}${n === 1 ? "" : "s"}`;
   }
   function sceneUrl(sceneId) {
-    return `/scenes/${sceneId}${scenesListQuery()}`;
+    return stashUrl(`scenes/${sceneId}${scenesListQuery()}`);
   }
   function miniCardHtml(entry, link = true) {
     const { scene, rank, tier } = entry;
@@ -4548,6 +4580,7 @@
   var SETUP_ACTIVE_CLASS = "sb-setup-active";
   var running = false;
   var options = {};
+  var hookPlugins = [];
   var plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
   function setupArea(root) {
     return root.querySelector("#sb-setup-area");
@@ -4575,7 +4608,7 @@
     area.innerHTML = `<div class="sb-loading">Loading your library...</div>`;
     let scenes2;
     try {
-      scenes2 = await fetchSetupScenes();
+      [scenes2, hookPlugins] = await Promise.all([fetchSetupScenes(), sceneUpdateHookPlugins()]);
     } catch (e) {
       console.error("[Stash Battle] ELO setup: could not load scenes:", e);
       showError(area, "Couldn't load your scenes from Stash.", () => void loadChoices(area, onDone));
@@ -4593,6 +4626,17 @@
                   <span class="sb-setup-desc">${desc}</span>
                 </label>
               </div>`;
+  }
+  function nameList(names) {
+    const escaped = names.map((name) => `<strong>${escapeHtml2(name)}</strong>`);
+    return escaped.length > 1 ? `${escaped.slice(0, -1).join(", ")} and ${escaped[escaped.length - 1]}` : escaped.join("");
+  }
+  function hookWarning(writing) {
+    if (hookPlugins.length === 0) return "";
+    const one = hookPlugins.length === 1;
+    const them = one ? "it" : "them";
+    const advice = writing ? `Disabling ${them} in Settings → Plugins now speeds up the rest; turn ${them} back on when setup is done.` : `Disable ${them} in Settings → Plugins first, and turn ${them} back on when setup is done.`;
+    return `<p class="sb-setup-warning">⚠️ ${nameList(hookPlugins)} ${one ? "runs" : "run"} on every scene update, so setup can take a very long time with ${them} on. ${advice}</p>`;
   }
   function ratingsMessage(start, mode, changes) {
     const backup = "Take a Stash backup first (Settings → Tasks → Backup).";
@@ -4626,6 +4670,7 @@
           ${reset ? "Choose how ELO starts again. This overwrites every scene's ELO and battle count." : "Stash Battle now gives each scene an ELO score, saved in its custom fields. Wins raise it, losses lower it. Choose how it starts. This runs once."}
         </p>
         ${withElo > 0 && !reset ? `<p class="sb-setup-warning">${plural2(withElo, "scene")} already ${withElo === 1 ? "has" : "have"} an ELO from an earlier setup that didn't finish. Setting up again overwrites ${withElo === 1 ? "it" : "them"}.</p>` : ""}
+        ${hookWarning(false)}
         <div class="sb-setup-questions">
           <fieldset class="sb-setup-question">
             <legend>How should ELO start?</legend>
@@ -4701,12 +4746,13 @@
   }
   function progressHtml(phase, done, total) {
     const percent = total > 0 ? Math.round(done / total * 100) : 100;
-    const label = phase === "elo" ? `Saving starting ELO: ${done} of ${plural2(total, "scene")}` : `Updating Stash ratings: ${plural2(total, "scene")}`;
+    const label = phase === "elo" ? `Saving starting ELO: ${done} of ${plural2(total, "scene")}` : `Updating Stash ratings: ${done} of ${plural2(total, "scene")}`;
     return `
       <div class="sb-setup sb-setup-progress">
         <h2 class="sb-setup-title">Setting up ELO...</h2>
         <div class="progress"><div class="progress-bar" role="progressbar" style="width: ${percent}%" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"></div></div>
         <p class="sb-setup-progress-label">${label}</p>
+        ${hookWarning(true)}
         <p class="sb-setup-note">You can close Stash Battle; setup keeps going while this Stash tab stays open. If the tab closes first, Stash Battle asks again next time, and running it again is safe.</p>
       </div>`;
   }

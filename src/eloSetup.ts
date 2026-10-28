@@ -3,7 +3,7 @@
 // interrupted setup is safe to repeat.
 
 import { ELO_FIELD_KEYS, ELO_START, RECORD_FIELD_KEYS } from "./constants";
-import { graphqlQuery, refreshStashCache } from "./graphql";
+import { bulkUpdateScenes, graphqlQuery, refreshStashCache, type BulkUpdateGroup } from "./graphql";
 import { writeStashRatings } from "./rating";
 import { clearHallOfFame } from "./settings";
 import { afterSetup, eloCustomFields, isRated, seed, startingElo, stashRatingChanges } from "./score";
@@ -47,19 +47,11 @@ export function setupRatingChanges(scenes: Scene[], start: EloStart, stashRating
   );
 }
 
-const BULK_UPDATE_MUTATION = `
-      mutation BulkSceneUpdate($input: BulkSceneUpdateInput!) {
-        bulkSceneUpdate(input: $input) {
-          id
-        }
-      }
-    `;
-
 /**
- * Seed each rated scene from its own rating. Scenes with the same Stash rating get the same
- * starting fields, so it's one aliased bulkSceneUpdate per distinct rating, all in one request.
+ * Each rated scene's starting fields, from its own rating. Scenes with the same Stash rating get
+ * the same fields, so it's one bulk update group per distinct rating.
  */
-async function seedFromRatings(rated: Scene[]): Promise<void> {
+function seedGroups(rated: Scene[]): BulkUpdateGroup[] {
   const idsByRating = new Map<number, string[]>();
   for (const scene of rated) {
     const rating = scene.rating100 as number;
@@ -67,22 +59,13 @@ async function seedFromRatings(rated: Scene[]): Promise<void> {
     ids.push(scene.id);
     idsByRating.set(rating, ids);
   }
-  if (idsByRating.size === 0) return;
-
-  const values = [...idsByRating.keys()];
-  const mutation = `
-      mutation SeedElo(${values.map((r) => `$s${r}: BulkSceneUpdateInput!`).join(", ")}) {
-        ${values.map((r) => `s${r}: bulkSceneUpdate(input: $s${r}) { id }`).join("\n        ")}
-      }
-    `;
-  const variables = Object.fromEntries(
-    values.map((r) => {
-      const partial = eloCustomFields({ elo: seed(r), battles: 0, seeded: true });
-      // Records start over too (setup and Reset ELO)
-      return [`s${r}`, { ids: idsByRating.get(r), custom_fields: { partial, remove: RECORD_FIELD_KEYS } }];
-    }),
-  );
-  await graphqlQuery(mutation, variables);
+  return [...idsByRating].map(([rating, ids]) => ({
+    ids,
+    // Records start over too (setup and Reset ELO)
+    changes: {
+      custom_fields: { partial: eloCustomFields({ elo: seed(rating), battles: 0, seeded: true }), remove: RECORD_FIELD_KEYS },
+    },
+  }));
 }
 
 /**
@@ -100,35 +83,29 @@ export async function runEloSetup(
   if (state.settings.testMode) throw new Error("Test mode is on: turn it off in Settings to set up ELO.");
   const summary: SetupSummary = { eloWritten: 0, eloCleared: 0, ratingsWritten: 0 };
 
+  const groups: BulkUpdateGroup[] = [];
   if (start === "ratings") {
     const rated = scenes.filter((scene) => scene.rating100 != null);
-    onProgress("elo", 0, rated.length);
-    await seedFromRatings(rated);
-    onProgress("elo", rated.length, rated.length);
+    groups.push(...seedGroups(rated));
     summary.eloWritten = rated.length;
 
     // Only matters on a re-run: scenes with an ELO but no Stash rating become unrated again
     const stale = scenes.filter((scene) => scene.rating100 == null && isRated(scene)).map((scene) => scene.id);
-    if (stale.length > 0) {
-      await graphqlQuery(BULK_UPDATE_MUTATION, {
-        input: { ids: stale, custom_fields: { remove: ELO_FIELD_KEYS } },
-      });
-      summary.eloCleared = stale.length;
-    }
+    if (stale.length > 0) groups.push({ ids: stale, changes: { custom_fields: { remove: ELO_FIELD_KEYS } } });
+    summary.eloCleared = stale.length;
   } else {
-    const ids = scenes.map((scene) => scene.id);
-    onProgress("elo", 0, ids.length);
-    if (ids.length > 0) {
-      await graphqlQuery(BULK_UPDATE_MUTATION, {
-        input: {
-          ids,
-          custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }), remove: RECORD_FIELD_KEYS },
-        },
-      });
-    }
-    onProgress("elo", ids.length, ids.length);
-    summary.eloWritten = ids.length;
+    groups.push({
+      ids: scenes.map((scene) => scene.id),
+      changes: {
+        custom_fields: { partial: eloCustomFields({ elo: ELO_START, battles: 0, seeded: false }), remove: RECORD_FIELD_KEYS },
+      },
+    });
+    summary.eloWritten = scenes.length;
   }
+  const eloTotal = summary.eloWritten + summary.eloCleared;
+  onProgress("elo", 0, eloTotal);
+  await bulkUpdateScenes(groups, (done) => onProgress("elo", done, eloTotal));
+  onProgress("elo", eloTotal, eloTotal);
 
   // Records start over with the ELO, the hall of fame too
   try {
@@ -140,8 +117,7 @@ export async function runEloSetup(
   const changes = setupRatingChanges(scenes, start, stashRatings);
   if (changes.size > 0) {
     onProgress("ratings", 0, changes.size);
-    await writeStashRatings(changes);
-    onProgress("ratings", changes.size, changes.size);
+    await writeStashRatings(changes, (done) => onProgress("ratings", done, changes.size));
     summary.ratingsWritten = changes.size;
   }
 

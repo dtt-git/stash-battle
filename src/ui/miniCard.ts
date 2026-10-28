@@ -10,6 +10,7 @@ import { state } from "../state";
 import { isTouchDevice, sliderToVolume } from "./mainUI";
 import { tierPill, PROVISIONAL_TIP } from "./sceneCard";
 import { resolveSceneTitle } from "../sceneTitle";
+import { stashUrl } from "../stashUrl";
 
 export function escapeHtml(text: string): string {
   return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
@@ -21,7 +22,7 @@ export function plural(n: number, word: string): string {
 
 /** The scene's page, keeping the current Scenes filter in the URL (like the battle cards). */
 export function sceneUrl(sceneId: string): string {
-  return `/scenes/${sceneId}${scenesListQuery()}`;
+  return stashUrl(`scenes/${sceneId}${scenesListQuery()}`);
 }
 
 /**

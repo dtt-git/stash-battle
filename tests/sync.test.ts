@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { refreshSceneInCache } from "../src/cache";
-import { holdStashListRefresh, refreshStashCache } from "../src/graphql";
+import { bulkUpdateScenes, holdStashListRefresh, refreshStashCache } from "../src/graphql";
 import { restoreElo, syncStashRatings, writeElo } from "../src/rating";
 import { battles, elo, sceneRecord } from "../src/score";
 import { updateSettingsNow } from "../src/settings";
@@ -62,10 +62,10 @@ test("syncStashRatings writes only changed ratings, grouped by value, in one req
 
   assert.equal(await syncStashRatings(), 3);
   assert.equal(record.bodies.length, 1);
-  const vars = record.bodies[0].variables as Record<string, { ids: string[]; rating100: number }>;
-  assert.deepEqual(vars.r74, { ids: ["b", "c"], rating100: 74 });
-  assert.deepEqual(vars.r50, { ids: ["d"], rating100: 50 });
-  assert.equal(Object.keys(vars).length, 2);
+  assert.deepEqual(record.bodies[0].variables, {
+    u0: { ids: ["b", "c"], rating100: 74 },
+    u1: { ids: ["d"], rating100: 50 },
+  });
   // The cache now holds the written ratings, so the next sync writes nothing
   assert.deepEqual(state.memoryCache.allScenes.map((s) => s.rating100), [80, 74, 74, 50, 33]);
   assert.equal(await syncStashRatings(), 0);
@@ -254,4 +254,31 @@ test("restoreElo (undo) writes the old fields back and removes what the pick add
   await restoreElo(picked, null);
   assert.equal((inputs[1].custom_fields.remove as string[]).length, 8);
   assert.equal(elo(picked), null);
+});
+
+test("bulkUpdateScenes splits big writes into requests of at most chunkSize scenes", async () => {
+  const record = fakeFetch();
+  const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+  const progress: number[] = [];
+  await bulkUpdateScenes(
+    [
+      { ids: ids("a", 5), changes: { rating100: 10 } },
+      { ids: ids("b", 2), changes: { rating100: 20 } },
+    ],
+    (done, total) => progress.push(done, total),
+    3,
+  );
+  // a0-a2 | a3-a4 + b0 | b1: a group split across requests keeps its changes in each piece
+  assert.deepEqual(
+    record.bodies.map((body) => body.variables),
+    [
+      { u0: { ids: ["a0", "a1", "a2"], rating100: 10 } },
+      { u0: { ids: ["a3", "a4"], rating100: 10 }, u1: { ids: ["b0"], rating100: 20 } },
+      { u0: { ids: ["b1"], rating100: 20 } },
+    ],
+  );
+  assert.deepEqual(progress, [3, 7, 6, 7, 7, 7]);
+  // Nothing to write: no request
+  await bulkUpdateScenes([{ ids: [], changes: { rating100: 1 } }]);
+  assert.equal(record.bodies.length, 3);
 });

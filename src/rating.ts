@@ -2,7 +2,7 @@
 
 import { latestScene, setEloInCache, setRatingsInCache } from "./cache";
 import { ELO_FIELD_KEYS, RECORD_FIELD_KEYS } from "./constants";
-import { graphqlQuery, refreshStashCache } from "./graphql";
+import { bulkUpdateScenes, graphqlQuery, refreshStashCache } from "./graphql";
 import { isSceneNotFoundError } from "./sceneActions";
 import { elo as eloOf, eloCustomFields, eloFields, isRated, isSeeded, recordAfter, sceneRecord, stashRatingChanges } from "./score";
 import { addToHallOfFame, getHallOfFame } from "./settings";
@@ -137,10 +137,13 @@ export async function clearElo(scene: Scene): Promise<void> {
 }
 
 /**
- * Write Stash ratings (scene id to 1-100) in one GraphQL request: one aliased bulkSceneUpdate
- * per distinct value. Throws on failure; doesn't touch the cache. Writes nothing in test mode.
+ * Write Stash ratings (scene id to 1-100): one bulk update per distinct value, in requests of up
+ * to BULK_CHUNK_SIZE scenes. Throws on failure; doesn't touch the cache. Writes nothing in test mode.
  */
-export async function writeStashRatings(ratings: Map<string, number>): Promise<void> {
+export async function writeStashRatings(
+  ratings: Map<string, number>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
   if (state.settings.testMode) {
     console.log(`[Stash Battle] 🧪 Test mode: not saving ${ratings.size} Stash ratings`);
     return;
@@ -153,17 +156,11 @@ export async function writeStashRatings(ratings: Map<string, number>): Promise<v
   }
   if (idsByRating.size === 0) return;
 
-  const values = [...idsByRating.keys()];
-  const mutation = `
-      mutation SyncStashRatings(${values.map((r) => `$r${r}: BulkSceneUpdateInput!`).join(", ")}) {
-        ${values.map((r) => `r${r}: bulkSceneUpdate(input: $r${r}) { id }`).join("\n        ")}
-      }
-    `;
-  const variables = Object.fromEntries(
-    values.map((r) => [`r${r}`, { ids: idsByRating.get(r), rating100: r }]),
+  await bulkUpdateScenes(
+    [...idsByRating].map(([rating100, ids]) => ({ ids, changes: { rating100 } })),
+    onProgress,
   );
-  await graphqlQuery(mutation, variables);
-  console.log(`[Stash Battle] 📝 Wrote ${ratings.size} Stash ratings (${values.length} distinct values)`);
+  console.log(`[Stash Battle] 📝 Wrote ${ratings.size} Stash ratings (${idsByRating.size} distinct values)`);
 }
 
 /** After Stash ratings were written: update the cached scenes and Stash's own page cache. */

@@ -6,6 +6,7 @@ import { formatRating } from "../ratingDisplay";
 import { showsCardDetail } from "../settings";
 import { battles, elo, isProvisional, recordText } from "../score";
 import { state } from "../state";
+import { stashUrl } from "../stashUrl";
 import { tierDescription } from "../stats";
 import { isStashDeleteDialogAvailable } from "./deleteDialog";
 import type { Rank, Scene, Tier } from "../types";
@@ -120,7 +121,7 @@ export function createSceneCard(
 
   // Keep the Scenes page's filter in the URL when opening the scene
   const currentParams = scenesListQuery();
-  const sceneUrl = `/scenes/${scene.id}${currentParams}`;
+  const sceneUrl = stashUrl(`scenes/${scene.id}${currentParams}`);
   const linkTarget = openInNewTab ? ` target="_blank" rel="noopener"` : "";
 
   // pwr-* classes are the plugin's pre-2.0 names; SFW Switch still targets them to blur Stash Battle.
