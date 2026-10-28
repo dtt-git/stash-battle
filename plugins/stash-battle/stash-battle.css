@@ -2297,6 +2297,11 @@ body.sb-battle-open > .modal {
   gap: 14px;
 }
 
+/* A warning above the questions (unfinished setup, hook plugins) gets the same gap as between them */
+.sb-setup-warning + .sb-setup-questions {
+  margin-top: 14px;
+}
+
 .sb-setup-question {
   margin: 0;
   padding: 10px 14px 12px;
