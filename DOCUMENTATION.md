@@ -79,7 +79,8 @@ Helpers in `state.ts`: `resetRunState()` clears Champion **and** Placement run f
 | `ratingDisplay.ts` | How this Stash shows ratings (`setRatingSystem`, `getRatingSystem`, `parseRatingSystem`) and formatting to match (`formatRating`, `ratingValue`, `ratingStarts`, `exampleRating`, `scaleMarks`) |
 | `sceneTitle.ts` | `resolveSceneTitle`: the title, or the file name without its extension |
 | `placement.ts` | Pure Placement search: `newPlacementRun`, `placementStep`, `recordPlacementResult`, `landingElo`, `bottomIndex`, `maxPlacementJump` |
-| `graphql.ts` | `graphqlQuery`, `SCENE_FRAGMENT`, `FIND_SCENES_QUERY`, `fetchSceneById`, `getSceneIdFromUrl`, `sceneCustomFieldsSupported`, `refreshStashCache` (Stash's Apollo cache) |
+| `stashUrl.ts` | Stash under a subpath: `basePath` (from `<base href>`), `stashUrl` (requests and links), `stashRoute` (the page's path without the subpath) |
+| `graphql.ts` | `graphqlQuery`, `bulkUpdateScenes` (chunked bulk writes), `sceneUpdateHookPlugins`, `SCENE_FRAGMENT`, `FIND_SCENES_QUERY`, `fetchSceneById`, `getSceneIdFromUrl`, `sceneCustomFieldsSupported`, `refreshStashCache` (Stash's Apollo cache) |
 | `pluginApi.ts` | Minimal typing of `window.PluginApi` (React, patch, components, Event, StashService's Apollo client) |
 | `cache.ts` | IndexedDB + memory cache, stale-while-revalidate, sorted by ELO; `setEloInCache`, `setRatingsInCache`, `removeSceneEverywhere` |
 | `storage.ts` | `saveState` / `loadState` / `clearState` (localStorage, versioned) |
@@ -301,9 +302,13 @@ Both in `score.ts`; only scenes **with an ELO** are ever written.
 **The screen:** two questions side by side (stacked on narrow screens), the Stash ratings message, a preview, and Start.
 
 1. **How should ELO start?**
-   - **Use my ratings:** every scene with a Stash rating gets `{ elo: seed(rating100), battles: 0, seeded: true }`. Unrated scenes stay unrated. Scenes with the same Stash rating get the same fields, so it's one aliased `bulkSceneUpdate` per distinct rating, all in one request. On a re-run, scenes that have an ELO but no Stash rating get our fields **removed** (one `bulkSceneUpdate` with `remove`).
-   - **Start everyone at 1500:** every scene gets `{ elo: 1500, battles: 0, seeded: false }` in a single `bulkSceneUpdate`.
+   - **Use my ratings:** every scene with a Stash rating gets `{ elo: seed(rating100), battles: 0, seeded: true }`. Unrated scenes stay unrated. Scenes with the same Stash rating get the same fields, so it's one `bulkSceneUpdate` group per distinct rating. On a re-run, scenes that have an ELO but no Stash rating get our fields **removed** (a group with `remove`).
+   - **Start everyone at 1500:** every scene gets `{ elo: 1500, battles: 0, seeded: false }` (one group).
+
+   Groups go through `bulkUpdateScenes`: requests of at most `BULK_CHUNK_SIZE` (200) scenes, aliased `bulkSceneUpdate`s with a group split across requests where needed, and the progress bar moves after each request.
 2. **Should Stash Battle change your Stash ratings?** — the three options (texts in `ui/stashRatingsText.ts`), "Don't update" preselected on first setup. The answer is saved as the `stashRatings` setting; if it isn't "off", the full sync (`writeStashRatings`) runs right after the ELO writes.
+
+**Other plugins' hooks:** Stash runs every enabled plugin's `Scene.Update.Post` hook once per scene written, one after another, **before** the request answers (the fields are already saved by then). A Python hook plugin can turn a library-wide setup into hours. `sceneUpdateHookPlugins()` (`plugins { name enabled hooks { hooks } }`, loaded with the scenes) names them; the choices screen warns to disable them first, and the progress view says disabling them now speeds up the rest (Stash checks which plugins are enabled on every hook run).
 
 **Stash ratings message** (`.sb-setup-message-slot`): every distinct message for the six answer combinations is rendered at once, stacked in one grid cell, and only the current one is visible. The slot keeps the height of the longest, so switching answers never moves the preview; combinations with identical text share one element, so switching between them doesn't fade. Warnings state the exact count of ratings that change (and that a fresh start makes everything 50); the Start button reads "Start ELO and change N ratings".
 
@@ -333,7 +338,7 @@ Both in `score.ts`; only scenes **with an ELO** are ever written.
 ### Per-battle sync (`rating.ts`)
 
 - `writeElo` / `clearElo` call `scheduleStashRatingSync()` once the write succeeds: debounced `SYNC_DEBOUNCE_MS` (500 ms) so a pick's two writes share one sync; skipped on "off". Switching the update mode schedules one too, to catch anything an old-mode sync changed after the switch was counted.
-- `syncStashRatings()` computes `stashRatingChanges` over the whole **all-scenes cache** and writes only scenes whose cached `rating100` differs: one request (`writeStashRatings`: one aliased `bulkSceneUpdate` per distinct value). Then `applyStashRatings` updates the cache and Stash's page cache. Syncs and the switch's full write run through `queueRatingWrite`, one at a time, so each starts from the ratings the last one wrote.
+- `syncStashRatings()` computes `stashRatingChanges` over the whole **all-scenes cache** and writes only scenes whose cached `rating100` differs (`writeStashRatings`: one `bulkSceneUpdate` group per distinct value through `bulkUpdateScenes`, so one request for a battle's handful, chunks of 200 for a library-wide switch). Then `applyStashRatings` updates the cache and Stash's page cache. Syncs and the switch's full write run through `queueRatingWrite`, one at a time, so each starts from the ratings the last one wrote.
 - **Percentile and ties:** tied scenes share their group's middle rank, so when one member of a tie group leaves or joins it, the whole group's rating can move by 1. Seeded ELOs tie a lot at first (every scene with the same Stash rating starts equal), so early syncs can write dozens of ratings per battle; it fades as ELO spreads out. Kept deliberately over a tie-break, which would turn a fresh start into an arbitrary 100-1 spread.
 - While an update mode is on, a star edit made in Stash lasts until Stash Battle next writes that scene.
 
@@ -723,3 +728,5 @@ All data comes from Stash's GraphQL API:
 24. **A battled pool changes as you battle** (an Explore filter on Unrated loses each scene it places): the left pool is worked out again on every pick, and `getNextFilteredScene` skips shuffled scenes that are no longer in it. Battling a scene that shares its ELO with others moves it to the end of its tie group, so its rank can change within the tie (#5 can show as #13).
 
 25. **Never show a raw `rating100`** ("74/100") in the UI: Stash shows ratings as a 0-10 decimal or as stars (`configuration.ui.ratingSystemOptions`), and so does Stash Battle, through `formatRating` / `ratingValue` in `ratingDisplay.ts` (loaded with the settings: `loadSettings` asks for `configuration { plugins ui }`). Examples in descriptions use `exampleRating`, because on whole stars a stored 50 (1500 ELO) has no star value of its own.
+
+26. **Stash can live under a subpath** (a reverse proxy at `/stash/`, sending `X-Forwarded-Prefix`): Stash then rewrites `<base href>` to the prefix, and its API, pages and React Router routes all sit under it. Never hard-code `/graphql` or `/scenes/...`, and never match `location.pathname` directly: use `stashUrl()` for requests and links and `stashRoute()` for route checks (`stashUrl.ts`). Scene `paths` (screenshot, preview) come from Stash with the prefix already in them.

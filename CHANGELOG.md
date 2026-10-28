@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.0.1
+
+### Fixed
+
+- **Stash served under a subpath** (behind a reverse proxy at `/stash/`, say): Stash Battle no longer stops at "couldn't load its settings from Stash". It now talks to Stash and links to scenes under the subpath.
+- **ELO setup no longer looks stuck at "0 of N scenes"**: it saves in batches of 200 scenes, and the progress bar moves as each one is saved.
+
+### Changed
+
+- The ELO setup warns when another enabled plugin runs on every scene update (and names it). Stash runs those once per scene during setup, which can take hours on a big library, so disable them until setup is done.
+
 ## v3.0.0
 
 A new rating system: Stash Battle now keeps a true ELO score for every scene, separate from your star ratings. And new tabs to explore it: browse your library by ELO and tier, see stats on your rankings, and keep records.

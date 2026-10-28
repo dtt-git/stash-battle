@@ -2,13 +2,14 @@
 
 import type { ApolloCacheLike } from "./pluginApi";
 import { withEloFields } from "./score";
+import { stashRoute, stashUrl } from "./stashUrl";
 import type { EloFields, FindSceneResult, Scene } from "./types";
 
 export async function graphqlQuery<T = unknown>(
   query: string,
   variables: Record<string, unknown> = {},
 ): Promise<T> {
-  const response = await fetch("/graphql", {
+  const response = await fetch(stashUrl("graphql"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -21,6 +22,77 @@ export async function graphqlQuery<T = unknown>(
     throw new Error(result.errors[0].message);
   }
   return result.data as T;
+}
+
+/** Scene ids per bulk update request, so long writes report progress and no one request runs for ages. */
+export const BULK_CHUNK_SIZE = 200;
+
+/** One bulkSceneUpdate: these scenes get the same changes (rating100, custom_fields, ...). */
+export interface BulkUpdateGroup {
+  ids: string[];
+  changes: Record<string, unknown>;
+}
+
+/**
+ * Write the groups in requests of at most `chunkSize` scenes (one aliased bulkSceneUpdate per
+ * group or piece of one), calling `onProgress` with the scenes written so far after each.
+ * Stash runs other plugins' Scene.Update.Post hooks for every scene before it answers, so with
+ * such a plugin enabled each request can take a while.
+ */
+export async function bulkUpdateScenes(
+  groups: BulkUpdateGroup[],
+  onProgress?: (done: number, total: number) => void,
+  chunkSize = BULK_CHUNK_SIZE,
+): Promise<void> {
+  const total = groups.reduce((n, group) => n + group.ids.length, 0);
+  let done = 0;
+  let request: BulkUpdateGroup[] = [];
+  let size = 0;
+  const send = async (): Promise<void> => {
+    if (request.length === 0) return;
+    const mutation = `
+      mutation BulkSceneUpdates(${request.map((_, i) => `$u${i}: BulkSceneUpdateInput!`).join(", ")}) {
+        ${request.map((_, i) => `u${i}: bulkSceneUpdate(input: $u${i}) { id }`).join("\n        ")}
+      }
+    `;
+    const variables = Object.fromEntries(request.map((group, i) => [`u${i}`, { ...group.changes, ids: group.ids }]));
+    await graphqlQuery(mutation, variables);
+    done += size;
+    request = [];
+    size = 0;
+    onProgress?.(done, total);
+  };
+  for (const group of groups) {
+    for (let start = 0; start < group.ids.length; ) {
+      const ids = group.ids.slice(start, start + chunkSize - size);
+      request.push({ ids, changes: group.changes });
+      size += ids.length;
+      start += ids.length;
+      if (size >= chunkSize) await send();
+    }
+  }
+  await send();
+}
+
+/** Scene.Update.Post: the hook Stash runs for every scene Stash Battle writes. */
+const SCENE_UPDATE_HOOK = "Scene.Update.Post";
+
+/**
+ * Names of enabled plugins with a scene update hook. Stash runs it once per scene, one after
+ * another, so a library-wide write (ELO setup) can take hours with one enabled. [] if unknown.
+ */
+export async function sceneUpdateHookPlugins(): Promise<string[]> {
+  try {
+    const data = await graphqlQuery<{
+      plugins: { name: string; enabled: boolean; hooks: { hooks: string[] | null }[] | null }[] | null;
+    }>(`query { plugins { name enabled hooks { hooks } } }`);
+    return (data.plugins ?? [])
+      .filter((p) => p.enabled && p.hooks?.some((h) => h.hooks?.includes(SCENE_UPDATE_HOOK)))
+      .map((p) => p.name);
+  } catch (e) {
+    console.warn("[Stash Battle] Could not check other plugins' hooks:", e);
+    return [];
+  }
 }
 
 export const SCENE_FRAGMENT = `
@@ -154,7 +226,7 @@ export function refreshStashCache(updates: StashCacheUpdate[], ratingsChanged: b
 
 // Extract scene ID from individual scene pages like /scenes/123
 export function getSceneIdFromUrl(): string | null {
-  const match = window.location.pathname.match(/^\/scenes\/(\d+)$/);
+  const match = stashRoute().match(/^\/scenes\/(\d+)$/);
   return match ? match[1] : null;
 }
 

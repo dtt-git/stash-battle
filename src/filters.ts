@@ -1,5 +1,6 @@
 // URL filter parsing for Stash list → GraphQL scene queries.
 
+import { stashRoute } from "./stashUrl";
 import type { FindFilterType, SceneFilterType } from "./types";
 
 /**
@@ -8,7 +9,7 @@ import type { FindFilterType, SceneFilterType } from "./types";
  * pages keep the list's query, so they count.
  */
 export function scenesListQuery(): string {
-  const path = window.location.pathname;
+  const path = stashRoute();
   return path === "/scenes" || path.startsWith("/scenes/") ? window.location.search : "";
 }
 

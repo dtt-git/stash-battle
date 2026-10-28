@@ -5,6 +5,7 @@
 
 import { clearSceneCache } from "../cache";
 import { fetchSetupScenes, runEloSetup, setupRatingChanges, type SetupPhase, type SetupSummary } from "../eloSetup";
+import { sceneUpdateHookPlugins } from "../graphql";
 import { exampleRating, formatRating, ratingStarts } from "../ratingDisplay";
 import { isRated, seed } from "../score";
 import { hadFunMode, updateSettingsNow } from "../settings";
@@ -28,6 +29,9 @@ export interface SetupScreenOptions {
 }
 
 let options: SetupScreenOptions = {};
+
+/** Enabled plugins with a scene update hook, which Stash runs for every scene setup writes. */
+let hookPlugins: string[] = [];
 
 interface Choice {
   start: EloStart;
@@ -69,7 +73,7 @@ async function loadChoices(area: HTMLElement, onDone: () => void): Promise<void>
   area.innerHTML = `<div class="sb-loading">Loading your library...</div>`;
   let scenes: Scene[];
   try {
-    scenes = await fetchSetupScenes();
+    [scenes, hookPlugins] = await Promise.all([fetchSetupScenes(), sceneUpdateHookPlugins()]);
   } catch (e) {
     console.error("[Stash Battle] ELO setup: could not load scenes:", e);
     showError(area, "Couldn't load your scenes from Stash.", () => void loadChoices(area, onDone));
@@ -88,6 +92,27 @@ function radio(name: string, value: string, label: string, desc: string, checked
                   <span class="sb-setup-desc">${desc}</span>
                 </label>
               </div>`;
+}
+
+/** "A", "A and B", "A, B and C" */
+function nameList(names: string[]): string {
+  const escaped = names.map((name) => `<strong>${escapeHtml(name)}</strong>`);
+  return escaped.length > 1 ? `${escaped.slice(0, -1).join(", ")} and ${escaped[escaped.length - 1]}` : escaped.join("");
+}
+
+/**
+ * Setup writes every scene, and Stash runs each enabled plugin's scene update hook once per
+ * scene before it carries on, so a library can take hours instead of seconds. Writes go in
+ * chunks, so disabling them while setup runs speeds up the rest.
+ */
+function hookWarning(writing: boolean): string {
+  if (hookPlugins.length === 0) return "";
+  const one = hookPlugins.length === 1;
+  const them = one ? "it" : "them";
+  const advice = writing
+    ? `Disabling ${them} in Settings → Plugins now speeds up the rest; turn ${them} back on when setup is done.`
+    : `Disable ${them} in Settings → Plugins first, and turn ${them} back on when setup is done.`;
+  return `<p class="sb-setup-warning">⚠️ ${nameList(hookPlugins)} ${one ? "runs" : "run"} on every scene update, so setup can take a very long time with ${them} on. ${advice}</p>`;
 }
 
 /** What the second answer does to Stash ratings now: a warning when ratings change, else a calm line. */
@@ -138,6 +163,7 @@ function renderChoices(area: HTMLElement, scenes: Scene[], onDone: () => void): 
             ? `<p class="sb-setup-warning">${plural(withElo, "scene")} already ${withElo === 1 ? "has" : "have"} an ELO from an earlier setup that didn't finish. Setting up again overwrites ${withElo === 1 ? "it" : "them"}.</p>`
             : ""
         }
+        ${hookWarning(false)}
         <div class="sb-setup-questions">
           <fieldset class="sb-setup-question">
             <legend>How should ELO start?</legend>
@@ -225,12 +251,13 @@ function progressHtml(phase: SetupPhase, done: number, total: number): string {
   const label =
     phase === "elo"
       ? `Saving starting ELO: ${done} of ${plural(total, "scene")}`
-      : `Updating Stash ratings: ${plural(total, "scene")}`;
+      : `Updating Stash ratings: ${done} of ${plural(total, "scene")}`;
   return `
       <div class="sb-setup sb-setup-progress">
         <h2 class="sb-setup-title">Setting up ELO...</h2>
         <div class="progress"><div class="progress-bar" role="progressbar" style="width: ${percent}%" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"></div></div>
         <p class="sb-setup-progress-label">${label}</p>
+        ${hookWarning(true)}
         <p class="sb-setup-note">You can close Stash Battle; setup keeps going while this Stash tab stays open. If the tab closes first, Stash Battle asks again next time, and running it again is safe.</p>
       </div>`;
 }
